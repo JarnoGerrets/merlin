@@ -3,9 +3,18 @@ extends Control
 enum MerlinState {
 	IDLE,
 	THINKING,
+	SPEAKING,
 	EXECUTING_TOOL,
-	ERROR
+	ERROR,
+	LISTENING,
+	MEMORY_UPDATE,
+	UPDATING,
+	LOADING_MODEL
 }
+
+const TYPEWRITER_CHARS_PER_SECOND := 72.0
+const TYPEWRITER_PUNCTUATION_DELAY := 0.045
+const TYPEWRITER_PARAGRAPH_DELAY := 0.09
 
 @onready var web_socket_client: MerlinWebSocketClient = $MerlinWebSocketClient
 @onready var core_orb: CoreOrb = $CoreOrb
@@ -28,6 +37,11 @@ var _focus_request_id := 0
 
 func _ready() -> void:
 	message_input.focus_mode = Control.FOCUS_ALL
+	message_input.keep_editing_on_text_submit = true
+	message_scroll.focus_mode = Control.FOCUS_NONE
+	message_list.focus_mode = Control.FOCUS_NONE
+	thinking_label.focus_mode = Control.FOCUS_NONE
+	error_label.focus_mode = Control.FOCUS_NONE
 	send_button.pressed.connect(_on_send_pressed)
 	reconnect_button.pressed.connect(_on_reconnect_pressed)
 	refresh_tools_button.pressed.connect(_on_refresh_tools_pressed)
@@ -43,7 +57,7 @@ func _ready() -> void:
 	_update_pending_state()
 	_set_tools_placeholder("Click Refresh Tools after connecting.")
 	web_socket_client.connect_to_backend()
-	_refocus_message_input()
+	_focus_message_input()
 
 
 func _on_reconnect_pressed() -> void:
@@ -53,7 +67,7 @@ func _on_reconnect_pressed() -> void:
 	_add_system_message("Reconnecting...")
 	web_socket_client.connect_to_backend()
 	_update_send_button()
-	_refocus_message_input()
+	_focus_message_input()
 
 
 func _on_send_pressed() -> void:
@@ -62,7 +76,7 @@ func _on_send_pressed() -> void:
 
 func _on_message_submitted(_text: String) -> void:
 	_send_current_message()
-	_refocus_message_input()
+	_focus_message_input()
 
 
 func _on_refresh_tools_pressed() -> void:
@@ -82,7 +96,7 @@ func _send_backend_message(message: String, show_user_message: bool) -> void:
 		_show_error("Cannot send: Merlin.Backend is not connected.")
 		_set_merlin_state(MerlinState.ERROR)
 		_update_send_button()
-		_refocus_message_input()
+		_focus_message_input()
 		return
 
 	var correlation_id := _generate_correlation_id()
@@ -102,7 +116,7 @@ func _send_backend_message(message: String, show_user_message: bool) -> void:
 		_set_merlin_state(MerlinState.ERROR)
 		_update_pending_state()
 
-	_refocus_message_input()
+	_focus_message_input()
 
 
 func _on_connection_state_changed(state: String, detail: String) -> void:
@@ -114,7 +128,7 @@ func _on_connection_state_changed(state: String, detail: String) -> void:
 			_add_system_message("Connected to Merlin.Backend.")
 			if _pending_requests.is_empty():
 				_set_merlin_state(MerlinState.IDLE)
-			_refocus_message_input()
+			_focus_message_input()
 		"connecting":
 			_clear_error()
 		"error":
@@ -148,29 +162,21 @@ func _on_response_received(response: Dictionary) -> void:
 	var application_candidates = response.get("applicationCandidates", null)
 	var debug_text := _format_debug_info(response)
 
-	if success:
-		_add_assistant_message(_format_success_response(message, available_tools, diagnostics, confirmation), debug_text)
-		_clear_error()
-		if typeof(available_tools) == TYPE_ARRAY:
-			_render_tools(available_tools)
-	else:
-		var formatted_error := _format_error_response(error_code, message)
-		if typeof(confirmation) == TYPE_DICTIONARY:
-			_add_assistant_message(_format_confirmation(message, confirmation, application_candidates), debug_text)
-		elif response_type == "limitation" or response_type == "safety":
-			_add_assistant_message(message, debug_text)
-			_clear_error()
-		elif response_type == "system":
-			_add_system_message(message)
-			_clear_error()
-		else:
-			_add_error_message(formatted_error, debug_text)
-			_show_error(formatted_error)
-
 	_update_pending_state()
-	_update_orb_from_response(response, success, response_type)
 	_update_send_button()
-	_refocus_message_input()
+	await _display_backend_response(
+		response,
+		success,
+		message,
+		error_code,
+		response_type,
+		available_tools,
+		diagnostics,
+		confirmation,
+		application_candidates,
+		debug_text
+	)
+	_focus_message_input()
 
 
 func _on_malformed_response(raw_message: String, detail: String) -> void:
@@ -180,6 +186,7 @@ func _on_malformed_response(raw_message: String, detail: String) -> void:
 	_show_error(message)
 	_add_system_message("%s Raw: %s" % [message, raw_message])
 	_set_merlin_state(MerlinState.ERROR)
+	_focus_message_input()
 
 
 func _on_socket_closed(code: int, reason: String) -> void:
@@ -190,6 +197,7 @@ func _on_socket_closed(code: int, reason: String) -> void:
 		_set_merlin_state(MerlinState.ERROR)
 	else:
 		_set_merlin_state(MerlinState.IDLE)
+	_focus_message_input()
 
 
 func _format_success_response(message: String, available_tools, diagnostics, confirmation) -> String:
@@ -299,6 +307,64 @@ func _format_error_response(error_code, message: String) -> String:
 	return "%s - %s" % [code, message]
 
 
+func _display_backend_response(
+	response: Dictionary,
+	success: bool,
+	message: String,
+	error_code,
+	response_type: String,
+	available_tools,
+	diagnostics,
+	confirmation,
+	application_candidates,
+	debug_text: String
+) -> void:
+	await _prepare_orb_for_response(response, success, response_type)
+	_focus_message_input()
+
+	if success:
+		await _add_typed_chat_line("Merlin", _format_success_response(message, available_tools, diagnostics, confirmation), debug_text, "assistant")
+		_clear_error()
+		if typeof(available_tools) == TYPE_ARRAY:
+			_render_tools(available_tools)
+	else:
+		var formatted_error := _format_error_response(error_code, message)
+		if typeof(confirmation) == TYPE_DICTIONARY:
+			await _add_typed_chat_line("Merlin", _format_confirmation(message, confirmation, application_candidates), debug_text, "assistant")
+			_clear_error()
+		elif response_type == "limitation" or response_type == "safety":
+			await _add_typed_chat_line("Merlin", message, debug_text, "assistant")
+			_clear_error()
+		elif response_type == "system":
+			_add_system_message(message)
+			_clear_error()
+		else:
+			await _add_typed_chat_line("Error", formatted_error, debug_text, "error")
+			_show_error(formatted_error)
+
+	_settle_orb_after_response()
+	_focus_message_input()
+
+
+func _prepare_orb_for_response(response: Dictionary, success: bool, response_type: String) -> void:
+	var has_confirmation := typeof(response.get("confirmation", null)) == TYPE_DICTIONARY
+	if response_type == "error" or (not success and not has_confirmation and response_type != "limitation" and response_type != "safety"):
+		_set_merlin_state(MerlinState.ERROR)
+		await get_tree().create_timer(0.28).timeout
+		return
+
+	if success and _is_tool_execution_response(response):
+		_set_merlin_state(MerlinState.EXECUTING_TOOL)
+		await get_tree().create_timer(0.36).timeout
+
+
+func _settle_orb_after_response() -> void:
+	if _pending_requests.is_empty():
+		_set_merlin_state(MerlinState.IDLE)
+	else:
+		_set_merlin_state(MerlinState.THINKING)
+
+
 func _format_connection_state(state: String, detail: String) -> String:
 	match state:
 		"connected":
@@ -361,8 +427,15 @@ func _add_system_message(message: String) -> void:
 
 
 func _add_chat_line(author: String, message: String, debug_text: String, kind: String) -> void:
+	var label := _create_chat_line(author, message, debug_text, kind)
+	await get_tree().process_frame
+	_scroll_messages_to_bottom()
+
+
+func _create_chat_line(author: String, message: String, debug_text: String, kind: String) -> RichTextLabel:
 	var container := VBoxContainer.new()
 	container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	container.focus_mode = Control.FOCUS_NONE
 	container.add_theme_constant_override("separation", 3)
 
 	var label := _create_selectable_text("%s: %s" % [author, message], _message_color(kind))
@@ -375,12 +448,55 @@ func _add_chat_line(author: String, message: String, debug_text: String, kind: S
 		container.add_child(debug_label)
 
 	message_list.add_child(container)
+	return label
+
+
+func _add_typed_chat_line(author: String, message: String, debug_text: String, kind: String) -> void:
+	var label := _create_chat_line(author, "", debug_text, kind)
+	await _typewriter_reveal(label, author, message)
 	await get_tree().process_frame
+	_scroll_messages_to_bottom()
+
+
+func _typewriter_reveal(label: RichTextLabel, author: String, message: String) -> void:
+	var visible_text := ""
+	var character_delay := 1.0 / TYPEWRITER_CHARS_PER_SECOND
+	_set_merlin_state(MerlinState.SPEAKING)
+
+	for index in range(message.length()):
+		var character := message.substr(index, 1)
+		visible_text += character
+		label.text = "%s: %s" % [author, visible_text]
+
+		if index % 3 == 0:
+			core_orb.notify_speech_tick()
+		if index % 8 == 0:
+			_scroll_messages_to_bottom()
+
+		var delay := _typewriter_delay_for_character(character)
+		await get_tree().create_timer(delay if delay > 0.0 else character_delay).timeout
+
+	core_orb.notify_speech_tick()
+	_scroll_messages_to_bottom()
+
+
+func _typewriter_delay_for_character(character: String) -> float:
+	match character:
+		".", ",", "!", "?", ":", ";":
+			return TYPEWRITER_PUNCTUATION_DELAY
+		"\n":
+			return TYPEWRITER_PARAGRAPH_DELAY
+		_:
+			return 1.0 / TYPEWRITER_CHARS_PER_SECOND
+
+
+func _scroll_messages_to_bottom() -> void:
 	message_scroll.scroll_vertical = int(message_scroll.get_v_scroll_bar().max_value)
 
 
 func _create_selectable_text(text: String, color: Color, font_size: int = 0) -> RichTextLabel:
 	var label := RichTextLabel.new()
+	label.focus_mode = Control.FOCUS_NONE
 	label.bbcode_enabled = false
 	label.fit_content = true
 	label.scroll_active = false
@@ -399,6 +515,8 @@ func _update_pending_state() -> void:
 	var has_pending_requests := not _pending_requests.is_empty()
 	thinking_label.visible = has_pending_requests
 	_update_send_button()
+	if not has_pending_requests and web_socket_client.is_backend_connected():
+		_focus_message_input()
 
 
 func _update_orb_from_response(response: Dictionary, success: bool, response_type: String) -> void:
@@ -430,6 +548,8 @@ func _set_merlin_state(state: int) -> void:
 	match state:
 		MerlinState.THINKING:
 			core_orb.set_thinking()
+		MerlinState.SPEAKING:
+			core_orb.set_speaking()
 		MerlinState.EXECUTING_TOOL:
 			core_orb.play_tool_execution()
 		MerlinState.ERROR:
@@ -445,12 +565,13 @@ func _update_send_button() -> void:
 	reconnect_button.disabled = web_socket_client.get_connection_state() == "connecting"
 
 
-func _refocus_message_input() -> void:
+func _focus_message_input() -> void:
 	_focus_request_id += 1
 	call_deferred("_apply_message_input_focus", _focus_request_id)
 
 
 func _apply_message_input_focus(request_id: int) -> void:
+	await get_tree().process_frame
 	await get_tree().process_frame
 	if request_id != _focus_request_id:
 		return
