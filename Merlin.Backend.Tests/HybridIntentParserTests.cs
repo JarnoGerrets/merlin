@@ -192,6 +192,66 @@ public sealed class HybridIntentParserTests
         Assert.Equal(0, localParser.CallCount);
     }
 
+    [Fact]
+    public async Task ParseAsync_WhenLocalAIReturnsMissingCapability_UsesLocalAIResult()
+    {
+        var localParser = new FakeIntentParser(new IntentParseResult
+        {
+            Intent = "missing_capability",
+            NormalizedCommand = "can you pull up the newsfeed",
+            Confidence = 0.9,
+            OriginalMessage = "can you pull up the newsfeed?"
+        });
+
+        var parser = CreateParser(localParser, enabled: true);
+
+        var result = await parser.ParseAsync("can you pull up the newsfeed?");
+
+        Assert.Equal("missing_capability", result.Intent);
+        Assert.Equal(nameof(LocalAIIntentParser), result.ParserUsed);
+        Assert.Equal(1, localParser.CallCount);
+    }
+
+    [Fact]
+    public async Task ParseAsync_WhenLocalAIUnavailableAndNewsfeedRequested_FallsBackToMissingCapability()
+    {
+        var localParser = new FakeIntentParser(new IntentParseResult
+        {
+            Intent = null,
+            NormalizedCommand = "can you pull up the newsfeed",
+            Confidence = 0,
+            OriginalMessage = "can you pull up the newsfeed?"
+        });
+
+        var parser = CreateParser(localParser, enabled: true, localAIAvailable: false);
+
+        var result = await parser.ParseAsync("can you pull up the newsfeed?");
+
+        Assert.Equal("missing_capability", result.Intent);
+        Assert.NotEqual("unknown", result.Intent);
+        Assert.Equal(0, localParser.CallCount);
+    }
+
+    [Fact]
+    public async Task ParseAsync_WhenFolderCheckRequested_DoesNotRouteToDiagnostics()
+    {
+        var localParser = new FakeIntentParser(new IntentParseResult
+        {
+            Intent = null,
+            NormalizedCommand = "can you check my folders",
+            Confidence = 0,
+            OriginalMessage = "can you check my folders?"
+        });
+
+        var parser = CreateParser(localParser, enabled: false);
+
+        var result = await parser.ParseAsync("can you check my folders?");
+
+        Assert.Equal("missing_capability", result.Intent);
+        Assert.NotEqual("diagnostics", result.Intent);
+        Assert.Equal(0, localParser.CallCount);
+    }
+
     private static HybridIntentParser CreateParser(
         LocalAIIntentParser localParser,
         bool enabled,
@@ -221,7 +281,7 @@ public sealed class HybridIntentParserTests
             new TrustedCommandIntentParser(trustedCommandStore ?? new FakeTrustedCommandStore()),
             new RuleBasedIntentParser(TestApplicationLaunchOptions.Create()),
             localParser,
-            new CapabilityClassifier(new ToolRegistry([])),
+            new CapabilityClassifier(new ToolRegistry([]), TestCapabilityOptions.Create()),
             localAIOptions,
             new RuntimeStateService(),
             healthService,

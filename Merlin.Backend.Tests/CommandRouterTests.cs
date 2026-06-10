@@ -134,6 +134,7 @@ public sealed class CommandRouterTests
         var services = new ServiceCollection();
         services.AddSingleton(TestApplicationLaunchOptions.Create());
         services.AddSingleton(Options.Create(new Merlin.Backend.Configuration.LocalAIOptions()));
+        services.AddSingleton(TestCapabilityOptions.Create());
         services.AddSingleton<IWebHostEnvironment>(new FakeWebHostEnvironment());
         services.AddSingleton<ILogger<StatusTool>>(NullLogger<StatusTool>.Instance);
         services.AddSingleton<ILocalAIHealthService>(new FakeLocalAIHealthService());
@@ -187,23 +188,23 @@ public sealed class CommandRouterTests
             new FixedIntentParser(new IntentParseResult
             {
                 Intent = "unsupported_action",
-                NormalizedCommand = "can you check my folders",
+                NormalizedCommand = "delete all my files",
                 Confidence = 0.95,
-                OriginalMessage = "can you check my folders?",
+                OriginalMessage = "delete all my files",
                 ParserUsed = nameof(CapabilityClassifier)
             }),
             new ToolRegistry([new ThrowingTool()]),
             NullLogger<CommandRouter>.Instance,
             new RuntimeStateService(),
-            new ResponsePolisher());
+            new ResponsePolisher(TestCapabilityOptions.Create()));
 
-        var response = await router.RouteAsync("can you check my folders?");
+        var response = await router.RouteAsync("delete all my files");
 
         Assert.False(response.Success);
         Assert.Equal("UNSUPPORTED_ACTION", response.ErrorCode);
         Assert.Equal("unsupported_action", response.Intent);
         Assert.Equal("General Conversation", response.ToolName);
-        Assert.Contains("don't currently have a tool", response.Message);
+        Assert.Contains("destructive system actions", response.Message);
     }
 
     private static CommandRouter CreateRouter(params ITool[] tools)

@@ -9,10 +9,11 @@ builder.Services.Configure<ApplicationLaunchOptions>(
     builder.Configuration.GetSection("ApplicationLaunch"));
 builder.Services.Configure<LocalAIOptions>(
     builder.Configuration.GetSection("LocalAI"));
+builder.Services.Configure<CapabilityOptions>(
+    builder.Configuration.GetSection("Capabilities"));
 
 builder.Services.AddSingleton<IAIService, DummyAIService>();
 builder.Services.AddSingleton<IAssistantPolicyProvider, AssistantPolicyProvider>();
-builder.Services.AddSingleton<IIntentFallbackClassifier, IntentFallbackClassifier>();
 builder.Services.AddSingleton<ICapabilityClassifier, CapabilityClassifier>();
 builder.Services.AddSingleton<IResponsePolisher, ResponsePolisher>();
 builder.Services.AddSingleton<IConversationSummaryStore, ConversationSummaryStore>();

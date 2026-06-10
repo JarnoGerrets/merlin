@@ -102,9 +102,25 @@ public sealed class RuleBasedIntentParserTests
     [InlineData("can you check my folders")]
     [InlineData("can you check my folders?")]
     [InlineData("can you check my files")]
-    [InlineData("delete my files")]
-    [InlineData("install chrome")]
     [InlineData("search my hard drive")]
+    [InlineData("clean my downloads folder")]
+    public async Task ParseAsync_WhenMessageNeedsMissingCapability_ReturnsMissingCapability(string message)
+    {
+        var parser = new RuleBasedIntentParser(TestApplicationLaunchOptions.Create());
+
+        var result = await parser.ParseAsync(message);
+
+        Assert.Equal("missing_capability", result.Intent);
+        Assert.Equal(message.TrimEnd('?'), result.NormalizedCommand);
+        Assert.True(result.Confidence >= 0.9);
+    }
+
+    [Theory]
+    [InlineData("delete my files")]
+    [InlineData("delete all my files")]
+    [InlineData("wipe my hard drive")]
+    [InlineData("disable windows defender")]
+    [InlineData("install chrome")]
     [InlineData("update windows")]
     public async Task ParseAsync_WhenMessageIsUnsupportedAction_ReturnsUnsupportedAction(string message)
     {

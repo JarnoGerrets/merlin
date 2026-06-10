@@ -17,7 +17,6 @@ public sealed class StatusTool : ITool
     private readonly ILogger<StatusTool> _logger;
     private readonly LocalAIOptions _localAIOptions;
     private readonly IRuntimeStateService _runtimeStateService;
-    private readonly ICapabilityClassifier _capabilityClassifier;
     private readonly IServiceProvider _serviceProvider;
     private readonly IApplicationResolver _applicationResolver;
     private readonly IConversationSessionService _conversationSessionService;
@@ -29,7 +28,6 @@ public sealed class StatusTool : ITool
 
     public StatusTool(
         IRuntimeStateService runtimeStateService,
-        ICapabilityClassifier capabilityClassifier,
         ILocalAIHealthService localAIHealthService,
         IConfirmationService confirmationService,
         IApplicationResolver applicationResolver,
@@ -45,7 +43,6 @@ public sealed class StatusTool : ITool
         ILogger<StatusTool> logger)
     {
         _runtimeStateService = runtimeStateService;
-        _capabilityClassifier = capabilityClassifier;
         _localAIHealthService = localAIHealthService;
         _confirmationService = confirmationService;
         _applicationResolver = applicationResolver;
@@ -137,8 +134,8 @@ public sealed class StatusTool : ITool
             MemoryCount = _memoryStore.GetAll().Count,
             MemoryCandidateCount = _memoryExtractionService.PendingCandidates.Count,
             MemoryStoreHealthy = _memoryStore.IsHealthy,
-            SupportedCapabilityCount = _capabilityClassifier.SupportedCapabilityCount,
-            MissingCapabilityDetectionEnabled = _capabilityClassifier.MissingCapabilityDetectionEnabled
+            SupportedCapabilityCount = registeredTools.Length,
+            MissingCapabilityDetectionEnabled = true
         };
 
         return Task.FromResult(new ToolResult

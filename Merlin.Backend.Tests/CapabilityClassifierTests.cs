@@ -22,6 +22,7 @@ public sealed class CapabilityClassifierTests
     [InlineData("show news")]
     [InlineData("can you pull up the newsfeed for me")]
     [InlineData("search web")]
+    [InlineData("search internet")]
     [InlineData("search the internet for Godot tutorials")]
     [InlineData("check folders")]
     [InlineData("check my folders")]
@@ -39,6 +40,7 @@ public sealed class CapabilityClassifierTests
 
     [Theory]
     [InlineData("delete files")]
+    [InlineData("delete all files")]
     [InlineData("delete all my files")]
     [InlineData("wipe drive")]
     [InlineData("wipe my hard drive")]
@@ -64,9 +66,22 @@ public sealed class CapabilityClassifierTests
         Assert.Equal("asdfghjkl qwerty", result.NormalizedCommand);
     }
 
+    [Fact]
+    public void Classify_WhenQuestionIsHarmless_ReturnsGeneralConversation()
+    {
+        var classifier = CreateClassifier();
+
+        var result = classifier.Classify("what time is it?");
+
+        Assert.Equal("general_conversation", result.Intent);
+        Assert.Equal("chat what time is it", result.NormalizedCommand);
+    }
+
     private static CapabilityClassifier CreateClassifier()
     {
-        return new CapabilityClassifier(new ToolRegistry([new FakeTool()]));
+        return new CapabilityClassifier(
+            new ToolRegistry([new FakeTool()]),
+            TestCapabilityOptions.Create());
     }
 
     private sealed class FakeTool : ITool

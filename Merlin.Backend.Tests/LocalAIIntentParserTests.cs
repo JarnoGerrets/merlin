@@ -52,6 +52,24 @@ public sealed class LocalAIIntentParserTests
     }
 
     [Theory]
+    [InlineData("""{"intent":"missing_capability","normalizedCommand":"can you pull up the newsfeed for me","confidence":0.9}""", "missing_capability", "can you pull up the newsfeed for me")]
+    [InlineData("""{"intent":"unsupported_action","normalizedCommand":"delete all my files","confidence":0.95}""", "unsupported_action", "delete all my files")]
+    [InlineData("""{"intent":"unknown_input","normalizedCommand":"asdfghjkl qwerty","confidence":0.9}""", "unknown_input", "asdfghjkl qwerty")]
+    public async Task ParseAsync_WhenModelReturnsNonExecutableClassification_ReturnsIntent(
+        string modelResponse,
+        string expectedIntent,
+        string expectedCommand)
+    {
+        var parser = CreateParser(new FakeLocalAIClient(modelResponse));
+
+        var result = await parser.ParseAsync(expectedCommand);
+
+        Assert.Equal(expectedIntent, result.Intent);
+        Assert.Equal(expectedCommand, result.NormalizedCommand);
+        Assert.True(result.Confidence >= 0.9);
+    }
+
+    [Theory]
     [InlineData("""{"intent":"tool_discovery","normalizedCommand":"list tools","confidence":0.9}""")]
     [InlineData("""
         ```json
@@ -139,7 +157,23 @@ public sealed class LocalAIIntentParserTests
         Assert.Contains("confirmation", client.LastPrompt);
         Assert.Contains("general_conversation", client.LastPrompt);
         Assert.Contains("unsupported_action", client.LastPrompt);
+        Assert.Contains("missing_capability", client.LastPrompt);
+        Assert.Contains("unknown_input", client.LastPrompt);
         Assert.Contains("unknown", client.LastPrompt);
+    }
+
+    [Fact]
+    public async Task ParseAsync_PromptExplainsClassificationMeanings()
+    {
+        var client = new FakeLocalAIClient("""{"intent":"unknown","normalizedCommand":"","confidence":0}""");
+        var parser = CreateParser(client);
+
+        await parser.ParseAsync("hello");
+
+        Assert.Contains("The user asks for a reasonable capability Merlin does not currently have", client.LastPrompt);
+        Assert.Contains("intentionally unsafe or disallowed", client.LastPrompt);
+        Assert.Contains("The request is not understandable", client.LastPrompt);
+        Assert.Contains("Safe conversation or a question", client.LastPrompt);
     }
 
     [Fact]

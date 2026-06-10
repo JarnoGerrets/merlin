@@ -124,6 +124,7 @@ public sealed class StatusToolTests
         var services = new ServiceCollection();
         services.AddSingleton(TestApplicationLaunchOptions.Create());
         services.AddSingleton(Options.Create(new LocalAIOptions { Enabled = false }));
+        services.AddSingleton(TestCapabilityOptions.Create());
         services.AddSingleton<IWebHostEnvironment>(new FakeWebHostEnvironment());
         services.AddSingleton<ILogger<StatusTool>>(NullLogger<StatusTool>.Instance);
         services.AddSingleton<ICapabilityClassifier, CapabilityClassifier>();

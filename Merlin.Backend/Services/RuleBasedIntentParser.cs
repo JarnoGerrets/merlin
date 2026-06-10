@@ -46,7 +46,7 @@ public sealed class RuleBasedIntentParser : IIntentParser
         "explain merlin"
     ];
 
-    private static readonly string[] UnsupportedActionPhrases =
+    private static readonly string[] MissingCapabilityPhrases =
     [
         "can you check my folders",
         "can you check my files",
@@ -56,10 +56,20 @@ public sealed class RuleBasedIntentParser : IIntentParser
         "check this document",
         "check if excel is installed",
         "search my hard drive",
+        "clean my downloads folder"
+    ];
+
+    private static readonly string[] UnsupportedActionPhrases =
+    [
         "delete my files",
+        "delete all my files",
+        "delete files",
+        "wipe my hard drive",
+        "wipe drive",
+        "disable windows security",
+        "disable windows defender",
         "install chrome",
         "update windows",
-        "clean my downloads folder",
         "download software",
         "open powershell"
     ];
@@ -103,6 +113,11 @@ public sealed class RuleBasedIntentParser : IIntentParser
         if (TryParseGeneralConversation(normalizedMessage, originalMessage, out var conversationResult))
         {
             return Task.FromResult(conversationResult);
+        }
+
+        if (TryParseMissingCapability(normalizedMessage, originalMessage, out var missingCapabilityResult))
+        {
+            return Task.FromResult(missingCapabilityResult);
         }
 
         if (TryParseUnsupportedAction(normalizedMessage, originalMessage, out var unsupportedActionResult))
@@ -155,6 +170,28 @@ public sealed class RuleBasedIntentParser : IIntentParser
             result = new IntentParseResult
             {
                 Intent = "unsupported_action",
+                NormalizedCommand = normalizedMessage,
+                Confidence = 0.95,
+                OriginalMessage = originalMessage
+            };
+
+            return true;
+        }
+
+        result = Unknown(originalMessage, normalizedMessage);
+        return false;
+    }
+
+    private static bool TryParseMissingCapability(
+        string normalizedMessage,
+        string originalMessage,
+        out IntentParseResult result)
+    {
+        if (MissingCapabilityPhrases.Any(phrase => string.Equals(normalizedMessage, phrase, StringComparison.OrdinalIgnoreCase)))
+        {
+            result = new IntentParseResult
+            {
+                Intent = "missing_capability",
                 NormalizedCommand = normalizedMessage,
                 Confidence = 0.95,
                 OriginalMessage = originalMessage

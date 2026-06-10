@@ -17,6 +17,8 @@ public class LocalAIIntentParser : IIntentParser
         "confirmation",
         "general_conversation",
         "unsupported_action",
+        "missing_capability",
+        "unknown_input",
         "unknown"
     };
 
@@ -111,7 +113,9 @@ public class LocalAIIntentParser : IIntentParser
                     NormalizedCommand = $"chat {originalMessage.Trim()}"
                 };
             }
-            else if (string.Equals(modelResult.Intent, "unsupported_action", StringComparison.OrdinalIgnoreCase))
+            else if (string.Equals(modelResult.Intent, "unsupported_action", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(modelResult.Intent, "missing_capability", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(modelResult.Intent, "unknown_input", StringComparison.OrdinalIgnoreCase))
             {
                 return new IntentParseResult
                 {
@@ -251,14 +255,22 @@ Allowed intents:
 - confirmation
 - general_conversation
 - unsupported_action
-- unknown
+- missing_capability
+- unknown_input
+- unknown (internal fallback only when no supported classification applies)
+
+Intent meanings:
+- missing_capability: The user asks for a reasonable capability Merlin does not currently have, such as web search, news feed, email, calendar, folder/file inspection, or live/current information without a dedicated tool.
+- unsupported_action: The user asks for something intentionally unsafe or disallowed, such as deleting files, wiping disks, disabling security, or bypassing confirmations.
+- unknown_input: The request is not understandable.
+- general_conversation: Safe conversation or a question that does not require a tool.
 
 Available tools:
 {{toolMetadata}}
 
 Return this exact shape:
 {
-  "intent": "open_application|open_url|tool_discovery|diagnostics|confirmation|general_conversation|unsupported_action|unknown",
+  "intent": "open_application|open_url|tool_discovery|diagnostics|confirmation|general_conversation|unsupported_action|missing_capability|unknown_input|unknown",
   "normalizedCommand": "normalized command for an existing tool",
   "confidence": 0.0
 }
@@ -271,8 +283,10 @@ Normalization examples:
 - "confirm" -> {"intent":"confirmation","normalizedCommand":"confirm","confidence":0.85}
 - "choose 1" -> {"intent":"confirmation","normalizedCommand":"choose 1","confidence":0.85}
 - "tell me a joke" -> {"intent":"general_conversation","normalizedCommand":"tell me a joke","confidence":0.9}
+- "search my hard drive" -> {"intent":"missing_capability","normalizedCommand":"search my hard drive","confidence":0.9}
 - "delete my files" -> {"intent":"unsupported_action","normalizedCommand":"delete my files","confidence":0.9}
-- unsupported requests -> {"intent":"unknown","normalizedCommand":"","confidence":0.0}
+- unclear input -> {"intent":"unknown_input","normalizedCommand":"original unclear input","confidence":0.8}
+- unsupported or unrecognized requests -> {"intent":"unknown","normalizedCommand":"","confidence":0.0}
 
 User message:
 {{message}}
