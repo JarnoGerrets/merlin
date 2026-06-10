@@ -71,10 +71,10 @@ public sealed class CapabilityClassifierTests
     {
         var classifier = CreateClassifier();
 
-        var result = classifier.Classify("what time is it?");
+        var result = classifier.Classify("who are you?");
 
         Assert.Equal("general_conversation", result.Intent);
-        Assert.Equal("chat what time is it", result.NormalizedCommand);
+        Assert.Equal("chat who are you", result.NormalizedCommand);
     }
 
     private static CapabilityClassifier CreateClassifier()

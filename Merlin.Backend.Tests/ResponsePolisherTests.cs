@@ -9,12 +9,16 @@ public sealed class ResponsePolisherTests
     [Fact]
     public async Task PolishMessageAsync_WhenUnsupportedAction_OnlyChangesMessage()
     {
-        var response = CreateResponse("Unsupported action.", "UNSUPPORTED_ACTION", "unsupported_action");
+        var response = CreateResponse(
+            "Unsupported action.",
+            "UNSUPPORTED_ACTION",
+            "unsupported_action",
+            capabilityId: "destructive_file_action");
         var polisher = CreatePolisher();
 
         var message = await polisher.PolishMessageAsync(response);
 
-        Assert.NotEqual(response.Message, message);
+        Assert.Contains("destructive file actions", message);
         Assert.False(response.Success);
         Assert.Equal("UNSUPPORTED_ACTION", response.ErrorCode);
         Assert.Equal("unsupported_action", response.Intent);
@@ -69,7 +73,8 @@ public sealed class ResponsePolisherTests
             "Missing capability.",
             "MISSING_CAPABILITY",
             "missing_capability",
-            "can you pull up the newsfeed for me?");
+            "can you pull up the newsfeed for me?",
+            "news");
         var polisher = CreatePolisher();
 
         var message = await polisher.PolishMessageAsync(response);
@@ -100,7 +105,8 @@ public sealed class ResponsePolisherTests
         string message,
         string? errorCode,
         string? intent,
-        string originalMessage = "test")
+        string originalMessage = "test",
+        string? capabilityId = null)
     {
         return new AssistantResponse
         {
@@ -110,6 +116,7 @@ public sealed class ResponsePolisherTests
             ErrorCode = errorCode,
             ToolName = "General Conversation",
             Intent = intent,
+            CapabilityId = capabilityId,
             IntentConfidence = 0.9,
             OriginalMessage = originalMessage,
             ParserUsed = "test-parser"

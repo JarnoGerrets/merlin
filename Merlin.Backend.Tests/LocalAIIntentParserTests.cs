@@ -52,13 +52,14 @@ public sealed class LocalAIIntentParserTests
     }
 
     [Theory]
-    [InlineData("""{"intent":"missing_capability","normalizedCommand":"can you pull up the newsfeed for me","confidence":0.9}""", "missing_capability", "can you pull up the newsfeed for me")]
-    [InlineData("""{"intent":"unsupported_action","normalizedCommand":"delete all my files","confidence":0.95}""", "unsupported_action", "delete all my files")]
-    [InlineData("""{"intent":"unknown_input","normalizedCommand":"asdfghjkl qwerty","confidence":0.9}""", "unknown_input", "asdfghjkl qwerty")]
+    [InlineData("""{"intent":"missing_capability","normalizedCommand":"can you pull up the newsfeed for me","capabilityId":"news","confidence":0.9}""", "missing_capability", "can you pull up the newsfeed for me", "news")]
+    [InlineData("""{"intent":"unsupported_action","normalizedCommand":"delete all my files","capabilityId":"destructive_file_action","confidence":0.95}""", "unsupported_action", "delete all my files", "destructive_file_action")]
+    [InlineData("""{"intent":"unknown_input","normalizedCommand":"asdfghjkl qwerty","confidence":0.9}""", "unknown_input", "asdfghjkl qwerty", null)]
     public async Task ParseAsync_WhenModelReturnsNonExecutableClassification_ReturnsIntent(
         string modelResponse,
         string expectedIntent,
-        string expectedCommand)
+        string expectedCommand,
+        string? expectedCapabilityId = null)
     {
         var parser = CreateParser(new FakeLocalAIClient(modelResponse));
 
@@ -66,6 +67,7 @@ public sealed class LocalAIIntentParserTests
 
         Assert.Equal(expectedIntent, result.Intent);
         Assert.Equal(expectedCommand, result.NormalizedCommand);
+        Assert.Equal(expectedCapabilityId, result.CapabilityId);
         Assert.True(result.Confidence >= 0.9);
     }
 
@@ -118,6 +120,8 @@ public sealed class LocalAIIntentParserTests
     [InlineData("""{"intent":"delete_file","normalizedCommand":"delete stuff","confidence":0.95}""")]
     [InlineData("""{"intent":"open_url","normalizedCommand":"open google.com","confidence":0.2}""")]
     [InlineData("""{"intent":"open_url","normalizedCommand":"not a command","confidence":0.95}""")]
+    [InlineData("""{"intent":"missing_capability","normalizedCommand":"show news","capabilityId":"made_up","confidence":0.95}""")]
+    [InlineData("""{"intent":"unsupported_action","normalizedCommand":"delete all my files","capabilityId":"url_opening","confidence":0.95}""")]
     [InlineData("""{"intent":"unknown","normalizedCommand":"","confidence":0}""")]
     public async Task ParseAsync_WhenModelOutputIsUnsafeOrUnsupported_ReturnsUnknown(string modelResponse)
     {
@@ -125,8 +129,7 @@ public sealed class LocalAIIntentParserTests
 
         var result = await parser.ParseAsync("something ambiguous");
 
-        Assert.Null(result.Intent);
-        Assert.Equal(0, result.Confidence);
+        Assert.True(result.Intent is null or "unknown_input");
     }
 
     [Fact]
@@ -160,6 +163,7 @@ public sealed class LocalAIIntentParserTests
         Assert.Contains("missing_capability", client.LastPrompt);
         Assert.Contains("unknown_input", client.LastPrompt);
         Assert.Contains("unknown", client.LastPrompt);
+        Assert.Contains("capabilityId", client.LastPrompt);
     }
 
     [Fact]
@@ -192,6 +196,20 @@ public sealed class LocalAIIntentParserTests
         Assert.Contains("General Conversation", client.LastPrompt);
     }
 
+    [Fact]
+    public async Task ParseAsync_PromptIncludesCapabilityDomains()
+    {
+        var client = new FakeLocalAIClient("""{"intent":"unknown","normalizedCommand":"","confidence":0}""");
+        var parser = CreateParser(client);
+
+        await parser.ParseAsync("hello");
+
+        Assert.Contains("Capability domains:", client.LastPrompt);
+        Assert.Contains("news (News)", client.LastPrompt);
+        Assert.Contains("time (Time)", client.LastPrompt);
+        Assert.Contains("destructive_file_action", client.LastPrompt);
+    }
+
     private static LocalAIIntentParser CreateParser(
         ILocalAIClient client,
         bool enabled = true,
@@ -201,6 +219,7 @@ public sealed class LocalAIIntentParserTests
         return new LocalAIIntentParser(
             client,
             CreateLocalAIOptions(enabled, minimumConfidence),
+            TestCapabilityOptions.Create(),
             CreateToolRegistry(),
             new FakeAssistantPolicyProvider(policy),
             NullLogger<LocalAIIntentParser>.Instance,

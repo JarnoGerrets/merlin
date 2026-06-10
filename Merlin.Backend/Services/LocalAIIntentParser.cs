@@ -27,6 +27,7 @@ public class LocalAIIntentParser : IIntentParser
     private readonly ILocalAIClient _localAIClient;
     private readonly ILocalAIHealthService _localAIHealthService;
     private readonly ILogger<LocalAIIntentParser> _logger;
+    private readonly CapabilityOptions _capabilityOptions;
     private readonly LocalAIOptions _options;
     private readonly IAssistantPolicyProvider _policyProvider;
     private readonly ToolRegistry _toolRegistry;
@@ -34,6 +35,7 @@ public class LocalAIIntentParser : IIntentParser
     public LocalAIIntentParser(
         ILocalAIClient localAIClient,
         IOptions<LocalAIOptions> options,
+        IOptions<CapabilityOptions> capabilityOptions,
         ToolRegistry toolRegistry,
         IAssistantPolicyProvider policyProvider,
         ILogger<LocalAIIntentParser> logger,
@@ -42,6 +44,7 @@ public class LocalAIIntentParser : IIntentParser
         _localAIClient = localAIClient;
         _localAIHealthService = localAIHealthService;
         _options = options.Value;
+        _capabilityOptions = MergeWithDefaults(capabilityOptions.Value);
         _policyProvider = policyProvider;
         _toolRegistry = toolRegistry;
         _logger = logger;
@@ -106,6 +109,15 @@ public class LocalAIIntentParser : IIntentParser
                 return Unknown(originalMessage);
             }
 
+            var capability = string.IsNullOrWhiteSpace(modelResult.CapabilityId)
+                ? FindCapabilityByIntent(modelResult.Intent)
+                : FindCapabilityById(modelResult.CapabilityId);
+
+            if (!IsCapabilityValidForIntent(modelResult.Intent, capability))
+            {
+                return UnknownInput(originalMessage);
+            }
+
             if (string.Equals(modelResult.Intent, "general_conversation", StringComparison.OrdinalIgnoreCase))
             {
                 modelResult = modelResult with
@@ -120,9 +132,11 @@ public class LocalAIIntentParser : IIntentParser
                 return new IntentParseResult
                 {
                     Intent = modelResult.Intent,
-                    NormalizedCommand = originalMessage.Trim().ToLowerInvariant(),
+                    NormalizedCommand = modelResult.NormalizedCommand,
                     Confidence = modelResult.Confidence,
-                    OriginalMessage = originalMessage
+                    OriginalMessage = originalMessage,
+                    CapabilityId = capability?.Id,
+                    CapabilityName = capability?.Name
                 };
             }
 
@@ -136,7 +150,9 @@ public class LocalAIIntentParser : IIntentParser
                 Intent = modelResult.Intent,
                 NormalizedCommand = modelResult.NormalizedCommand,
                 Confidence = modelResult.Confidence,
-                OriginalMessage = originalMessage
+                OriginalMessage = originalMessage,
+                CapabilityId = capability?.Id,
+                CapabilityName = capability?.Name
             };
         }
         catch (JsonException exception)
@@ -233,12 +249,27 @@ public class LocalAIIntentParser : IIntentParser
         };
     }
 
+    private static IntentParseResult UnknownInput(string originalMessage)
+    {
+        return new IntentParseResult
+        {
+            Intent = "unknown_input",
+            NormalizedCommand = originalMessage.Trim().ToLowerInvariant(),
+            Confidence = 0.8,
+            OriginalMessage = originalMessage
+        };
+    }
+
     internal string BuildPrompt(string message)
     {
         var toolMetadata = string.Join(
             Environment.NewLine,
             _toolRegistry.GetTools().Select(tool =>
                 $"- {tool.Name}: {tool.Description} Examples: {string.Join(", ", tool.Examples)}"));
+        var capabilityDomains = string.Join(
+            Environment.NewLine,
+            _capabilityOptions.CapabilityDomains.Select(domain =>
+                $"- {domain.Id} ({domain.Name}): implemented={domain.IsImplemented}, intent={domain.ImplementedIntent ?? "none"}, safety={domain.SafetyLevel}. {domain.Description}"));
         var policy = _policyProvider.GetPolicyText();
 
         return $$"""
@@ -268,25 +299,29 @@ Intent meanings:
 Available tools:
 {{toolMetadata}}
 
+Capability domains:
+{{capabilityDomains}}
+
 Return this exact shape:
 {
   "intent": "open_application|open_url|tool_discovery|diagnostics|confirmation|general_conversation|unsupported_action|missing_capability|unknown_input|unknown",
   "normalizedCommand": "normalized command for an existing tool",
+  "capabilityId": "one configured capability domain id or null",
   "confidence": 0.0
 }
 
 Normalization examples:
-- "could you open notepad for me" -> {"intent":"open_application","normalizedCommand":"open notepad","confidence":0.85}
-- "take me to google.com" -> {"intent":"open_url","normalizedCommand":"open google.com","confidence":0.85}
-- "what tools do you have" -> {"intent":"tool_discovery","normalizedCommand":"list tools","confidence":0.85}
-- "show status" -> {"intent":"diagnostics","normalizedCommand":"show status","confidence":0.85}
-- "confirm" -> {"intent":"confirmation","normalizedCommand":"confirm","confidence":0.85}
-- "choose 1" -> {"intent":"confirmation","normalizedCommand":"choose 1","confidence":0.85}
-- "tell me a joke" -> {"intent":"general_conversation","normalizedCommand":"tell me a joke","confidence":0.9}
-- "search my hard drive" -> {"intent":"missing_capability","normalizedCommand":"search my hard drive","confidence":0.9}
-- "delete my files" -> {"intent":"unsupported_action","normalizedCommand":"delete my files","confidence":0.9}
-- unclear input -> {"intent":"unknown_input","normalizedCommand":"original unclear input","confidence":0.8}
-- unsupported or unrecognized requests -> {"intent":"unknown","normalizedCommand":"","confidence":0.0}
+- "could you open notepad for me" -> {"intent":"open_application","normalizedCommand":"open notepad","capabilityId":"application_launch","confidence":0.85}
+- "take me to google.com" -> {"intent":"open_url","normalizedCommand":"open google.com","capabilityId":"url_opening","confidence":0.85}
+- "what tools do you have" -> {"intent":"tool_discovery","normalizedCommand":"list tools","capabilityId":"tool_discovery","confidence":0.85}
+- "show status" -> {"intent":"diagnostics","normalizedCommand":"show status","capabilityId":"diagnostics","confidence":0.85}
+- "confirm" -> {"intent":"confirmation","normalizedCommand":"confirm","capabilityId":"confirmation","confidence":0.85}
+- "tell me a joke" -> {"intent":"general_conversation","normalizedCommand":"tell me a joke","capabilityId":"general_conversation","confidence":0.9}
+- "can you pull up the newsfeed" -> {"intent":"missing_capability","normalizedCommand":"can you pull up the newsfeed","capabilityId":"news","confidence":0.9}
+- "what time is it" -> {"intent":"missing_capability","normalizedCommand":"what time is it","capabilityId":"time","confidence":0.9}
+- "delete all my files" -> {"intent":"unsupported_action","normalizedCommand":"delete all my files","capabilityId":"destructive_file_action","confidence":0.95}
+- unclear input -> {"intent":"unknown_input","normalizedCommand":"original unclear input","capabilityId":null,"confidence":0.8}
+- unrecognized requests -> {"intent":"unknown","normalizedCommand":"","capabilityId":null,"confidence":0.0}
 
 User message:
 {{message}}
@@ -303,5 +338,58 @@ User message:
 
         [JsonPropertyName("confidence")]
         public double Confidence { get; init; }
+
+        [JsonPropertyName("capabilityId")]
+        public string? CapabilityId { get; init; }
+    }
+
+    private CapabilityDomain? FindCapabilityById(string capabilityId)
+    {
+        return _capabilityOptions.CapabilityDomains.FirstOrDefault(domain =>
+            string.Equals(domain.Id, capabilityId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private CapabilityDomain? FindCapabilityByIntent(string? intent)
+    {
+        return _capabilityOptions.CapabilityDomains.FirstOrDefault(domain =>
+            string.Equals(domain.ImplementedIntent, intent, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsCapabilityValidForIntent(string intent, CapabilityDomain? capability)
+    {
+        if (string.Equals(intent, "unknown_input", StringComparison.OrdinalIgnoreCase))
+        {
+            return capability is null;
+        }
+
+        if (capability is null)
+        {
+            return false;
+        }
+
+        if (string.Equals(intent, "missing_capability", StringComparison.OrdinalIgnoreCase))
+        {
+            return !capability.IsImplemented
+                && string.Equals(capability.SafetyLevel, "missing", StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (string.Equals(intent, "unsupported_action", StringComparison.OrdinalIgnoreCase))
+        {
+            return !capability.IsImplemented
+                && string.Equals(capability.SafetyLevel, "unsupported", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return capability.IsImplemented
+            && string.Equals(capability.ImplementedIntent, intent, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static CapabilityOptions MergeWithDefaults(CapabilityOptions configuredOptions)
+    {
+        if (configuredOptions.CapabilityDomains.Count == 0)
+        {
+            configuredOptions.CapabilityDomains = CapabilityOptions.CreateDefault().CapabilityDomains;
+        }
+
+        return configuredOptions;
     }
 }

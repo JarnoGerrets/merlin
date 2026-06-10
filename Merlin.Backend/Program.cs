@@ -9,8 +9,17 @@ builder.Services.Configure<ApplicationLaunchOptions>(
     builder.Configuration.GetSection("ApplicationLaunch"));
 builder.Services.Configure<LocalAIOptions>(
     builder.Configuration.GetSection("LocalAI"));
-builder.Services.Configure<CapabilityOptions>(
-    builder.Configuration.GetSection("Capabilities"));
+builder.Services.Configure<CapabilityOptions>(options =>
+{
+    var configuredDomains = builder.Configuration
+        .GetSection("CapabilityDomains")
+        .Get<List<Merlin.Backend.Models.CapabilityDomain>>();
+
+    if (configuredDomains is { Count: > 0 })
+    {
+        options.CapabilityDomains = configuredDomains;
+    }
+});
 
 builder.Services.AddSingleton<IAIService, DummyAIService>();
 builder.Services.AddSingleton<IAssistantPolicyProvider, AssistantPolicyProvider>();

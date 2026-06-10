@@ -53,10 +53,12 @@ public sealed class CommandRouter
             return await PolishAsync(new AssistantResponse
             {
                 Success = false,
-                Message = "Unknown command.",
+                Message = "I couldn't understand that request.",
                 CorrelationId = correlationId,
-                ErrorCode = "UNKNOWN_COMMAND",
-                OriginalMessage = message
+                ErrorCode = "UNKNOWN_INPUT",
+                Intent = "unknown_input",
+                OriginalMessage = message,
+                ResponseType = "error"
             }, cancellationToken);
         }
 
@@ -80,6 +82,13 @@ public sealed class CommandRouter
                 _ => "Unsupported action."
             };
 
+            var responseType = intentResult.Intent switch
+            {
+                "missing_capability" => "limitation",
+                "unknown_input" => "error",
+                _ => "safety"
+            };
+
             return await PolishAsync(new AssistantResponse
             {
                 Success = false,
@@ -90,7 +99,10 @@ public sealed class CommandRouter
                 Intent = intentResult.Intent,
                 IntentConfidence = intentResult.Confidence,
                 OriginalMessage = intentResult.OriginalMessage,
-                ParserUsed = intentResult.ParserUsed
+                ParserUsed = intentResult.ParserUsed,
+                CapabilityId = intentResult.CapabilityId,
+                CapabilityName = intentResult.CapabilityName,
+                ResponseType = responseType
             }, cancellationToken);
         }
 
@@ -113,7 +125,10 @@ public sealed class CommandRouter
                 Intent = intentResult.Intent,
                 IntentConfidence = intentResult.Confidence,
                 OriginalMessage = intentResult.OriginalMessage,
-                ParserUsed = intentResult.ParserUsed
+                ParserUsed = intentResult.ParserUsed,
+                CapabilityId = intentResult.CapabilityId,
+                CapabilityName = intentResult.CapabilityName,
+                ResponseType = "error"
             }, cancellationToken);
         }
 
@@ -165,6 +180,9 @@ public sealed class CommandRouter
             IntentConfidence = intentResult.Confidence,
             OriginalMessage = intentResult.OriginalMessage,
             ParserUsed = intentResult.ParserUsed,
+            CapabilityId = result.CapabilityId ?? intentResult.CapabilityId,
+            CapabilityName = result.CapabilityName ?? intentResult.CapabilityName,
+            ResponseType = result.ResponseType ?? (result.Success ? "assistant" : "error"),
             AvailableTools = result.AvailableTools,
             Diagnostics = result.Diagnostics,
             Confirmation = result.Confirmation,
@@ -188,6 +206,9 @@ public sealed class CommandRouter
             IntentConfidence = response.IntentConfidence,
             OriginalMessage = response.OriginalMessage,
             ParserUsed = response.ParserUsed,
+            CapabilityId = response.CapabilityId,
+            CapabilityName = response.CapabilityName,
+            ResponseType = response.ResponseType,
             AvailableTools = response.AvailableTools,
             Diagnostics = response.Diagnostics,
             Confirmation = response.Confirmation,

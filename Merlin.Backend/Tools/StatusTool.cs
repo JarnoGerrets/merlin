@@ -15,6 +15,7 @@ public sealed class StatusTool : ITool
     private readonly IConfirmationService _confirmationService;
     private readonly ILocalAIHealthService _localAIHealthService;
     private readonly ILogger<StatusTool> _logger;
+    private readonly CapabilityOptions _capabilityOptions;
     private readonly LocalAIOptions _localAIOptions;
     private readonly IRuntimeStateService _runtimeStateService;
     private readonly IServiceProvider _serviceProvider;
@@ -39,6 +40,7 @@ public sealed class StatusTool : ITool
         ITrustedCommandStore trustedCommandStore,
         IServiceProvider serviceProvider,
         IOptions<LocalAIOptions> localAIOptions,
+        IOptions<CapabilityOptions> capabilityOptions,
         IWebHostEnvironment environment,
         ILogger<StatusTool> logger)
     {
@@ -54,6 +56,7 @@ public sealed class StatusTool : ITool
         _trustedCommandStore = trustedCommandStore;
         _serviceProvider = serviceProvider;
         _localAIOptions = localAIOptions.Value;
+        _capabilityOptions = MergeWithDefaults(capabilityOptions.Value);
         _environment = environment;
         _logger = logger;
     }
@@ -134,8 +137,14 @@ public sealed class StatusTool : ITool
             MemoryCount = _memoryStore.GetAll().Count,
             MemoryCandidateCount = _memoryExtractionService.PendingCandidates.Count,
             MemoryStoreHealthy = _memoryStore.IsHealthy,
-            SupportedCapabilityCount = registeredTools.Length,
-            MissingCapabilityDetectionEnabled = true
+            SupportedCapabilityCount = _capabilityOptions.CapabilityDomains.Count(domain => domain.IsImplemented),
+            MissingCapabilityDetectionEnabled = true,
+            CapabilityDomainCount = _capabilityOptions.CapabilityDomains.Count,
+            ImplementedCapabilityCount = _capabilityOptions.CapabilityDomains.Count(domain => domain.IsImplemented),
+            MissingCapabilityCount = _capabilityOptions.CapabilityDomains.Count(domain =>
+                string.Equals(domain.SafetyLevel, "missing", StringComparison.OrdinalIgnoreCase)),
+            UnsupportedCapabilityCount = _capabilityOptions.CapabilityDomains.Count(domain =>
+                string.Equals(domain.SafetyLevel, "unsupported", StringComparison.OrdinalIgnoreCase))
         };
 
         return Task.FromResult(new ToolResult
@@ -146,5 +155,15 @@ public sealed class StatusTool : ITool
             Intent = IntentName,
             Diagnostics = diagnostics
         });
+    }
+
+    private static CapabilityOptions MergeWithDefaults(CapabilityOptions configuredOptions)
+    {
+        if (configuredOptions.CapabilityDomains.Count == 0)
+        {
+            configuredOptions.CapabilityDomains = CapabilityOptions.CreateDefault().CapabilityDomains;
+        }
+
+        return configuredOptions;
     }
 }

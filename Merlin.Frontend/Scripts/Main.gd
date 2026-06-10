@@ -116,6 +116,7 @@ func _on_response_received(response: Dictionary) -> void:
 	var success := bool(response.get("success", false))
 	var message := str(response.get("message", ""))
 	var error_code = response.get("errorCode", null)
+	var response_type := str(response.get("responseType", "assistant" if success else "error"))
 	var available_tools = response.get("availableTools", null)
 	var diagnostics = response.get("diagnostics", null)
 	var confirmation = response.get("confirmation", null)
@@ -131,9 +132,15 @@ func _on_response_received(response: Dictionary) -> void:
 		var formatted_error := _format_error_response(error_code, message)
 		if typeof(confirmation) == TYPE_DICTIONARY:
 			_add_assistant_message(_format_confirmation(message, confirmation, application_candidates), debug_text)
+		elif response_type == "limitation" or response_type == "safety":
+			_add_assistant_message(message, debug_text)
+			_clear_error()
+		elif response_type == "system":
+			_add_system_message(message)
+			_clear_error()
 		else:
 			_add_error_message(formatted_error, debug_text)
-		_show_error(formatted_error)
+			_show_error(formatted_error)
 
 	_update_pending_state()
 	_update_send_button()
@@ -201,6 +208,10 @@ func _format_diagnostics(message: String, diagnostics: Dictionary) -> String:
 		"Memory store healthy: %s" % str(diagnostics.get("memoryStoreHealthy", "")),
 		"Supported capabilities: %s" % str(diagnostics.get("supportedCapabilityCount", "")),
 		"Missing capability detection: %s" % str(diagnostics.get("missingCapabilityDetectionEnabled", "")),
+		"Capability domains: %s" % str(diagnostics.get("capabilityDomainCount", "")),
+		"Implemented capabilities: %s" % str(diagnostics.get("implementedCapabilityCount", "")),
+		"Missing capabilities: %s" % str(diagnostics.get("missingCapabilityCount", "")),
+		"Unsupported capabilities: %s" % str(diagnostics.get("unsupportedCapabilityCount", "")),
 		"Successful tools: %s" % str(diagnostics.get("totalSuccessfulToolExecutions", "")),
 		"Failed tools: %s" % str(diagnostics.get("totalFailedToolExecutions", "")),
 		"Pending confirmations: %s" % str(diagnostics.get("pendingConfirmations", "")),
@@ -276,6 +287,9 @@ func _format_debug_info(response: Dictionary) -> String:
 	var correlation_id := str(response.get("correlationId", ""))
 	var tool_name = response.get("toolName", null)
 	var intent = response.get("intent", null)
+	var capability_id = response.get("capabilityId", null)
+	var capability_name = response.get("capabilityName", null)
+	var response_type = response.get("responseType", null)
 	var error_code = response.get("errorCode", null)
 	var parser_used = response.get("parserUsed", null)
 
@@ -285,6 +299,12 @@ func _format_debug_info(response: Dictionary) -> String:
 		lines.append("toolName: %s" % str(tool_name))
 	if intent != null:
 		lines.append("intent: %s" % str(intent))
+	if capability_id != null:
+		lines.append("capabilityId: %s" % str(capability_id))
+	if capability_name != null:
+		lines.append("capabilityName: %s" % str(capability_name))
+	if response_type != null:
+		lines.append("responseType: %s" % str(response_type))
 	if error_code != null:
 		lines.append("errorCode: %s" % str(error_code))
 	if parser_used != null:

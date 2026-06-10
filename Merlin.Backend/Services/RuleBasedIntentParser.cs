@@ -150,7 +150,9 @@ public sealed class RuleBasedIntentParser : IIntentParser
                 Intent = "general_conversation",
                 NormalizedCommand = $"chat {normalizedMessage}",
                 Confidence = 0.95,
-                OriginalMessage = originalMessage
+                OriginalMessage = originalMessage,
+                CapabilityId = "general_conversation",
+                CapabilityName = "General Conversation"
             };
 
             return true;
@@ -172,7 +174,9 @@ public sealed class RuleBasedIntentParser : IIntentParser
                 Intent = "unsupported_action",
                 NormalizedCommand = normalizedMessage,
                 Confidence = 0.95,
-                OriginalMessage = originalMessage
+                OriginalMessage = originalMessage,
+                CapabilityId = GetUnsupportedCapabilityId(normalizedMessage),
+                CapabilityName = GetCapabilityName(GetUnsupportedCapabilityId(normalizedMessage))
             };
 
             return true;
@@ -194,7 +198,9 @@ public sealed class RuleBasedIntentParser : IIntentParser
                 Intent = "missing_capability",
                 NormalizedCommand = normalizedMessage,
                 Confidence = 0.95,
-                OriginalMessage = originalMessage
+                OriginalMessage = originalMessage,
+                CapabilityId = GetMissingCapabilityId(normalizedMessage),
+                CapabilityName = GetCapabilityName(GetMissingCapabilityId(normalizedMessage))
             };
 
             return true;
@@ -221,7 +227,9 @@ public sealed class RuleBasedIntentParser : IIntentParser
                 Intent = "tool_discovery",
                 NormalizedCommand = "list tools",
                 Confidence = phrase == normalizedMessage ? 0.98 : 0.9,
-                OriginalMessage = originalMessage
+                OriginalMessage = originalMessage,
+                CapabilityId = "tool_discovery",
+                CapabilityName = "Tool Discovery"
             };
 
             return true;
@@ -248,7 +256,9 @@ public sealed class RuleBasedIntentParser : IIntentParser
                 Intent = "diagnostics",
                 NormalizedCommand = "show status",
                 Confidence = 0.98,
-                OriginalMessage = originalMessage
+                OriginalMessage = originalMessage,
+                CapabilityId = "diagnostics",
+                CapabilityName = "Diagnostics"
             };
 
             return true;
@@ -275,7 +285,9 @@ public sealed class RuleBasedIntentParser : IIntentParser
                 Intent = "confirmation",
                 NormalizedCommand = normalizedMessage,
                 Confidence = 0.98,
-                OriginalMessage = originalMessage
+                OriginalMessage = originalMessage,
+                CapabilityId = "confirmation",
+                CapabilityName = "Confirmation"
             };
 
             return true;
@@ -308,7 +320,9 @@ public sealed class RuleBasedIntentParser : IIntentParser
                 Intent = "open_application",
                 NormalizedCommand = $"open {application.Key}",
                 Confidence = StartsWithAny(normalizedMessage, ["open ", "start ", "launch "]) ? 0.98 : 0.95,
-                OriginalMessage = originalMessage
+                OriginalMessage = originalMessage,
+                CapabilityId = "application_launch",
+                CapabilityName = "Application Launch"
             };
 
             return true;
@@ -324,7 +338,9 @@ public sealed class RuleBasedIntentParser : IIntentParser
                     Intent = "open_application",
                     NormalizedCommand = $"open {target}",
                     Confidence = 0.75,
-                    OriginalMessage = originalMessage
+                    OriginalMessage = originalMessage,
+                    CapabilityId = "application_launch",
+                    CapabilityName = "Application Launch"
                 };
 
                 return true;
@@ -376,7 +392,9 @@ public sealed class RuleBasedIntentParser : IIntentParser
                 Intent = "open_url",
                 NormalizedCommand = $"open {target}",
                 Confidence = prefix == "open " ? 0.98 : 0.94,
-                OriginalMessage = originalMessage
+                OriginalMessage = originalMessage,
+                CapabilityId = "url_opening",
+                CapabilityName = "URL Opening"
             };
 
             return true;
@@ -438,6 +456,54 @@ public sealed class RuleBasedIntentParser : IIntentParser
             || IsUncPath(target)
             || TryGetExplicitScheme(target, out _)
             || (target.Contains('.') && !target.Contains(' '));
+    }
+
+    private static string GetMissingCapabilityId(string normalizedMessage)
+    {
+        if (ContainsWholePhrase(normalizedMessage, "folder")
+            || ContainsWholePhrase(normalizedMessage, "folders")
+            || ContainsWholePhrase(normalizedMessage, "file")
+            || ContainsWholePhrase(normalizedMessage, "files")
+            || ContainsWholePhrase(normalizedMessage, "desktop")
+            || ContainsWholePhrase(normalizedMessage, "document")
+            || ContainsWholePhrase(normalizedMessage, "hard drive")
+            || ContainsWholePhrase(normalizedMessage, "downloads"))
+        {
+            return "file_access";
+        }
+
+        return "web_search";
+    }
+
+    private static string GetUnsupportedCapabilityId(string normalizedMessage)
+    {
+        if (ContainsWholePhrase(normalizedMessage, "delete")
+            || ContainsWholePhrase(normalizedMessage, "wipe")
+            || ContainsWholePhrase(normalizedMessage, "format"))
+        {
+            return "destructive_file_action";
+        }
+
+        if (ContainsWholePhrase(normalizedMessage, "install")
+            || ContainsWholePhrase(normalizedMessage, "download")
+            || ContainsWholePhrase(normalizedMessage, "update"))
+        {
+            return "software_installation";
+        }
+
+        return "system_settings";
+    }
+
+    private static string GetCapabilityName(string capabilityId)
+    {
+        return capabilityId switch
+        {
+            "file_access" => "File Access",
+            "destructive_file_action" => "Destructive File Action",
+            "software_installation" => "Software Installation",
+            "system_settings" => "System Settings",
+            _ => "Web Search"
+        };
     }
 
     private static bool TryGetExplicitScheme(string target, out string scheme)

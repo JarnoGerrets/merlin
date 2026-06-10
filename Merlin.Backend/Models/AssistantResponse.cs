@@ -20,6 +20,12 @@ public sealed class AssistantResponse
 
     public string? ParserUsed { get; init; }
 
+    public string? CapabilityId { get; init; }
+
+    public string? CapabilityName { get; init; }
+
+    public string? ResponseType { get; init; }
+
     public IReadOnlyCollection<ToolMetadata>? AvailableTools { get; init; }
 
     public DiagnosticsInfo? Diagnostics { get; init; }

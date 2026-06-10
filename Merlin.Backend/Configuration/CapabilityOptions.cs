@@ -1,86 +1,153 @@
+using Merlin.Backend.Models;
+
 namespace Merlin.Backend.Configuration;
 
 public sealed class CapabilityOptions
 {
-    public List<CapabilityRule> MissingCapabilities { get; set; } = [];
-
-    public List<CapabilityRule> UnsupportedActions { get; set; } = [];
+    public List<CapabilityDomain> CapabilityDomains { get; set; } = [];
 
     public static CapabilityOptions CreateDefault()
     {
         return new CapabilityOptions
         {
-            MissingCapabilities =
+            CapabilityDomains =
             [
-                new CapabilityRule
+                new CapabilityDomain
                 {
+                    Id = "application_launch",
+                    Name = "Application Launch",
+                    Description = "Open configured, trusted, or confirmed local applications.",
+                    IsImplemented = true,
+                    ImplementedIntent = "open_application",
+                    SafetyLevel = "confirmation_required"
+                },
+                new CapabilityDomain
+                {
+                    Id = "url_opening",
+                    Name = "URL Opening",
+                    Description = "Open safe HTTP or HTTPS URLs.",
+                    IsImplemented = true,
+                    ImplementedIntent = "open_url",
+                    SafetyLevel = "safe"
+                },
+                new CapabilityDomain
+                {
+                    Id = "tool_discovery",
+                    Name = "Tool Discovery",
+                    Description = "List implemented tools and their examples.",
+                    IsImplemented = true,
+                    ImplementedIntent = "tool_discovery",
+                    SafetyLevel = "safe"
+                },
+                new CapabilityDomain
+                {
+                    Id = "diagnostics",
+                    Name = "Diagnostics",
+                    Description = "Report Merlin backend health, status, and runtime diagnostics.",
+                    IsImplemented = true,
+                    ImplementedIntent = "diagnostics",
+                    SafetyLevel = "safe"
+                },
+                new CapabilityDomain
+                {
+                    Id = "confirmation",
+                    Name = "Confirmation",
+                    Description = "Confirm and execute pending safe actions.",
+                    IsImplemented = true,
+                    ImplementedIntent = "confirmation",
+                    SafetyLevel = "confirmation_required"
+                },
+                new CapabilityDomain
+                {
+                    Id = "general_conversation",
+                    Name = "General Conversation",
+                    Description = "Handle safe conversational interaction using the local AI model.",
+                    IsImplemented = true,
+                    ImplementedIntent = "general_conversation",
+                    SafetyLevel = "safe"
+                },
+                new CapabilityDomain
+                {
+                    Id = "time",
+                    Name = "Time",
+                    Description = "Tell the current time, date, or timezone-aware time.",
+                    IsImplemented = false,
+                    MissingMessage = "I understand that you're asking for the time, but I don't currently have a TimeTool.",
+                    SafetyLevel = "missing"
+                },
+                new CapabilityDomain
+                {
+                    Id = "news",
+                    Name = "News",
+                    Description = "Retrieve current news, headlines, or news feeds.",
+                    IsImplemented = false,
+                    MissingMessage = "I understand that you're asking for news, but I don't currently have a NewsTool or WebSearchTool.",
+                    SafetyLevel = "missing"
+                },
+                new CapabilityDomain
+                {
+                    Id = "web_search",
                     Name = "Web Search",
-                    Keywords =
-                    [
-                        "web search",
-                        "search web",
-                        "search the web",
-                        "search the internet",
-                        "internet",
-                        "google something"
-                    ],
-                    Message = "I understand that you want web search, but I do not currently have a WebSearchTool."
+                    Description = "Search the web or retrieve live/current information from the internet.",
+                    IsImplemented = false,
+                    MissingMessage = "I understand that you want web search, but I don't currently have a WebSearchTool.",
+                    SafetyLevel = "missing"
                 },
-                new CapabilityRule
+                new CapabilityDomain
                 {
-                    Name = "News Feed",
-                    Keywords = ["news", "newsfeed", "headlines"],
-                    Message = "I understand that you're asking me to show a news feed, but I don't currently have a NewsTool or WebSearchTool."
-                },
-                new CapabilityRule
-                {
-                    Name = "File Inspection",
-                    Keywords = ["folders", "folder", "files", "file", "hard drive", "desktop", "downloads"],
-                    Message = "I understand that you want file inspection, but I do not currently have a file/folder inspection tool."
-                },
-                new CapabilityRule
-                {
+                    Id = "email",
                     Name = "Email",
-                    Keywords = ["email", "emails", "mail"],
-                    Message = "I understand that you want me to check email, but I don't currently have an EmailTool."
+                    Description = "Read, search, or send email.",
+                    IsImplemented = false,
+                    MissingMessage = "I understand that you want email access, but I don't currently have an EmailTool.",
+                    SafetyLevel = "missing"
                 },
-                new CapabilityRule
+                new CapabilityDomain
                 {
+                    Id = "calendar",
                     Name = "Calendar",
-                    Keywords = ["calendar", "schedule"],
-                    Message = "I understand that you want calendar access, but I don't currently have a CalendarTool."
+                    Description = "Read or manage calendar events.",
+                    IsImplemented = false,
+                    MissingMessage = "I understand that you want calendar access, but I don't currently have a CalendarTool.",
+                    SafetyLevel = "missing"
                 },
-                new CapabilityRule
+                new CapabilityDomain
                 {
-                    Name = "System Scanner",
-                    Keywords = ["scanner", "scan"],
-                    Message = "I understand that you want system scanning, but I don't currently have a safe diagnostics scanner tool."
-                }
-            ],
-            UnsupportedActions =
-            [
-                new CapabilityRule
-                {
-                    Name = "Destructive File Actions",
-                    Keywords = ["delete all files", "delete all my files", "delete files", "delete my files", "wipe drive", "wipe my hard drive", "format disk", "format drive"],
-                    Message = "I cannot perform destructive system actions."
+                    Id = "file_access",
+                    Name = "File Access",
+                    Description = "Inspect folders, files, drives, desktop, downloads, or documents.",
+                    IsImplemented = false,
+                    MissingMessage = "I understand that you're asking me to inspect files or folders, but I don't currently have a file access tool.",
+                    SafetyLevel = "missing"
                 },
-                new CapabilityRule
+                new CapabilityDomain
                 {
-                    Name = "Security Bypass",
-                    Keywords = ["disable windows security", "disable windows defender", "disable defender", "bypass confirmation", "bypass confirmations"],
-                    Message = "I cannot disable security protections or bypass confirmation safeguards."
+                    Id = "system_settings",
+                    Name = "System Settings",
+                    Description = "Change operating system settings or security configuration.",
+                    IsImplemented = false,
+                    MissingMessage = "I understand that you're asking for system settings control, but I don't currently have a safe SystemSettingsTool.",
+                    SafetyLevel = "unsupported"
+                },
+                new CapabilityDomain
+                {
+                    Id = "software_installation",
+                    Name = "Software Installation",
+                    Description = "Install, download, update, or remove software.",
+                    IsImplemented = false,
+                    MissingMessage = "I understand that you're asking to install or update software, but Merlin does not support software installation.",
+                    SafetyLevel = "unsupported"
+                },
+                new CapabilityDomain
+                {
+                    Id = "destructive_file_action",
+                    Name = "Destructive File Action",
+                    Description = "Delete, wipe, format, or destructively modify files or drives.",
+                    IsImplemented = false,
+                    MissingMessage = "I understand the request, but Merlin does not support destructive file actions.",
+                    SafetyLevel = "unsupported"
                 }
             ]
         };
     }
-}
-
-public sealed class CapabilityRule
-{
-    public string Name { get; set; } = string.Empty;
-
-    public List<string> Keywords { get; set; } = [];
-
-    public string Message { get; set; } = string.Empty;
 }

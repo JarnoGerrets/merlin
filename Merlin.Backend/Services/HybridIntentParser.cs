@@ -91,7 +91,9 @@ public sealed class HybridIntentParser : IIntentParser
             NormalizedCommand = result.NormalizedCommand,
             Confidence = result.Confidence,
             OriginalMessage = result.OriginalMessage,
-            ParserUsed = parserName
+            ParserUsed = parserName,
+            CapabilityId = result.CapabilityId,
+            CapabilityName = result.CapabilityName
         };
     }
 }

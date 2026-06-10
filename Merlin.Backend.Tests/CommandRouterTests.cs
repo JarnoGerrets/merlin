@@ -117,15 +117,17 @@ public sealed class CommandRouterTests
     }
 
     [Fact]
-    public async Task RouteAsync_WhenMessageIsEmpty_ReturnsUnknownCommand()
+    public async Task RouteAsync_WhenMessageIsEmpty_ReturnsUnknownInput()
     {
         var router = CreateRouter();
 
         var response = await router.RouteAsync(" ");
 
         Assert.False(response.Success);
-        Assert.Equal("Unknown command.", response.Message);
-        Assert.Equal("UNKNOWN_COMMAND", response.ErrorCode);
+        Assert.Equal("I couldn't understand that request.", response.Message);
+        Assert.Equal("UNKNOWN_INPUT", response.ErrorCode);
+        Assert.Equal("unknown_input", response.Intent);
+        Assert.Equal("error", response.ResponseType);
     }
 
     [Fact]
@@ -191,7 +193,9 @@ public sealed class CommandRouterTests
                 NormalizedCommand = "delete all my files",
                 Confidence = 0.95,
                 OriginalMessage = "delete all my files",
-                ParserUsed = nameof(CapabilityClassifier)
+                ParserUsed = nameof(CapabilityClassifier),
+                CapabilityId = "destructive_file_action",
+                CapabilityName = "Destructive File Action"
             }),
             new ToolRegistry([new ThrowingTool()]),
             NullLogger<CommandRouter>.Instance,
@@ -203,8 +207,65 @@ public sealed class CommandRouterTests
         Assert.False(response.Success);
         Assert.Equal("UNSUPPORTED_ACTION", response.ErrorCode);
         Assert.Equal("unsupported_action", response.Intent);
+        Assert.Equal("destructive_file_action", response.CapabilityId);
+        Assert.Equal("safety", response.ResponseType);
         Assert.Equal("General Conversation", response.ToolName);
-        Assert.Contains("destructive system actions", response.Message);
+        Assert.Contains("destructive file actions", response.Message);
+    }
+
+    [Fact]
+    public async Task RouteAsync_WhenMissingCapabilityIsDetected_DoesNotExecuteTool()
+    {
+        var router = new CommandRouter(
+            new FixedIntentParser(new IntentParseResult
+            {
+                Intent = "missing_capability",
+                NormalizedCommand = "can you pull up the newsfeed",
+                Confidence = 0.92,
+                OriginalMessage = "can you pull up the newsfeed?",
+                ParserUsed = nameof(LocalAIIntentParser),
+                CapabilityId = "news",
+                CapabilityName = "News"
+            }),
+            new ToolRegistry([new ThrowingTool()]),
+            NullLogger<CommandRouter>.Instance,
+            new RuntimeStateService(),
+            new ResponsePolisher(TestCapabilityOptions.Create()));
+
+        var response = await router.RouteAsync("can you pull up the newsfeed?");
+
+        Assert.False(response.Success);
+        Assert.Equal("MISSING_CAPABILITY", response.ErrorCode);
+        Assert.Equal("missing_capability", response.Intent);
+        Assert.Equal("news", response.CapabilityId);
+        Assert.Equal("limitation", response.ResponseType);
+        Assert.Contains("NewsTool", response.Message);
+    }
+
+    [Fact]
+    public async Task RouteAsync_WhenUnknownInputIsDetected_DoesNotExecuteTool()
+    {
+        var router = new CommandRouter(
+            new FixedIntentParser(new IntentParseResult
+            {
+                Intent = "unknown_input",
+                NormalizedCommand = "asdfghjkl qwerty",
+                Confidence = 0.9,
+                OriginalMessage = "asdfghjkl qwerty",
+                ParserUsed = nameof(CapabilityClassifier)
+            }),
+            new ToolRegistry([new ThrowingTool()]),
+            NullLogger<CommandRouter>.Instance,
+            new RuntimeStateService(),
+            new ResponsePolisher(TestCapabilityOptions.Create()));
+
+        var response = await router.RouteAsync("asdfghjkl qwerty");
+
+        Assert.False(response.Success);
+        Assert.Equal("UNKNOWN_INPUT", response.ErrorCode);
+        Assert.Equal("unknown_input", response.Intent);
+        Assert.Equal("error", response.ResponseType);
+        Assert.Equal("I couldn't understand that request.", response.Message);
     }
 
     private static CommandRouter CreateRouter(params ITool[] tools)

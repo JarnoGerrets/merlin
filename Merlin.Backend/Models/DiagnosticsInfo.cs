@@ -75,4 +75,12 @@ public sealed class DiagnosticsInfo
     public int SupportedCapabilityCount { get; init; }
 
     public bool MissingCapabilityDetectionEnabled { get; init; }
+
+    public int CapabilityDomainCount { get; init; }
+
+    public int ImplementedCapabilityCount { get; init; }
+
+    public int MissingCapabilityCount { get; init; }
+
+    public int UnsupportedCapabilityCount { get; init; }
 }

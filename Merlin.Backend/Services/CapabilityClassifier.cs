@@ -6,6 +6,20 @@ namespace Merlin.Backend.Services;
 
 public sealed class CapabilityClassifier : ICapabilityClassifier
 {
+    private static readonly string[] DestructiveTerms =
+    [
+        "delete all files",
+        "delete all my files",
+        "delete files",
+        "delete my files",
+        "wipe drive",
+        "wipe my hard drive",
+        "format disk",
+        "format drive",
+        "disable windows defender",
+        "disable windows security"
+    ];
+
     private static readonly string[] QuestionPrefixes =
     [
         "what ",
@@ -41,45 +55,57 @@ public sealed class CapabilityClassifier : ICapabilityClassifier
 
         if (string.IsNullOrWhiteSpace(normalizedMessage) || LooksLikeUnknownInput(normalizedMessage))
         {
-            return CreateResult("unknown_input", normalizedMessage, originalMessage, 0.8);
+            return CreateResult("unknown_input", normalizedMessage, originalMessage, null, 0.8);
         }
 
-        if (FindMatchingRule(_capabilityOptions.UnsupportedActions, normalizedMessage) is not null)
+        if (DestructiveTerms.Any(term => ContainsWholePhrase(normalizedMessage, term)))
         {
-            return CreateResult("unsupported_action", normalizedMessage, originalMessage, 0.95);
+            return CreateResult(
+                "unsupported_action",
+                normalizedMessage,
+                originalMessage,
+                GetDomain("destructive_file_action"),
+                0.95);
         }
 
-        if (FindMatchingRule(_capabilityOptions.MissingCapabilities, normalizedMessage) is not null)
+        if (TryFindObviousMissingDomain(normalizedMessage, out var missingDomain))
         {
-            return CreateResult("missing_capability", normalizedMessage, originalMessage, 0.9);
+            return CreateResult("missing_capability", normalizedMessage, originalMessage, missingDomain, 0.9);
         }
 
         if (LooksLikeQuestion(normalizedMessage))
         {
+            var conversationDomain = GetDomain("general_conversation");
             return new IntentParseResult
             {
                 Intent = "general_conversation",
                 NormalizedCommand = $"chat {normalizedMessage}",
                 Confidence = 0.9,
                 OriginalMessage = originalMessage,
-                ParserUsed = nameof(CapabilityClassifier)
+                ParserUsed = nameof(CapabilityClassifier),
+                CapabilityId = conversationDomain?.Id,
+                CapabilityName = conversationDomain?.Name
             };
         }
 
+        var fallbackDomain = GetDomain("general_conversation");
         return new IntentParseResult
         {
             Intent = "general_conversation",
             NormalizedCommand = $"chat {normalizedMessage}",
             Confidence = 0.7,
             OriginalMessage = originalMessage,
-            ParserUsed = nameof(CapabilityClassifier)
+            ParserUsed = nameof(CapabilityClassifier),
+            CapabilityId = fallbackDomain?.Id,
+            CapabilityName = fallbackDomain?.Name
         };
     }
 
-    private static IntentParseResult CreateResult(
+    private IntentParseResult CreateResult(
         string intent,
         string normalizedMessage,
         string originalMessage,
+        CapabilityDomain? domain,
         double confidence)
     {
         return new IntentParseResult
@@ -88,7 +114,9 @@ public sealed class CapabilityClassifier : ICapabilityClassifier
             NormalizedCommand = normalizedMessage,
             Confidence = confidence,
             OriginalMessage = originalMessage,
-            ParserUsed = nameof(CapabilityClassifier)
+            ParserUsed = nameof(CapabilityClassifier),
+            CapabilityId = domain?.Id,
+            CapabilityName = domain?.Name
         };
     }
 
@@ -97,12 +125,42 @@ public sealed class CapabilityClassifier : ICapabilityClassifier
         return QuestionPrefixes.Any(prefix => normalizedMessage.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static CapabilityRule? FindMatchingRule(
-        IEnumerable<CapabilityRule> rules,
-        string normalizedMessage)
+    private bool TryFindObviousMissingDomain(string normalizedMessage, out CapabilityDomain? domain)
     {
-        return rules.FirstOrDefault(rule =>
-            rule.Keywords.Any(keyword => ContainsWholePhrase(normalizedMessage, Normalize(keyword))));
+        domain = null;
+
+        var domainId = normalizedMessage switch
+        {
+            var message when ContainsWholePhrase(message, "time") => "time",
+            var message when ContainsWholePhrase(message, "news")
+                || ContainsWholePhrase(message, "newsfeed")
+                || ContainsWholePhrase(message, "headlines") => "news",
+            var message when ContainsWholePhrase(message, "internet")
+                || ContainsWholePhrase(message, "web search")
+                || ContainsWholePhrase(message, "search web")
+                || ContainsWholePhrase(message, "search internet")
+                || ContainsWholePhrase(message, "search the internet") => "web_search",
+            var message when ContainsWholePhrase(message, "email")
+                || ContainsWholePhrase(message, "emails")
+                || ContainsWholePhrase(message, "mail") => "email",
+            var message when ContainsWholePhrase(message, "calendar") => "calendar",
+            var message when ContainsWholePhrase(message, "folder")
+                || ContainsWholePhrase(message, "folders")
+                || ContainsWholePhrase(message, "file")
+                || ContainsWholePhrase(message, "files")
+                || ContainsWholePhrase(message, "hard drive")
+                || ContainsWholePhrase(message, "desktop")
+                || ContainsWholePhrase(message, "downloads") => "file_access",
+            _ => null
+        };
+
+        if (domainId is null)
+        {
+            return false;
+        }
+
+        domain = GetDomain(domainId);
+        return domain is not null;
     }
 
     private static bool LooksLikeUnknownInput(string normalizedMessage)
@@ -157,18 +215,19 @@ public sealed class CapabilityClassifier : ICapabilityClassifier
         return beforeIsBoundary && afterIsBoundary;
     }
 
+    private CapabilityDomain? GetDomain(string domainId)
+    {
+        return _capabilityOptions.CapabilityDomains.FirstOrDefault(domain =>
+            string.Equals(domain.Id, domainId, StringComparison.OrdinalIgnoreCase));
+    }
+
     private static CapabilityOptions MergeWithDefaults(CapabilityOptions configuredOptions)
     {
         var defaults = CapabilityOptions.CreateDefault();
 
-        if (configuredOptions.MissingCapabilities.Count == 0)
+        if (configuredOptions.CapabilityDomains.Count == 0)
         {
-            configuredOptions.MissingCapabilities = defaults.MissingCapabilities;
-        }
-
-        if (configuredOptions.UnsupportedActions.Count == 0)
-        {
-            configuredOptions.UnsupportedActions = defaults.UnsupportedActions;
+            configuredOptions.CapabilityDomains = defaults.CapabilityDomains;
         }
 
         return configuredOptions;

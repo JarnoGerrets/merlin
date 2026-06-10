@@ -173,7 +173,7 @@ public sealed class HybridIntentParserTests
     }
 
     [Fact]
-    public async Task ParseAsync_WhenFallbackSeesTimeQuestion_ReturnsGeneralConversation()
+    public async Task ParseAsync_WhenFallbackSeesTimeQuestion_ReturnsMissingCapability()
     {
         var localParser = new FakeIntentParser(new IntentParseResult
         {
@@ -187,8 +187,8 @@ public sealed class HybridIntentParserTests
 
         var result = await parser.ParseAsync("what time is it?");
 
-        Assert.Equal("general_conversation", result.Intent);
-        Assert.Equal("chat what time is it", result.NormalizedCommand);
+        Assert.Equal("missing_capability", result.Intent);
+        Assert.Equal("time", result.CapabilityId);
         Assert.Equal(0, localParser.CallCount);
     }
 
@@ -200,7 +200,9 @@ public sealed class HybridIntentParserTests
             Intent = "missing_capability",
             NormalizedCommand = "can you pull up the newsfeed",
             Confidence = 0.9,
-            OriginalMessage = "can you pull up the newsfeed?"
+            OriginalMessage = "can you pull up the newsfeed?",
+            CapabilityId = "news",
+            CapabilityName = "News"
         });
 
         var parser = CreateParser(localParser, enabled: true);
@@ -208,6 +210,7 @@ public sealed class HybridIntentParserTests
         var result = await parser.ParseAsync("can you pull up the newsfeed?");
 
         Assert.Equal("missing_capability", result.Intent);
+        Assert.Equal("news", result.CapabilityId);
         Assert.Equal(nameof(LocalAIIntentParser), result.ParserUsed);
         Assert.Equal(1, localParser.CallCount);
     }
@@ -296,6 +299,7 @@ public sealed class HybridIntentParserTests
             : base(
                 new FakeLocalAIClient(),
                 Options.Create(new LocalAIOptions { Enabled = false }),
+                TestCapabilityOptions.Create(),
                 new Merlin.Backend.Services.ToolRegistry([]),
                 new FakeAssistantPolicyProvider(),
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<LocalAIIntentParser>.Instance,

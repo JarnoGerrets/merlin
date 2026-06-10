@@ -21,13 +21,11 @@ public sealed class ResponsePolisher : IResponsePolisher
 
         var message = response.ErrorCode switch
         {
-            "MISSING_CAPABILITY" => GetConfiguredMessage(
-                _capabilityOptions.MissingCapabilities,
-                response.OriginalMessage,
+            "MISSING_CAPABILITY" => GetDomainMessage(
+                response.CapabilityId,
                 "I understand what you're asking, but I don't currently have a tool that can do that."),
-            "UNSUPPORTED_ACTION" => GetConfiguredMessage(
-                _capabilityOptions.UnsupportedActions,
-                response.OriginalMessage,
+            "UNSUPPORTED_ACTION" => GetDomainMessage(
+                response.CapabilityId,
                 "I understand the request, but Merlin does not support that action."),
             "UNKNOWN_INPUT" => "I couldn't understand that request.",
             "UNKNOWN_COMMAND" => "I couldn't determine a supported action from your request.",
@@ -39,18 +37,14 @@ public sealed class ResponsePolisher : IResponsePolisher
         return Task.FromResult(message);
     }
 
-    private static string GetConfiguredMessage(
-        IEnumerable<CapabilityRule> rules,
-        string? message,
-        string fallbackMessage)
+    private string GetDomainMessage(string? capabilityId, string fallbackMessage)
     {
-        var normalized = message?.Trim().ToLowerInvariant() ?? string.Empty;
-        var rule = rules.FirstOrDefault(rule =>
-            rule.Keywords.Any(keyword => ContainsWholePhrase(normalized, Normalize(keyword))));
+        var domain = _capabilityOptions.CapabilityDomains.FirstOrDefault(item =>
+            string.Equals(item.Id, capabilityId, StringComparison.OrdinalIgnoreCase));
 
-        return string.IsNullOrWhiteSpace(rule?.Message)
+        return string.IsNullOrWhiteSpace(domain?.MissingMessage)
             ? fallbackMessage
-            : rule.Message;
+            : domain.MissingMessage;
     }
 
     private static bool IsCurrentInformationQuestion(string? message)
@@ -83,46 +77,11 @@ public sealed class ResponsePolisher : IResponsePolisher
     {
         var defaults = CapabilityOptions.CreateDefault();
 
-        if (configuredOptions.MissingCapabilities.Count == 0)
+        if (configuredOptions.CapabilityDomains.Count == 0)
         {
-            configuredOptions.MissingCapabilities = defaults.MissingCapabilities;
-        }
-
-        if (configuredOptions.UnsupportedActions.Count == 0)
-        {
-            configuredOptions.UnsupportedActions = defaults.UnsupportedActions;
+            configuredOptions.CapabilityDomains = defaults.CapabilityDomains;
         }
 
         return configuredOptions;
-    }
-
-    private static bool ContainsWholePhrase(string value, string phrase)
-    {
-        if (string.IsNullOrWhiteSpace(phrase))
-        {
-            return false;
-        }
-
-        var index = value.IndexOf(phrase, StringComparison.OrdinalIgnoreCase);
-        if (index < 0)
-        {
-            return false;
-        }
-
-        var beforeIsBoundary = index == 0 || !char.IsLetterOrDigit(value[index - 1]);
-        var afterIndex = index + phrase.Length;
-        var afterIsBoundary = afterIndex >= value.Length || !char.IsLetterOrDigit(value[afterIndex]);
-
-        return beforeIsBoundary && afterIsBoundary;
-    }
-
-    private static string Normalize(string value)
-    {
-        var trimmed = value.Trim().TrimEnd('.', '!', '?', ';', ':', ',');
-        return string.Join(
-            ' ',
-            trimmed
-                .ToLowerInvariant()
-                .Split(' ', StringSplitOptions.RemoveEmptyEntries));
     }
 }
