@@ -83,4 +83,6 @@ public sealed class DiagnosticsInfo
     public int MissingCapabilityCount { get; init; }
 
     public int UnsupportedCapabilityCount { get; init; }
+
+    public bool SystemResourceProviderEnabled { get; init; }
 }

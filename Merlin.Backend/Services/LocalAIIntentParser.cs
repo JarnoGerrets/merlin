@@ -15,11 +15,11 @@ public class LocalAIIntentParser : IIntentParser
         "tool_discovery",
         "diagnostics",
         "confirmation",
+        "system_resource_query",
         "general_conversation",
         "unsupported_action",
         "missing_capability",
-        "unknown_input",
-        "unknown"
+        "unknown_input"
     };
 
     private static readonly JsonSerializerOptions JsonSerializerOptions = new(JsonSerializerDefaults.Web);
@@ -100,11 +100,6 @@ public class LocalAIIntentParser : IIntentParser
                 || string.IsNullOrWhiteSpace(modelResult.NormalizedCommand)
                 || !AllowedIntents.Contains(modelResult.Intent)
                 || modelResult.Confidence < _options.MinimumConfidence)
-            {
-                return Unknown(originalMessage);
-            }
-
-            if (string.Equals(modelResult.Intent, "unknown", StringComparison.OrdinalIgnoreCase))
             {
                 return Unknown(originalMessage);
             }
@@ -284,11 +279,11 @@ Allowed intents:
 - tool_discovery
 - diagnostics
 - confirmation
+- system_resource_query
 - general_conversation
 - unsupported_action
 - missing_capability
 - unknown_input
-- unknown (internal fallback only when no supported classification applies)
 
 Intent meanings:
 - missing_capability: The user asks for a reasonable capability Merlin does not currently have, such as web search, news feed, email, calendar, folder/file inspection, or live/current information without a dedicated tool.
@@ -304,7 +299,7 @@ Capability domains:
 
 Return this exact shape:
 {
-  "intent": "open_application|open_url|tool_discovery|diagnostics|confirmation|general_conversation|unsupported_action|missing_capability|unknown_input|unknown",
+  "intent": "open_application|open_url|tool_discovery|diagnostics|confirmation|system_resource_query|general_conversation|unsupported_action|missing_capability|unknown_input",
   "normalizedCommand": "normalized command for an existing tool",
   "capabilityId": "one configured capability domain id or null",
   "confidence": 0.0
@@ -316,12 +311,14 @@ Normalization examples:
 - "what tools do you have" -> {"intent":"tool_discovery","normalizedCommand":"list tools","capabilityId":"tool_discovery","confidence":0.85}
 - "show status" -> {"intent":"diagnostics","normalizedCommand":"show status","capabilityId":"diagnostics","confidence":0.85}
 - "confirm" -> {"intent":"confirmation","normalizedCommand":"confirm","capabilityId":"confirmation","confidence":0.85}
+- "what time is it" -> {"intent":"system_resource_query","normalizedCommand":"system resource current_time","capabilityId":"system_time","confidence":0.9}
+- "what is today's date" -> {"intent":"system_resource_query","normalizedCommand":"system resource current_date","capabilityId":"system_date","confidence":0.9}
+- "what timezone am I in" -> {"intent":"system_resource_query","normalizedCommand":"system resource timezone","capabilityId":"system_timezone","confidence":0.9}
 - "tell me a joke" -> {"intent":"general_conversation","normalizedCommand":"tell me a joke","capabilityId":"general_conversation","confidence":0.9}
 - "can you pull up the newsfeed" -> {"intent":"missing_capability","normalizedCommand":"can you pull up the newsfeed","capabilityId":"news","confidence":0.9}
-- "what time is it" -> {"intent":"missing_capability","normalizedCommand":"what time is it","capabilityId":"time","confidence":0.9}
 - "delete all my files" -> {"intent":"unsupported_action","normalizedCommand":"delete all my files","capabilityId":"destructive_file_action","confidence":0.95}
 - unclear input -> {"intent":"unknown_input","normalizedCommand":"original unclear input","capabilityId":null,"confidence":0.8}
-- unrecognized requests -> {"intent":"unknown","normalizedCommand":"","capabilityId":null,"confidence":0.0}
+- unrecognized unclear requests -> {"intent":"unknown_input","normalizedCommand":"original unclear input","capabilityId":null,"confidence":0.8}
 
 User message:
 {{message}}

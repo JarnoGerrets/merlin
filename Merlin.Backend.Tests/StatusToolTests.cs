@@ -60,10 +60,11 @@ public sealed class StatusToolTests
         Assert.Null(result.Diagnostics.LocalAiLastWarmupUtc);
         Assert.Null(result.Diagnostics.LocalAiLastError);
         Assert.Null(result.Diagnostics.LocalAiLastLatencyMs);
-        Assert.Equal(6, result.Diagnostics.RegisteredToolCount);
+        Assert.Equal(7, result.Diagnostics.RegisteredToolCount);
         Assert.Contains("Open Application", result.Diagnostics.RegisteredTools);
         Assert.Contains("Open URL", result.Diagnostics.RegisteredTools);
         Assert.Contains("Tool Discovery", result.Diagnostics.RegisteredTools);
+        Assert.Contains("System Resource", result.Diagnostics.RegisteredTools);
         Assert.Contains("Status", result.Diagnostics.RegisteredTools);
         Assert.Contains("Confirmation", result.Diagnostics.RegisteredTools);
         Assert.Contains("General Conversation", result.Diagnostics.RegisteredTools);
@@ -85,6 +86,7 @@ public sealed class StatusToolTests
         Assert.Equal(0, result.Diagnostics.MemoryCount);
         Assert.Equal(0, result.Diagnostics.MemoryCandidateCount);
         Assert.True(result.Diagnostics.MemoryStoreHealthy);
+        Assert.True(result.Diagnostics.SystemResourceProviderEnabled);
     }
 
     [Fact]
@@ -135,6 +137,7 @@ public sealed class StatusToolTests
         services.AddSingleton<ILongTermMemoryStore, FakeLongTermMemoryStore>();
         services.AddSingleton<IMemoryExtractionService, FakeMemoryExtractionService>();
         services.AddSingleton<IRuntimeStateService, RuntimeStateService>();
+        services.AddSingleton<ISystemResourceProvider, FakeSystemResourceProvider>();
         services.AddSingleton<IConfirmationService, ConfirmationService>();
         services.AddSingleton<ITrustedApplicationStore, FakeTrustedApplicationStore>();
         services.AddSingleton<ITrustedCommandStore, FakeTrustedCommandStore>();
@@ -143,6 +146,7 @@ public sealed class StatusToolTests
         services.AddSingleton<ITool, OpenApplicationTool>();
         services.AddSingleton<ITool, OpenUrlTool>();
         services.AddSingleton<ITool, ToolDiscoveryTool>();
+        services.AddSingleton<ITool, SystemResourceTool>();
         services.AddSingleton<ITool, StatusTool>();
         services.AddSingleton<ITool, ConfirmationTool>();
         services.AddSingleton<ITool, GeneralConversationTool>();
@@ -156,6 +160,24 @@ public sealed class StatusToolTests
         public Task LaunchAsync(string target, CancellationToken cancellationToken = default)
         {
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakeSystemResourceProvider : ISystemResourceProvider
+    {
+        public DateTimeOffset GetCurrentLocalTime()
+        {
+            return new DateTimeOffset(2026, 6, 10, 13, 45, 30, TimeSpan.FromHours(2));
+        }
+
+        public DateOnly GetCurrentLocalDate()
+        {
+            return new DateOnly(2026, 6, 10);
+        }
+
+        public TimeZoneInfo GetLocalTimeZone()
+        {
+            return TimeZoneInfo.Local;
         }
     }
 

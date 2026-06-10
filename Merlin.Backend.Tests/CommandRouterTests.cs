@@ -146,6 +146,7 @@ public sealed class CommandRouterTests
         services.AddSingleton<ILongTermMemoryStore, FakeLongTermMemoryStore>();
         services.AddSingleton<IMemoryExtractionService, FakeMemoryExtractionService>();
         services.AddSingleton<IRuntimeStateService, RuntimeStateService>();
+        services.AddSingleton<ISystemResourceProvider, FakeSystemResourceProvider>();
         services.AddSingleton<IProcessLauncher, FakeProcessLauncher>();
         services.AddSingleton<ITrustedApplicationStore, FakeTrustedApplicationStore>();
         services.AddSingleton<ITrustedCommandStore, FakeTrustedCommandStore>();
@@ -154,6 +155,7 @@ public sealed class CommandRouterTests
         services.AddSingleton<ITool, OpenApplicationTool>();
         services.AddSingleton<ITool, OpenUrlTool>();
         services.AddSingleton<ITool, ToolDiscoveryTool>();
+        services.AddSingleton<ITool, SystemResourceTool>();
         services.AddSingleton<ITool, StatusTool>();
         services.AddSingleton<ITool, ConfirmationTool>();
         services.AddSingleton<ITool, GeneralConversationTool>();
@@ -178,6 +180,7 @@ public sealed class CommandRouterTests
         Assert.Contains(response.AvailableTools, tool => tool.Name == "Open Application");
         Assert.Contains(response.AvailableTools, tool => tool.Name == "Open URL");
         Assert.Contains(response.AvailableTools, tool => tool.Name == "Tool Discovery");
+        Assert.Contains(response.AvailableTools, tool => tool.Name == "System Resource");
         Assert.Contains(response.AvailableTools, tool => tool.Name == "Status");
         Assert.Contains(response.AvailableTools, tool => tool.Name == "Confirmation");
         Assert.Contains(response.AvailableTools, tool => tool.Name == "General Conversation");
@@ -266,6 +269,35 @@ public sealed class CommandRouterTests
         Assert.Equal("unknown_input", response.Intent);
         Assert.Equal("error", response.ResponseType);
         Assert.Equal("I couldn't understand that request.", response.Message);
+    }
+
+    [Fact]
+    public async Task RouteAsync_WhenSystemResourceIntentIsDetected_ExecutesSystemResourceTool()
+    {
+        var router = new CommandRouter(
+            new FixedIntentParser(new IntentParseResult
+            {
+                Intent = "system_resource_query",
+                NormalizedCommand = "system resource current_date",
+                Confidence = 0.98,
+                OriginalMessage = "what is today's date?",
+                ParserUsed = nameof(RuleBasedIntentParser),
+                CapabilityId = "system_date",
+                CapabilityName = "System Date"
+            }),
+            new ToolRegistry([new SystemResourceTool(new FakeSystemResourceProvider())]),
+            NullLogger<CommandRouter>.Instance,
+            new RuntimeStateService(),
+            new NoOpResponsePolisher());
+
+        var response = await router.RouteAsync("what is today's date?");
+
+        Assert.True(response.Success);
+        Assert.Equal("System Resource", response.ToolName);
+        Assert.Equal("system_resource_query", response.Intent);
+        Assert.Equal("system_date", response.CapabilityId);
+        Assert.Equal("assistant", response.ResponseType);
+        Assert.Contains("2026-06-10", response.Message);
     }
 
     private static CommandRouter CreateRouter(params ITool[] tools)
@@ -426,5 +458,27 @@ public sealed class CommandRouterTests
         public string WebRootPath { get; set; } = string.Empty;
 
         public IFileProvider WebRootFileProvider { get; set; } = new NullFileProvider();
+    }
+
+    private sealed class FakeSystemResourceProvider : ISystemResourceProvider
+    {
+        public DateTimeOffset GetCurrentLocalTime()
+        {
+            return new DateTimeOffset(2026, 6, 10, 13, 45, 30, TimeSpan.FromHours(2));
+        }
+
+        public DateOnly GetCurrentLocalDate()
+        {
+            return new DateOnly(2026, 6, 10);
+        }
+
+        public TimeZoneInfo GetLocalTimeZone()
+        {
+            return TimeZoneInfo.CreateCustomTimeZone(
+                "Test/Zone",
+                TimeSpan.FromHours(2),
+                "Test Time",
+                "Test Standard Time");
+        }
     }
 }

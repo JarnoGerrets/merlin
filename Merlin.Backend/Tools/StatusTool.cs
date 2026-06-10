@@ -18,6 +18,7 @@ public sealed class StatusTool : ITool
     private readonly CapabilityOptions _capabilityOptions;
     private readonly LocalAIOptions _localAIOptions;
     private readonly IRuntimeStateService _runtimeStateService;
+    private readonly ISystemResourceProvider _systemResourceProvider;
     private readonly IServiceProvider _serviceProvider;
     private readonly IApplicationResolver _applicationResolver;
     private readonly IConversationSessionService _conversationSessionService;
@@ -29,6 +30,7 @@ public sealed class StatusTool : ITool
 
     public StatusTool(
         IRuntimeStateService runtimeStateService,
+        ISystemResourceProvider systemResourceProvider,
         ILocalAIHealthService localAIHealthService,
         IConfirmationService confirmationService,
         IApplicationResolver applicationResolver,
@@ -45,6 +47,7 @@ public sealed class StatusTool : ITool
         ILogger<StatusTool> logger)
     {
         _runtimeStateService = runtimeStateService;
+        _systemResourceProvider = systemResourceProvider;
         _localAIHealthService = localAIHealthService;
         _confirmationService = confirmationService;
         _applicationResolver = applicationResolver;
@@ -144,7 +147,8 @@ public sealed class StatusTool : ITool
             MissingCapabilityCount = _capabilityOptions.CapabilityDomains.Count(domain =>
                 string.Equals(domain.SafetyLevel, "missing", StringComparison.OrdinalIgnoreCase)),
             UnsupportedCapabilityCount = _capabilityOptions.CapabilityDomains.Count(domain =>
-                string.Equals(domain.SafetyLevel, "unsupported", StringComparison.OrdinalIgnoreCase))
+                string.Equals(domain.SafetyLevel, "unsupported", StringComparison.OrdinalIgnoreCase)),
+            SystemResourceProviderEnabled = _systemResourceProvider is not null
         };
 
         return Task.FromResult(new ToolResult

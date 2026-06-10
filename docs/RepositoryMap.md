@@ -148,13 +148,19 @@ Use this file to find the right code quickly. Inspect only the sections relevant
 ## Frontend
 
 - `Merlin.Frontend/Scripts/Main.gd`
-  - Main Godot UI behavior, chat rendering, responseType display, tools panel, debug info.
+  - Main Godot UI behavior, chat rendering, responseType display, tools panel, debug info, and CoreOrb state coordination.
+
+- `Merlin.Frontend/Scripts/CoreOrb.gd`
+  - Lightweight state-driven animated orb component.
+
+- `Merlin.Frontend/Scenes/CoreOrb.tscn`
+  - Scene for the CoreOrb component.
 
 - `Merlin.Frontend/Scripts/MerlinWebSocketClient.gd`
   - WebSocket connection, sending, receiving, state handling.
 
 - `Merlin.Frontend/Main.tscn`
-  - Main scene layout.
+  - Main scene layout with CoreOrb, ChatPanel, StatusPanel, CommandInput, and OverlayContainer.
 
 ## Tests
 

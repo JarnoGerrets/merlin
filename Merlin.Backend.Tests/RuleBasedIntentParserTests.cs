@@ -83,6 +83,25 @@ public sealed class RuleBasedIntentParserTests
     }
 
     [Theory]
+    [InlineData("what time is it", "system resource current_time", "system_time")]
+    [InlineData("what is today's date", "system resource current_date", "system_date")]
+    [InlineData("what timezone am I in", "system resource timezone", "system_timezone")]
+    public async Task ParseAsync_WhenMessageRequestsSystemResource_ReturnsSystemResourceIntent(
+        string message,
+        string expectedCommand,
+        string expectedCapabilityId)
+    {
+        var parser = new RuleBasedIntentParser(TestApplicationLaunchOptions.Create());
+
+        var result = await parser.ParseAsync(message);
+
+        Assert.Equal("system_resource_query", result.Intent);
+        Assert.Equal(expectedCommand, result.NormalizedCommand);
+        Assert.Equal(expectedCapabilityId, result.CapabilityId);
+        Assert.True(result.Confidence >= 0.9);
+    }
+
+    [Theory]
     [InlineData("tell me a joke")]
     [InlineData("who are you")]
     [InlineData("how do you work")]

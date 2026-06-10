@@ -68,6 +68,33 @@ public sealed class CapabilityOptions
                 },
                 new CapabilityDomain
                 {
+                    Id = "system_time",
+                    Name = "System Time",
+                    Description = "Read the current local system time.",
+                    IsImplemented = true,
+                    ImplementedIntent = "system_resource_query",
+                    SafetyLevel = "safe"
+                },
+                new CapabilityDomain
+                {
+                    Id = "system_date",
+                    Name = "System Date",
+                    Description = "Read the current local system date.",
+                    IsImplemented = true,
+                    ImplementedIntent = "system_resource_query",
+                    SafetyLevel = "safe"
+                },
+                new CapabilityDomain
+                {
+                    Id = "system_timezone",
+                    Name = "System Timezone",
+                    Description = "Read the local system timezone.",
+                    IsImplemented = true,
+                    ImplementedIntent = "system_resource_query",
+                    SafetyLevel = "safe"
+                },
+                new CapabilityDomain
+                {
                     Id = "time",
                     Name = "Time",
                     Description = "Tell the current time, date, or timezone-aware time.",

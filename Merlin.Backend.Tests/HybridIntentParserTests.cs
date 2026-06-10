@@ -29,38 +29,6 @@ public sealed class HybridIntentParserTests
     }
 
     [Fact]
-    public async Task ParseAsync_WhenTrustedCommandExists_UsesTrustedParserBeforeRuleBasedParser()
-    {
-        var store = new FakeTrustedCommandStore();
-        store.SaveMapping(new TrustedCommandMapping
-        {
-            OriginalCommand = "open notepad",
-            Intent = "open_application",
-            NormalizedCommand = "open paint",
-            ToolName = "Open Application",
-            Target = "mspaint.exe",
-            DisplayName = "Paint",
-            UseCount = 1
-        });
-        var localParser = new FakeIntentParser(new IntentParseResult
-        {
-            Intent = "open_url",
-            NormalizedCommand = "open example.com",
-            Confidence = 0.95,
-            OriginalMessage = "open notepad"
-        });
-
-        var parser = CreateParser(localParser, enabled: true, trustedCommandStore: store);
-
-        var result = await parser.ParseAsync("open notepad");
-
-        Assert.Equal("open_application", result.Intent);
-        Assert.Equal("open paint", result.NormalizedCommand);
-        Assert.Equal(nameof(TrustedCommandIntentParser), result.ParserUsed);
-        Assert.Equal(0, localParser.CallCount);
-    }
-
-    [Fact]
     public async Task ParseAsync_WhenLocalAIIsDisabled_ReturnsFallbackResult()
     {
         var localParser = new FakeIntentParser(new IntentParseResult
@@ -98,38 +66,6 @@ public sealed class HybridIntentParserTests
         Assert.Equal("open_url", result.Intent);
         Assert.Equal("open google.com", result.NormalizedCommand);
         Assert.Equal(1, localParser.CallCount);
-    }
-
-    [Fact]
-    public async Task ParseAsync_WhenTrustedCommandExists_UsesTrustedParserBeforeLocalAIParser()
-    {
-        var store = new FakeTrustedCommandStore();
-        store.SaveMapping(new TrustedCommandMapping
-        {
-            OriginalCommand = "could you open paint for me",
-            Intent = "open_application",
-            NormalizedCommand = "open paint",
-            ToolName = "Open Application",
-            Target = "mspaint.exe",
-            DisplayName = "Paint",
-            UseCount = 1
-        });
-        var localParser = new FakeIntentParser(new IntentParseResult
-        {
-            Intent = "open_url",
-            NormalizedCommand = "open google.com",
-            Confidence = 0.85,
-            OriginalMessage = "could you open paint for me"
-        });
-
-        var parser = CreateParser(localParser, enabled: true, trustedCommandStore: store);
-
-        var result = await parser.ParseAsync("could you open paint for me");
-
-        Assert.Equal("open_application", result.Intent);
-        Assert.Equal("open paint", result.NormalizedCommand);
-        Assert.Equal(nameof(TrustedCommandIntentParser), result.ParserUsed);
-        Assert.Equal(0, localParser.CallCount);
     }
 
     [Fact]
@@ -173,7 +109,7 @@ public sealed class HybridIntentParserTests
     }
 
     [Fact]
-    public async Task ParseAsync_WhenFallbackSeesTimeQuestion_ReturnsMissingCapability()
+    public async Task ParseAsync_WhenRuleBasedSeesTimeQuestion_ReturnsSystemResourceQuery()
     {
         var localParser = new FakeIntentParser(new IntentParseResult
         {
@@ -187,8 +123,9 @@ public sealed class HybridIntentParserTests
 
         var result = await parser.ParseAsync("what time is it?");
 
-        Assert.Equal("missing_capability", result.Intent);
-        Assert.Equal("time", result.CapabilityId);
+        Assert.Equal("system_resource_query", result.Intent);
+        Assert.Equal("system resource current_time", result.NormalizedCommand);
+        Assert.Equal("system_time", result.CapabilityId);
         Assert.Equal(0, localParser.CallCount);
     }
 
@@ -258,8 +195,7 @@ public sealed class HybridIntentParserTests
     private static HybridIntentParser CreateParser(
         LocalAIIntentParser localParser,
         bool enabled,
-        bool localAIAvailable = true,
-        ITrustedCommandStore? trustedCommandStore = null)
+        bool localAIAvailable = true)
     {
         var localAIOptions = Options.Create(new LocalAIOptions
         {
@@ -281,7 +217,6 @@ public sealed class HybridIntentParserTests
         }
 
         return new HybridIntentParser(
-            new TrustedCommandIntentParser(trustedCommandStore ?? new FakeTrustedCommandStore()),
             new RuleBasedIntentParser(TestApplicationLaunchOptions.Create()),
             localParser,
             new CapabilityClassifier(new ToolRegistry([]), TestCapabilityOptions.Create()),

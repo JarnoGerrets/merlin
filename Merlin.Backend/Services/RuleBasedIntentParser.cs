@@ -34,6 +34,33 @@ public sealed class RuleBasedIntentParser : IIntentParser
         "show diagnostics"
     ];
 
+    private static readonly string[] CurrentTimePhrases =
+    [
+        "what time is it",
+        "what is the time",
+        "current time",
+        "tell me the time"
+    ];
+
+    private static readonly string[] CurrentDatePhrases =
+    [
+        "what is today's date",
+        "whats today's date",
+        "what is the date",
+        "current date",
+        "tell me the date"
+    ];
+
+    private static readonly string[] TimeZonePhrases =
+    [
+        "what timezone am i in",
+        "what time zone am i in",
+        "what is my timezone",
+        "what is my time zone",
+        "local timezone",
+        "local time zone"
+    ];
+
     private static readonly string[] ConversationPhrases =
     [
         "tell me a joke",
@@ -103,6 +130,11 @@ public sealed class RuleBasedIntentParser : IIntentParser
         if (TryParseDiagnostics(normalizedMessage, originalMessage, out var diagnosticsResult))
         {
             return Task.FromResult(diagnosticsResult);
+        }
+
+        if (TryParseSystemResource(normalizedMessage, originalMessage, out var systemResourceResult))
+        {
+            return Task.FromResult(systemResourceResult);
         }
 
         if (TryParseConfirmation(normalizedMessage, originalMessage, out var confirmationResult))
@@ -266,6 +298,65 @@ public sealed class RuleBasedIntentParser : IIntentParser
 
         result = Unknown(originalMessage, normalizedMessage);
         return false;
+    }
+
+    private static bool TryParseSystemResource(
+        string normalizedMessage,
+        string originalMessage,
+        out IntentParseResult result)
+    {
+        if (CurrentTimePhrases.Any(phrase => string.Equals(normalizedMessage, phrase, StringComparison.OrdinalIgnoreCase)))
+        {
+            result = SystemResourceResult(
+                originalMessage,
+                "system resource current_time",
+                "system_time",
+                "System Time");
+
+            return true;
+        }
+
+        if (CurrentDatePhrases.Any(phrase => string.Equals(normalizedMessage, phrase, StringComparison.OrdinalIgnoreCase)))
+        {
+            result = SystemResourceResult(
+                originalMessage,
+                "system resource current_date",
+                "system_date",
+                "System Date");
+
+            return true;
+        }
+
+        if (TimeZonePhrases.Any(phrase => string.Equals(normalizedMessage, phrase, StringComparison.OrdinalIgnoreCase)))
+        {
+            result = SystemResourceResult(
+                originalMessage,
+                "system resource timezone",
+                "system_timezone",
+                "System Timezone");
+
+            return true;
+        }
+
+        result = Unknown(originalMessage, normalizedMessage);
+        return false;
+    }
+
+    private static IntentParseResult SystemResourceResult(
+        string originalMessage,
+        string normalizedCommand,
+        string capabilityId,
+        string capabilityName)
+    {
+        return new IntentParseResult
+        {
+            Intent = "system_resource_query",
+            NormalizedCommand = normalizedCommand,
+            Confidence = 0.98,
+            OriginalMessage = originalMessage,
+            CapabilityId = capabilityId,
+            CapabilityName = capabilityName
+        };
     }
 
     private static bool TryParseConfirmation(

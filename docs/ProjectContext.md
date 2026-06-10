@@ -29,7 +29,7 @@ The backend returns structured responses with fields such as:
 
 The backend owns command understanding, safety checks, application resolution, confirmation flow, tool execution, diagnostics, local AI integration, and memory storage.
 
-The Godot frontend owns chat display, connection state, user input, debug display, tools panel rendering, and response presentation. It should not execute actions directly.
+The Godot frontend owns chat display, connection state, user input, debug display, tools panel rendering, response presentation, and the lightweight CoreOrb state visualization. It should not execute actions directly.
 
 ## Implemented Capabilities
 
@@ -41,6 +41,7 @@ Implemented backend tools currently include:
 - Status: returns diagnostics and runtime state.
 - Confirmation: confirms pending safe actions.
 - General Conversation: uses LocalAI chat when available.
+- System Resource: reads safe local system resources such as current time, current date, and timezone.
 
 Merlin uses capability domains to distinguish implemented capabilities, missing capabilities, unsupported actions, unknown input, and general conversation.
 
@@ -94,6 +95,7 @@ Recommended next steps:
 
 - Improve capability-domain prompts and validation.
 - Add richer frontend rendering for response types and debug fields.
+- Evolve the CoreOrb and panel layout toward the Jarvis-style desktop assistant UI.
 - Add explicit tools only when safety boundaries and tests are clear.
 - Keep memory local, structured, and approval-based.
 - Add web/search/news/time only as separate tools, not through ChatTool.

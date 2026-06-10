@@ -1,22 +1,33 @@
 extends Control
 
+enum MerlinState {
+	IDLE,
+	THINKING,
+	EXECUTING_TOOL,
+	ERROR
+}
+
 @onready var web_socket_client: MerlinWebSocketClient = $MerlinWebSocketClient
-@onready var connection_state_label: Label = $RootMargin/Layout/Header/ConnectionStateLabel
-@onready var reconnect_button: Button = $RootMargin/Layout/Header/ReconnectButton
-@onready var show_debug_check_box: CheckBox = $RootMargin/Layout/Header/ShowDebugCheckBox
-@onready var error_label: Label = $RootMargin/Layout/ErrorLabel
-@onready var message_scroll: ScrollContainer = $RootMargin/Layout/Content/ChatColumn/HistoryPanel/HistoryMargin/MessageScroll
-@onready var message_list: VBoxContainer = $RootMargin/Layout/Content/ChatColumn/HistoryPanel/HistoryMargin/MessageScroll/MessageList
-@onready var thinking_label: Label = $RootMargin/Layout/Content/ChatColumn/ThinkingLabel
-@onready var refresh_tools_button: Button = $RootMargin/Layout/Content/ToolsPanel/ToolsMargin/ToolsLayout/ToolsHeader/RefreshToolsButton
-@onready var tools_list: VBoxContainer = $RootMargin/Layout/Content/ToolsPanel/ToolsMargin/ToolsLayout/ToolsScroll/ToolsList
-@onready var message_input: LineEdit = $RootMargin/Layout/InputRow/MessageInput
-@onready var send_button: Button = $RootMargin/Layout/InputRow/SendButton
+@onready var core_orb: CoreOrb = $CoreOrb
+@onready var connection_state_label: Label = $StatusPanel/Header/ConnectionStateLabel
+@onready var reconnect_button: Button = $StatusPanel/Header/ReconnectButton
+@onready var show_debug_check_box: CheckBox = $StatusPanel/Header/ShowDebugCheckBox
+@onready var error_label: Label = $OverlayContainer/ErrorLabel
+@onready var message_scroll: ScrollContainer = $ChatPanel/Content/ChatColumn/HistoryPanel/HistoryMargin/MessageScroll
+@onready var message_list: VBoxContainer = $ChatPanel/Content/ChatColumn/HistoryPanel/HistoryMargin/MessageScroll/MessageList
+@onready var thinking_label: Label = $ChatPanel/Content/ChatColumn/ThinkingLabel
+@onready var refresh_tools_button: Button = $ChatPanel/Content/ToolsPanel/ToolsMargin/ToolsLayout/ToolsHeader/RefreshToolsButton
+@onready var tools_list: VBoxContainer = $ChatPanel/Content/ToolsPanel/ToolsMargin/ToolsLayout/ToolsScroll/ToolsList
+@onready var message_input: LineEdit = $CommandInput/InputRow/MessageInput
+@onready var send_button: Button = $CommandInput/InputRow/SendButton
 
 var _pending_requests := {}
+var _merlin_state: int = MerlinState.IDLE
+var _focus_request_id := 0
 
 
 func _ready() -> void:
+	message_input.focus_mode = Control.FOCUS_ALL
 	send_button.pressed.connect(_on_send_pressed)
 	reconnect_button.pressed.connect(_on_reconnect_pressed)
 	refresh_tools_button.pressed.connect(_on_refresh_tools_pressed)
@@ -32,6 +43,7 @@ func _ready() -> void:
 	_update_pending_state()
 	_set_tools_placeholder("Click Refresh Tools after connecting.")
 	web_socket_client.connect_to_backend()
+	_refocus_message_input()
 
 
 func _on_reconnect_pressed() -> void:
@@ -41,6 +53,7 @@ func _on_reconnect_pressed() -> void:
 	_add_system_message("Reconnecting...")
 	web_socket_client.connect_to_backend()
 	_update_send_button()
+	_refocus_message_input()
 
 
 func _on_send_pressed() -> void:
@@ -49,6 +62,7 @@ func _on_send_pressed() -> void:
 
 func _on_message_submitted(_text: String) -> void:
 	_send_current_message()
+	_refocus_message_input()
 
 
 func _on_refresh_tools_pressed() -> void:
@@ -66,7 +80,9 @@ func _send_current_message() -> void:
 func _send_backend_message(message: String, show_user_message: bool) -> void:
 	if not web_socket_client.is_backend_connected():
 		_show_error("Cannot send: Merlin.Backend is not connected.")
+		_set_merlin_state(MerlinState.ERROR)
 		_update_send_button()
+		_refocus_message_input()
 		return
 
 	var correlation_id := _generate_correlation_id()
@@ -76,13 +92,17 @@ func _send_backend_message(message: String, show_user_message: bool) -> void:
 		message_input.clear()
 
 	_update_pending_state()
+	_set_merlin_state(MerlinState.THINKING)
 	_clear_error()
 
 	var sent := web_socket_client.send_message(message, correlation_id)
 	if not sent:
 		_pending_requests.erase(correlation_id)
 		_add_system_message("Message was not sent.")
+		_set_merlin_state(MerlinState.ERROR)
 		_update_pending_state()
+
+	_refocus_message_input()
 
 
 func _on_connection_state_changed(state: String, detail: String) -> void:
@@ -92,6 +112,9 @@ func _on_connection_state_changed(state: String, detail: String) -> void:
 		"connected":
 			_clear_error()
 			_add_system_message("Connected to Merlin.Backend.")
+			if _pending_requests.is_empty():
+				_set_merlin_state(MerlinState.IDLE)
+			_refocus_message_input()
 		"connecting":
 			_clear_error()
 		"error":
@@ -99,11 +122,13 @@ func _on_connection_state_changed(state: String, detail: String) -> void:
 			_add_system_message("Connection error: %s" % detail)
 			_pending_requests.clear()
 			_update_pending_state()
+			_set_merlin_state(MerlinState.ERROR)
 		"disconnected":
 			if not detail.is_empty():
 				_add_system_message(detail)
 			_pending_requests.clear()
 			_update_pending_state()
+			_set_merlin_state(MerlinState.IDLE)
 
 	_update_send_button()
 
@@ -143,7 +168,9 @@ func _on_response_received(response: Dictionary) -> void:
 			_show_error(formatted_error)
 
 	_update_pending_state()
+	_update_orb_from_response(response, success, response_type)
 	_update_send_button()
+	_refocus_message_input()
 
 
 func _on_malformed_response(raw_message: String, detail: String) -> void:
@@ -152,6 +179,7 @@ func _on_malformed_response(raw_message: String, detail: String) -> void:
 	var message := "Malformed response JSON: %s" % detail
 	_show_error(message)
 	_add_system_message("%s Raw: %s" % [message, raw_message])
+	_set_merlin_state(MerlinState.ERROR)
 
 
 func _on_socket_closed(code: int, reason: String) -> void:
@@ -159,6 +187,9 @@ func _on_socket_closed(code: int, reason: String) -> void:
 	_update_pending_state()
 	if code != 1000:
 		_show_error("WebSocket closed. Code: %s Reason: %s" % [code, reason])
+		_set_merlin_state(MerlinState.ERROR)
+	else:
+		_set_merlin_state(MerlinState.IDLE)
 
 
 func _format_success_response(message: String, available_tools, diagnostics, confirmation) -> String:
@@ -370,11 +401,66 @@ func _update_pending_state() -> void:
 	_update_send_button()
 
 
+func _update_orb_from_response(response: Dictionary, success: bool, response_type: String) -> void:
+	if response_type == "error" or not success and response_type != "limitation" and response_type != "safety":
+		_set_merlin_state(MerlinState.ERROR)
+		return
+
+	if success and _is_tool_execution_response(response):
+		_set_merlin_state(MerlinState.EXECUTING_TOOL)
+		return
+
+	if _pending_requests.is_empty():
+		_set_merlin_state(MerlinState.IDLE)
+	else:
+		_set_merlin_state(MerlinState.THINKING)
+
+
+func _is_tool_execution_response(response: Dictionary) -> bool:
+	var tool_name := str(response.get("toolName", ""))
+	var intent := str(response.get("intent", ""))
+	if tool_name.is_empty():
+		return false
+
+	return tool_name != "General Conversation" or intent == "system_resource_query"
+
+
+func _set_merlin_state(state: int) -> void:
+	_merlin_state = state
+	match state:
+		MerlinState.THINKING:
+			core_orb.set_thinking()
+		MerlinState.EXECUTING_TOOL:
+			core_orb.play_tool_execution()
+		MerlinState.ERROR:
+			core_orb.play_error()
+		_:
+			core_orb.set_idle()
+
+
 func _update_send_button() -> void:
 	var connected := web_socket_client.is_backend_connected()
 	send_button.disabled = not connected
 	refresh_tools_button.disabled = not connected
 	reconnect_button.disabled = web_socket_client.get_connection_state() == "connecting"
+
+
+func _refocus_message_input() -> void:
+	_focus_request_id += 1
+	call_deferred("_apply_message_input_focus", _focus_request_id)
+
+
+func _apply_message_input_focus(request_id: int) -> void:
+	await get_tree().process_frame
+	if request_id != _focus_request_id:
+		return
+
+	if not is_instance_valid(message_input):
+		return
+
+	message_input.focus_mode = Control.FOCUS_ALL
+	message_input.grab_focus()
+	message_input.caret_column = message_input.text.length()
 
 
 func _show_error(message: String) -> void:

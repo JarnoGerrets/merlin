@@ -131,7 +131,6 @@ public sealed class CapabilityClassifier : ICapabilityClassifier
 
         var domainId = normalizedMessage switch
         {
-            var message when ContainsWholePhrase(message, "time") => "time",
             var message when ContainsWholePhrase(message, "news")
                 || ContainsWholePhrase(message, "newsfeed")
                 || ContainsWholePhrase(message, "headlines") => "news",

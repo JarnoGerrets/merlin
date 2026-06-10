@@ -13,10 +13,8 @@ public sealed class HybridIntentParser : IIntentParser
     private readonly LocalAIOptions _options;
     private readonly IRuntimeStateService _runtimeStateService;
     private readonly RuleBasedIntentParser _ruleBasedIntentParser;
-    private readonly TrustedCommandIntentParser _trustedCommandIntentParser;
 
     public HybridIntentParser(
-        TrustedCommandIntentParser trustedCommandIntentParser,
         RuleBasedIntentParser ruleBasedIntentParser,
         LocalAIIntentParser localAIIntentParser,
         ICapabilityClassifier capabilityClassifier,
@@ -25,7 +23,6 @@ public sealed class HybridIntentParser : IIntentParser
         ILocalAIHealthService localAIHealthService,
         ILogger<HybridIntentParser> logger)
     {
-        _trustedCommandIntentParser = trustedCommandIntentParser;
         _ruleBasedIntentParser = ruleBasedIntentParser;
         _localAIIntentParser = localAIIntentParser;
         _capabilityClassifier = capabilityClassifier;
@@ -39,13 +36,6 @@ public sealed class HybridIntentParser : IIntentParser
         string message,
         CancellationToken cancellationToken = default)
     {
-        var trustedResult = await _trustedCommandIntentParser.ParseAsync(message, cancellationToken);
-        if (trustedResult.Confidence >= 1.0)
-        {
-            _runtimeStateService.RecordIntentParserUsed(nameof(TrustedCommandIntentParser), trustedResult.Intent);
-            return trustedResult;
-        }
-
         var ruleResult = await _ruleBasedIntentParser.ParseAsync(message, cancellationToken);
         if (ruleResult.Confidence >= _options.MinimumConfidence)
         {

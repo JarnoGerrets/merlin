@@ -52,6 +52,24 @@ public sealed class LocalAIIntentParserTests
     }
 
     [Theory]
+    [InlineData("""{"intent":"system_resource_query","normalizedCommand":"system resource current_time","capabilityId":"system_time","confidence":0.9}""", "system resource current_time", "system_time")]
+    [InlineData("""{"intent":"system_resource_query","normalizedCommand":"system resource current_date","capabilityId":"system_date","confidence":0.9}""", "system resource current_date", "system_date")]
+    [InlineData("""{"intent":"system_resource_query","normalizedCommand":"system resource timezone","capabilityId":"system_timezone","confidence":0.9}""", "system resource timezone", "system_timezone")]
+    public async Task ParseAsync_WhenModelReturnsSystemResourceQuery_ReturnsIntent(
+        string modelResponse,
+        string expectedCommand,
+        string expectedCapabilityId)
+    {
+        var parser = CreateParser(new FakeLocalAIClient(modelResponse));
+
+        var result = await parser.ParseAsync("system resource question");
+
+        Assert.Equal("system_resource_query", result.Intent);
+        Assert.Equal(expectedCommand, result.NormalizedCommand);
+        Assert.Equal(expectedCapabilityId, result.CapabilityId);
+    }
+
+    [Theory]
     [InlineData("""{"intent":"missing_capability","normalizedCommand":"can you pull up the newsfeed for me","capabilityId":"news","confidence":0.9}""", "missing_capability", "can you pull up the newsfeed for me", "news")]
     [InlineData("""{"intent":"unsupported_action","normalizedCommand":"delete all my files","capabilityId":"destructive_file_action","confidence":0.95}""", "unsupported_action", "delete all my files", "destructive_file_action")]
     [InlineData("""{"intent":"unknown_input","normalizedCommand":"asdfghjkl qwerty","confidence":0.9}""", "unknown_input", "asdfghjkl qwerty", null)]
@@ -158,11 +176,13 @@ public sealed class LocalAIIntentParserTests
         Assert.Contains("tool_discovery", client.LastPrompt);
         Assert.Contains("diagnostics", client.LastPrompt);
         Assert.Contains("confirmation", client.LastPrompt);
+        Assert.Contains("system_resource_query", client.LastPrompt);
         Assert.Contains("general_conversation", client.LastPrompt);
         Assert.Contains("unsupported_action", client.LastPrompt);
         Assert.Contains("missing_capability", client.LastPrompt);
         Assert.Contains("unknown_input", client.LastPrompt);
-        Assert.Contains("unknown", client.LastPrompt);
+        Assert.DoesNotContain("- unknown (", client.LastPrompt);
+        Assert.DoesNotContain("|unknown\"", client.LastPrompt);
         Assert.Contains("capabilityId", client.LastPrompt);
     }
 
@@ -207,6 +227,9 @@ public sealed class LocalAIIntentParserTests
         Assert.Contains("Capability domains:", client.LastPrompt);
         Assert.Contains("news (News)", client.LastPrompt);
         Assert.Contains("time (Time)", client.LastPrompt);
+        Assert.Contains("system_time (System Time)", client.LastPrompt);
+        Assert.Contains("system_date (System Date)", client.LastPrompt);
+        Assert.Contains("system_timezone (System Timezone)", client.LastPrompt);
         Assert.Contains("destructive_file_action", client.LastPrompt);
     }
 
@@ -256,6 +279,7 @@ public sealed class LocalAIIntentParserTests
                 new FakeProcessLauncher()),
             new OpenUrlTool(new FakeProcessLauncher()),
             new FakeToolDiscoveryTool(),
+            new SystemResourceTool(new FakeSystemResourceProvider()),
             new GeneralConversationTool(new FakeLocalAIChatService())
         ]);
     }
@@ -335,6 +359,24 @@ public sealed class LocalAIIntentParserTests
                 Success = true,
                 Message = "chat"
             });
+        }
+    }
+
+    private sealed class FakeSystemResourceProvider : ISystemResourceProvider
+    {
+        public DateTimeOffset GetCurrentLocalTime()
+        {
+            return DateTimeOffset.Now;
+        }
+
+        public DateOnly GetCurrentLocalDate()
+        {
+            return DateOnly.FromDateTime(DateTime.Now);
+        }
+
+        public TimeZoneInfo GetLocalTimeZone()
+        {
+            return TimeZoneInfo.Local;
         }
     }
 
