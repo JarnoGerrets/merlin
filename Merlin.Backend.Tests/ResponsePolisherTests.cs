@@ -18,7 +18,9 @@ public sealed class ResponsePolisherTests
 
         var message = await polisher.PolishMessageAsync(response);
 
-        Assert.Contains("destructive file actions", message);
+        Assert.Contains("delete files", message);
+        Assert.Contains("protects your data", message);
+        Assert.DoesNotContain("UNSUPPORTED_ACTION", message);
         Assert.False(response.Success);
         Assert.Equal("UNSUPPORTED_ACTION", response.ErrorCode);
         Assert.Equal("unsupported_action", response.Intent);
@@ -79,9 +81,54 @@ public sealed class ResponsePolisherTests
 
         var message = await polisher.PolishMessageAsync(response);
 
-        Assert.Contains("NewsTool", message);
+        Assert.Contains("News capability", message);
+        Assert.Contains("NewsTool or WebSearch capability", message);
+        Assert.DoesNotContain("MISSING_CAPABILITY", message);
         Assert.Equal("MISSING_CAPABILITY", response.ErrorCode);
         Assert.Equal("missing_capability", response.Intent);
+    }
+
+    [Fact]
+    public async Task PolishMessageAsync_WhenFileAccessMissing_ExplainsLimitationWithoutInternalCode()
+    {
+        var response = CreateResponse(
+            "Missing capability.",
+            "MISSING_CAPABILITY",
+            "missing_capability",
+            "check my folders",
+            "file_access");
+        var polisher = CreatePolisher();
+
+        var message = await polisher.PolishMessageAsync(response);
+
+        Assert.Contains("inspect folders", message);
+        Assert.Contains("file access capability", message);
+        Assert.DoesNotContain("MISSING_CAPABILITY", message);
+        Assert.Equal("file_access", response.CapabilityId);
+        Assert.Equal("limitation", response.ResponseType);
+    }
+
+    [Fact]
+    public async Task PolishMessageAsync_PreservesStructuredMetadataOnOriginalResponse()
+    {
+        var response = CreateResponse(
+            "Missing capability.",
+            "MISSING_CAPABILITY",
+            "missing_capability",
+            "can you pull up the newsfeed?",
+            "news");
+        var polisher = CreatePolisher();
+
+        _ = await polisher.PolishMessageAsync(response);
+
+        Assert.False(response.Success);
+        Assert.Equal("test-id", response.CorrelationId);
+        Assert.Equal("MISSING_CAPABILITY", response.ErrorCode);
+        Assert.Equal("missing_capability", response.Intent);
+        Assert.Equal("news", response.CapabilityId);
+        Assert.Equal("News", response.CapabilityName);
+        Assert.Equal("limitation", response.ResponseType);
+        Assert.Equal("test-parser", response.ParserUsed);
     }
 
     [Fact]
@@ -117,9 +164,23 @@ public sealed class ResponsePolisherTests
             ToolName = "General Conversation",
             Intent = intent,
             CapabilityId = capabilityId,
+            CapabilityName = capabilityId switch
+            {
+                "news" => "News",
+                "file_access" => "File Access",
+                "destructive_file_action" => "Destructive File Action",
+                _ => null
+            },
             IntentConfidence = 0.9,
             OriginalMessage = originalMessage,
-            ParserUsed = "test-parser"
+            ParserUsed = "test-parser",
+            ResponseType = intent switch
+            {
+                "missing_capability" => "limitation",
+                "unsupported_action" => "safety",
+                "unknown_input" => "error",
+                _ => null
+            }
         };
     }
 

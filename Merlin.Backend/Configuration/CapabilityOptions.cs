@@ -99,7 +99,7 @@ public sealed class CapabilityOptions
                     Name = "Time",
                     Description = "Tell the current time, date, or timezone-aware time.",
                     IsImplemented = false,
-                    MissingMessage = "I understand that you're asking for the time, but I don't currently have a TimeTool.",
+                    MissingMessage = "I understand you're asking for the current time, but I don't currently have a dedicated TimeTool for that request.",
                     SafetyLevel = "missing"
                 },
                 new CapabilityDomain
@@ -108,7 +108,7 @@ public sealed class CapabilityOptions
                     Name = "News",
                     Description = "Retrieve current news, headlines, or news feeds.",
                     IsImplemented = false,
-                    MissingMessage = "I understand that you're asking for news, but I don't currently have a NewsTool or WebSearchTool.",
+                    MissingMessage = "I understand you're looking for news, but I don't currently have a News capability implemented. To make this possible, Merlin would need a NewsTool or WebSearch capability.",
                     SafetyLevel = "missing"
                 },
                 new CapabilityDomain
@@ -117,7 +117,7 @@ public sealed class CapabilityOptions
                     Name = "Web Search",
                     Description = "Search the web or retrieve live/current information from the internet.",
                     IsImplemented = false,
-                    MissingMessage = "I understand that you want web search, but I don't currently have a WebSearchTool.",
+                    MissingMessage = "I understand you want web search, but I don't currently have a WebSearch capability implemented.",
                     SafetyLevel = "missing"
                 },
                 new CapabilityDomain
@@ -126,7 +126,7 @@ public sealed class CapabilityOptions
                     Name = "Email",
                     Description = "Read, search, or send email.",
                     IsImplemented = false,
-                    MissingMessage = "I understand that you want email access, but I don't currently have an EmailTool.",
+                    MissingMessage = "I understand you want email access, but I don't currently have an Email capability implemented.",
                     SafetyLevel = "missing"
                 },
                 new CapabilityDomain
@@ -135,7 +135,7 @@ public sealed class CapabilityOptions
                     Name = "Calendar",
                     Description = "Read or manage calendar events.",
                     IsImplemented = false,
-                    MissingMessage = "I understand that you want calendar access, but I don't currently have a CalendarTool.",
+                    MissingMessage = "I understand you want calendar access, but I don't currently have a Calendar capability implemented.",
                     SafetyLevel = "missing"
                 },
                 new CapabilityDomain
@@ -144,7 +144,7 @@ public sealed class CapabilityOptions
                     Name = "File Access",
                     Description = "Inspect folders, files, drives, desktop, downloads, or documents.",
                     IsImplemented = false,
-                    MissingMessage = "I understand that you're asking me to inspect files or folders, but I don't currently have a file access tool.",
+                    MissingMessage = "I understand you're asking me to inspect folders, but I don't currently have a file access capability implemented.",
                     SafetyLevel = "missing"
                 },
                 new CapabilityDomain
@@ -153,7 +153,7 @@ public sealed class CapabilityOptions
                     Name = "System Settings",
                     Description = "Change operating system settings or security configuration.",
                     IsImplemented = false,
-                    MissingMessage = "I understand that you're asking for system settings control, but I don't currently have a safe SystemSettingsTool.",
+                    MissingMessage = "I understand you're asking for system settings control, but Merlin does not currently support changing system settings.",
                     SafetyLevel = "unsupported"
                 },
                 new CapabilityDomain
@@ -162,7 +162,7 @@ public sealed class CapabilityOptions
                     Name = "Software Installation",
                     Description = "Install, download, update, or remove software.",
                     IsImplemented = false,
-                    MissingMessage = "I understand that you're asking to install or update software, but Merlin does not support software installation.",
+                    MissingMessage = "I understand you're asking to install or update software, but Merlin does not support software installation.",
                     SafetyLevel = "unsupported"
                 },
                 new CapabilityDomain
@@ -171,7 +171,7 @@ public sealed class CapabilityOptions
                     Name = "Destructive File Action",
                     Description = "Delete, wipe, format, or destructively modify files or drives.",
                     IsImplemented = false,
-                    MissingMessage = "I understand the request, but Merlin does not support destructive file actions.",
+                    MissingMessage = "I understand you're asking me to delete files, but Merlin does not support destructive file actions. This protects your data from accidental or unsafe changes.",
                     SafetyLevel = "unsupported"
                 }
             ]

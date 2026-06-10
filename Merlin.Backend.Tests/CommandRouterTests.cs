@@ -213,7 +213,8 @@ public sealed class CommandRouterTests
         Assert.Equal("destructive_file_action", response.CapabilityId);
         Assert.Equal("safety", response.ResponseType);
         Assert.Equal("General Conversation", response.ToolName);
-        Assert.Contains("destructive file actions", response.Message);
+        Assert.Contains("delete files", response.Message);
+        Assert.DoesNotContain("UNSUPPORTED_ACTION", response.Message);
     }
 
     [Fact]
@@ -242,7 +243,40 @@ public sealed class CommandRouterTests
         Assert.Equal("missing_capability", response.Intent);
         Assert.Equal("news", response.CapabilityId);
         Assert.Equal("limitation", response.ResponseType);
-        Assert.Contains("NewsTool", response.Message);
+        Assert.Contains("News capability", response.Message);
+        Assert.Contains("NewsTool or WebSearch capability", response.Message);
+        Assert.DoesNotContain("MISSING_CAPABILITY", response.Message);
+    }
+
+    [Fact]
+    public async Task RouteAsync_WhenFileAccessCapabilityIsMissing_ReturnsFriendlyLimitation()
+    {
+        var router = new CommandRouter(
+            new FixedIntentParser(new IntentParseResult
+            {
+                Intent = "missing_capability",
+                NormalizedCommand = "check my folders",
+                Confidence = 0.92,
+                OriginalMessage = "check my folders",
+                ParserUsed = nameof(CapabilityClassifier),
+                CapabilityId = "file_access",
+                CapabilityName = "File Access"
+            }),
+            new ToolRegistry([new ThrowingTool()]),
+            NullLogger<CommandRouter>.Instance,
+            new RuntimeStateService(),
+            new ResponsePolisher(TestCapabilityOptions.Create()));
+
+        var response = await router.RouteAsync("check my folders");
+
+        Assert.False(response.Success);
+        Assert.Equal("MISSING_CAPABILITY", response.ErrorCode);
+        Assert.Equal("missing_capability", response.Intent);
+        Assert.Equal("file_access", response.CapabilityId);
+        Assert.Equal("File Access", response.CapabilityName);
+        Assert.Equal("limitation", response.ResponseType);
+        Assert.Contains("file access capability", response.Message);
+        Assert.DoesNotContain("MISSING_CAPABILITY", response.Message);
     }
 
     [Fact]

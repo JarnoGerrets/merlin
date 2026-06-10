@@ -19,22 +19,27 @@ public sealed class CapabilityClassifierTests
     }
 
     [Theory]
-    [InlineData("show news")]
-    [InlineData("can you pull up the newsfeed for me")]
-    [InlineData("search web")]
-    [InlineData("search internet")]
-    [InlineData("search the internet for Godot tutorials")]
-    [InlineData("check folders")]
-    [InlineData("check my folders")]
-    [InlineData("show emails")]
-    [InlineData("search my hard drive")]
-    public void Classify_WhenCapabilityIsMissing_ReturnsMissingCapability(string message)
+    [InlineData("show news", "news", "News")]
+    [InlineData("can you pull up the newsfeed for me", "news", "News")]
+    [InlineData("search web", "web_search", "Web Search")]
+    [InlineData("search internet", "web_search", "Web Search")]
+    [InlineData("search the internet for Godot tutorials", "web_search", "Web Search")]
+    [InlineData("check folders", "file_access", "File Access")]
+    [InlineData("check my folders", "file_access", "File Access")]
+    [InlineData("show emails", "email", "Email")]
+    [InlineData("search my hard drive", "file_access", "File Access")]
+    public void Classify_WhenCapabilityIsMissing_ReturnsMissingCapability(
+        string message,
+        string expectedCapabilityId,
+        string expectedCapabilityName)
     {
         var classifier = CreateClassifier();
 
         var result = classifier.Classify(message);
 
         Assert.Equal("missing_capability", result.Intent);
+        Assert.Equal(expectedCapabilityId, result.CapabilityId);
+        Assert.Equal(expectedCapabilityName, result.CapabilityName);
         Assert.True(result.Confidence >= 0.8);
     }
 
@@ -52,6 +57,8 @@ public sealed class CapabilityClassifierTests
         var result = classifier.Classify(message);
 
         Assert.Equal("unsupported_action", result.Intent);
+        Assert.Equal("destructive_file_action", result.CapabilityId);
+        Assert.Equal("Destructive File Action", result.CapabilityName);
         Assert.True(result.Confidence >= 0.9);
     }
 

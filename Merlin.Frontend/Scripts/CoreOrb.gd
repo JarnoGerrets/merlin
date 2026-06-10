@@ -43,11 +43,12 @@ var _temporary_state_token := 0
 
 func _ready() -> void:
 	custom_minimum_size = Vector2(220, 220)
-	pivot_offset = custom_minimum_size * 0.5
+	pivot_offset = size * 0.5
 	set_process(true)
 
 
 func _process(delta: float) -> void:
+	pivot_offset = size * 0.5
 	_activity = lerpf(_activity, _target_activity, minf(delta * 5.0, 1.0))
 	_state_intensity = lerpf(_state_intensity, _target_intensity, minf(delta * 4.0, 1.0))
 	_speech_energy = maxf(_speech_energy - delta * 2.8, 0.0)

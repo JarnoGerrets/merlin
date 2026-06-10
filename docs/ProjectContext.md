@@ -29,7 +29,7 @@ The backend returns structured responses with fields such as:
 
 The backend owns command understanding, safety checks, application resolution, confirmation flow, tool execution, diagnostics, local AI integration, and memory storage.
 
-The Godot frontend owns chat display, connection state, user input, debug display, tools panel rendering, response presentation, and the CoreOrb state visualization. It should not execute actions directly. The CoreOrb is the beginning of the Jarvis-style interface direction: it represents assistant state, while responses are progressively revealed through a typewriter-style presentation.
+The Godot frontend owns command-center presentation, connection state, user input, debug display, tools panel rendering, response presentation, notification display, and the CoreOrb state visualization. It should not execute actions directly. The CoreOrb is the beginning of the Jarvis-style interface direction: it is the visual center of the app, while conversation history is a supporting assistant log and responses are progressively revealed through a typewriter-style presentation.
 
 ## Implemented Capabilities
 

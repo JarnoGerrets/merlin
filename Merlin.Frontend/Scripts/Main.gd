@@ -15,18 +15,39 @@ enum MerlinState {
 const TYPEWRITER_CHARS_PER_SECOND := 72.0
 const TYPEWRITER_PUNCTUATION_DELAY := 0.045
 const TYPEWRITER_PARAGRAPH_DELAY := 0.09
+const MAX_NOTIFICATIONS := 5
+
+const COLOR_BACKGROUND := Color(0.02, 0.035, 0.055, 1.0)
+const COLOR_PANEL := Color(0.025, 0.07, 0.105, 0.46)
+const COLOR_PANEL_DARK := Color(0.015, 0.035, 0.055, 0.62)
+const COLOR_BLUE := Color(0.20, 0.62, 1.0, 1.0)
+const COLOR_CYAN := Color(0.32, 0.95, 1.0, 1.0)
+const COLOR_WHITE := Color(0.88, 0.96, 1.0, 1.0)
+const COLOR_MUTED := Color(0.50, 0.62, 0.70, 1.0)
+const COLOR_AMBER := Color(1.0, 0.68, 0.28, 1.0)
+const COLOR_RED := Color(1.0, 0.28, 0.34, 1.0)
 
 @onready var web_socket_client: MerlinWebSocketClient = $MerlinWebSocketClient
+@onready var background: ColorRect = $Background
 @onready var core_orb: CoreOrb = $CoreOrb
+@onready var status_panel: PanelContainer = $StatusPanel
 @onready var connection_state_label: Label = $StatusPanel/Header/ConnectionStateLabel
 @onready var reconnect_button: Button = $StatusPanel/Header/ReconnectButton
 @onready var show_debug_check_box: CheckBox = $StatusPanel/Header/ShowDebugCheckBox
+@onready var activity_panel: PanelContainer = $ActivityPanel
+@onready var activity_label: Label = $ActivityPanel/ActivityMargin/ActivityLabel
+@onready var notification_panel: PanelContainer = $NotificationPanel
+@onready var notification_list: VBoxContainer = $NotificationPanel/NotificationMargin/NotificationList
 @onready var error_label: Label = $OverlayContainer/ErrorLabel
+@onready var chat_panel: PanelContainer = $ChatPanel
+@onready var history_panel: PanelContainer = $ChatPanel/Content/ChatColumn/HistoryPanel
 @onready var message_scroll: ScrollContainer = $ChatPanel/Content/ChatColumn/HistoryPanel/HistoryMargin/MessageScroll
 @onready var message_list: VBoxContainer = $ChatPanel/Content/ChatColumn/HistoryPanel/HistoryMargin/MessageScroll/MessageList
 @onready var thinking_label: Label = $ChatPanel/Content/ChatColumn/ThinkingLabel
+@onready var tools_panel: PanelContainer = $ChatPanel/Content/ToolsPanel
 @onready var refresh_tools_button: Button = $ChatPanel/Content/ToolsPanel/ToolsMargin/ToolsLayout/ToolsHeader/RefreshToolsButton
 @onready var tools_list: VBoxContainer = $ChatPanel/Content/ToolsPanel/ToolsMargin/ToolsLayout/ToolsScroll/ToolsList
+@onready var command_input_panel: PanelContainer = $CommandInput
 @onready var message_input: LineEdit = $CommandInput/InputRow/MessageInput
 @onready var send_button: Button = $CommandInput/InputRow/SendButton
 
@@ -36,6 +57,7 @@ var _focus_request_id := 0
 
 
 func _ready() -> void:
+	_apply_visual_theme()
 	message_input.focus_mode = Control.FOCUS_ALL
 	message_input.keep_editing_on_text_submit = true
 	message_scroll.focus_mode = Control.FOCUS_NONE
@@ -54,6 +76,7 @@ func _ready() -> void:
 	web_socket_client.socket_closed.connect(_on_socket_closed)
 
 	_add_system_message("Connecting to Merlin.Backend...")
+	_add_notification("Connecting to Merlin.Backend", "system")
 	_update_pending_state()
 	_set_tools_placeholder("Click Refresh Tools after connecting.")
 	web_socket_client.connect_to_backend()
@@ -65,6 +88,7 @@ func _on_reconnect_pressed() -> void:
 	_pending_requests.clear()
 	_update_pending_state()
 	_add_system_message("Reconnecting...")
+	_add_notification("Reconnecting", "system")
 	web_socket_client.connect_to_backend()
 	_update_send_button()
 	_focus_message_input()
@@ -94,6 +118,7 @@ func _send_current_message() -> void:
 func _send_backend_message(message: String, show_user_message: bool) -> void:
 	if not web_socket_client.is_backend_connected():
 		_show_error("Cannot send: Merlin.Backend is not connected.")
+		_add_notification("Backend offline", "error")
 		_set_merlin_state(MerlinState.ERROR)
 		_update_send_button()
 		_focus_message_input()
@@ -113,6 +138,7 @@ func _send_backend_message(message: String, show_user_message: bool) -> void:
 	if not sent:
 		_pending_requests.erase(correlation_id)
 		_add_system_message("Message was not sent.")
+		_add_notification("Message was not sent", "error")
 		_set_merlin_state(MerlinState.ERROR)
 		_update_pending_state()
 
@@ -126,6 +152,7 @@ func _on_connection_state_changed(state: String, detail: String) -> void:
 		"connected":
 			_clear_error()
 			_add_system_message("Connected to Merlin.Backend.")
+			_add_notification("Connected", "system")
 			if _pending_requests.is_empty():
 				_set_merlin_state(MerlinState.IDLE)
 			_focus_message_input()
@@ -134,12 +161,14 @@ func _on_connection_state_changed(state: String, detail: String) -> void:
 		"error":
 			_show_error(detail)
 			_add_system_message("Connection error: %s" % detail)
+			_add_notification("Connection error", "error")
 			_pending_requests.clear()
 			_update_pending_state()
 			_set_merlin_state(MerlinState.ERROR)
 		"disconnected":
 			if not detail.is_empty():
 				_add_system_message(detail)
+			_add_notification("Disconnected", "system")
 			_pending_requests.clear()
 			_update_pending_state()
 			_set_merlin_state(MerlinState.IDLE)
@@ -185,6 +214,7 @@ func _on_malformed_response(raw_message: String, detail: String) -> void:
 	var message := "Malformed response JSON: %s" % detail
 	_show_error(message)
 	_add_system_message("%s Raw: %s" % [message, raw_message])
+	_add_notification("Malformed backend response", "error")
 	_set_merlin_state(MerlinState.ERROR)
 	_focus_message_input()
 
@@ -194,10 +224,65 @@ func _on_socket_closed(code: int, reason: String) -> void:
 	_update_pending_state()
 	if code != 1000:
 		_show_error("WebSocket closed. Code: %s Reason: %s" % [code, reason])
+		_add_notification("WebSocket closed unexpectedly", "error")
 		_set_merlin_state(MerlinState.ERROR)
 	else:
+		_add_notification("WebSocket closed", "system")
 		_set_merlin_state(MerlinState.IDLE)
 	_focus_message_input()
+
+
+func _apply_visual_theme() -> void:
+	background.color = COLOR_BACKGROUND
+
+	status_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_PANEL, COLOR_BLUE, 1.0, 8))
+	activity_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.02, 0.10, 0.15, 0.34), COLOR_CYAN, 1.0, 8))
+	notification_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.01, 0.025, 0.04, 0.18), Color(0, 0, 0, 0), 0.0, 8))
+	chat_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_PANEL_DARK, Color(COLOR_BLUE.r, COLOR_BLUE.g, COLOR_BLUE.b, 0.45), 1.0, 8))
+	history_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.01, 0.025, 0.04, 0.36), Color(COLOR_CYAN.r, COLOR_CYAN.g, COLOR_CYAN.b, 0.28), 1.0, 6))
+	tools_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.01, 0.025, 0.04, 0.28), Color(COLOR_BLUE.r, COLOR_BLUE.g, COLOR_BLUE.b, 0.25), 1.0, 6))
+	command_input_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.02, 0.08, 0.12, 0.64), COLOR_CYAN, 1.0, 10))
+
+	_style_button(send_button)
+	_style_button(reconnect_button)
+	_style_button(refresh_tools_button)
+	_style_line_edit(message_input)
+
+	connection_state_label.add_theme_color_override("font_color", COLOR_CYAN)
+	activity_label.add_theme_color_override("font_color", COLOR_WHITE)
+	thinking_label.add_theme_color_override("font_color", COLOR_CYAN)
+	error_label.add_theme_color_override("font_color", COLOR_RED)
+	show_debug_check_box.add_theme_color_override("font_color", COLOR_MUTED)
+
+
+func _panel_style(fill: Color, border: Color, border_width: float, radius: int) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = fill
+	style.border_color = border
+	style.set_border_width_all(int(border_width))
+	style.set_corner_radius_all(radius)
+	style.content_margin_left = 12
+	style.content_margin_top = 10
+	style.content_margin_right = 12
+	style.content_margin_bottom = 10
+	return style
+
+
+func _style_button(button: Button) -> void:
+	button.add_theme_stylebox_override("normal", _panel_style(Color(0.02, 0.10, 0.15, 0.42), Color(COLOR_BLUE.r, COLOR_BLUE.g, COLOR_BLUE.b, 0.55), 1.0, 6))
+	button.add_theme_stylebox_override("hover", _panel_style(Color(0.03, 0.14, 0.20, 0.64), COLOR_CYAN, 1.0, 6))
+	button.add_theme_stylebox_override("pressed", _panel_style(Color(0.02, 0.18, 0.24, 0.70), COLOR_CYAN, 1.0, 6))
+	button.add_theme_color_override("font_color", COLOR_WHITE)
+	button.add_theme_color_override("font_hover_color", COLOR_WHITE)
+	button.add_theme_color_override("font_pressed_color", COLOR_WHITE)
+
+
+func _style_line_edit(line_edit: LineEdit) -> void:
+	line_edit.add_theme_stylebox_override("normal", _panel_style(Color(0.0, 0.018, 0.030, 0.32), Color(COLOR_CYAN.r, COLOR_CYAN.g, COLOR_CYAN.b, 0.50), 1.0, 6))
+	line_edit.add_theme_stylebox_override("focus", _panel_style(Color(0.0, 0.035, 0.055, 0.56), COLOR_CYAN, 1.0, 6))
+	line_edit.add_theme_color_override("font_color", COLOR_WHITE)
+	line_edit.add_theme_color_override("font_placeholder_color", COLOR_MUTED)
+	line_edit.add_theme_color_override("caret_color", COLOR_CYAN)
 
 
 func _format_success_response(message: String, available_tools, diagnostics, confirmation) -> String:
@@ -304,6 +389,9 @@ func _format_confirmation(message: String, confirmation: Dictionary, application
 
 func _format_error_response(error_code, message: String) -> String:
 	var code := str(error_code) if error_code != null else "ERROR"
+	if code in ["UNKNOWN_INPUT", "MISSING_CAPABILITY", "UNSUPPORTED_ACTION"]:
+		return message
+
 	return "%s - %s" % [code, message]
 
 
@@ -323,23 +411,31 @@ func _display_backend_response(
 	_focus_message_input()
 
 	if success:
-		await _add_typed_chat_line("Merlin", _format_success_response(message, available_tools, diagnostics, confirmation), debug_text, "assistant")
+		await _add_typed_chat_line("Merlin", _format_success_response(message, available_tools, diagnostics, confirmation), debug_text, _response_kind(response, success, response_type))
 		_clear_error()
 		if typeof(available_tools) == TYPE_ARRAY:
 			_render_tools(available_tools)
+			_add_notification("Capabilities refreshed", "system")
+		elif _is_tool_execution_response(response):
+			_add_notification(message, "assistant")
 	else:
 		var formatted_error := _format_error_response(error_code, message)
 		if typeof(confirmation) == TYPE_DICTIONARY:
-			await _add_typed_chat_line("Merlin", _format_confirmation(message, confirmation, application_candidates), debug_text, "assistant")
+			await _add_typed_chat_line("Merlin", _format_confirmation(message, confirmation, application_candidates), debug_text, "confirmation")
+			_add_notification("Confirmation required", "confirmation")
 			_clear_error()
 		elif response_type == "limitation" or response_type == "safety":
-			await _add_typed_chat_line("Merlin", message, debug_text, "assistant")
+			var kind := _response_kind(response, success, response_type)
+			await _add_typed_chat_line("Merlin", message, debug_text, kind)
+			_add_notification("Capability unavailable" if kind == "limitation" else "Safety boundary", kind)
 			_clear_error()
 		elif response_type == "system":
 			_add_system_message(message)
+			_add_notification(message, "system")
 			_clear_error()
 		else:
 			await _add_typed_chat_line("Error", formatted_error, debug_text, "error")
+			_add_notification("Error", "error")
 			_show_error(formatted_error)
 
 	_settle_orb_after_response()
@@ -363,6 +459,23 @@ func _settle_orb_after_response() -> void:
 		_set_merlin_state(MerlinState.IDLE)
 	else:
 		_set_merlin_state(MerlinState.THINKING)
+
+
+func _response_kind(response: Dictionary, success: bool, response_type: String) -> String:
+	if typeof(response.get("confirmation", null)) == TYPE_DICTIONARY:
+		return "confirmation"
+
+	match response_type:
+		"limitation":
+			return "limitation"
+		"safety":
+			return "safety"
+		"system":
+			return "system"
+		"error":
+			return "error"
+		_:
+			return "assistant" if success else "error"
 
 
 func _format_connection_state(state: String, detail: String) -> String:
@@ -426,6 +539,38 @@ func _add_system_message(message: String) -> void:
 	_add_chat_line("System", message, "", "system")
 
 
+func _add_notification(message: String, kind: String = "system") -> void:
+	var text := message.strip_edges()
+	if text.is_empty():
+		return
+
+	var notification := PanelContainer.new()
+	notification.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	notification.focus_mode = Control.FOCUS_NONE
+	notification.add_theme_stylebox_override("panel", _panel_style(Color(0.02, 0.06, 0.09, 0.62), _message_color(kind), 1.0, 6))
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 10)
+	margin.add_theme_constant_override("margin_top", 7)
+	margin.add_theme_constant_override("margin_right", 10)
+	margin.add_theme_constant_override("margin_bottom", 7)
+	notification.add_child(margin)
+
+	var label := Label.new()
+	label.focus_mode = Control.FOCUS_NONE
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.text = text
+	label.add_theme_color_override("font_color", _message_color(kind))
+	label.add_theme_font_size_override("font_size", 12)
+	margin.add_child(label)
+
+	notification_list.add_child(notification)
+	while notification_list.get_child_count() > MAX_NOTIFICATIONS:
+		var oldest := notification_list.get_child(0)
+		notification_list.remove_child(oldest)
+		oldest.queue_free()
+
+
 func _add_chat_line(author: String, message: String, debug_text: String, kind: String) -> void:
 	var label := _create_chat_line(author, message, debug_text, kind)
 	await get_tree().process_frame
@@ -442,7 +587,7 @@ func _create_chat_line(author: String, message: String, debug_text: String, kind
 	container.add_child(label)
 
 	if not debug_text.is_empty():
-		var debug_label := _create_selectable_text(debug_text, Color(0.55, 0.58, 0.62), 12)
+		var debug_label := _create_selectable_text(debug_text, COLOR_MUTED, 12)
 		debug_label.visible = show_debug_check_box.button_pressed
 		debug_label.set_meta("debug_label", true)
 		container.add_child(debug_label)
@@ -545,6 +690,7 @@ func _is_tool_execution_response(response: Dictionary) -> bool:
 
 func _set_merlin_state(state: int) -> void:
 	_merlin_state = state
+	activity_label.text = _activity_text_for_state(state)
 	match state:
 		MerlinState.THINKING:
 			core_orb.set_thinking()
@@ -556,6 +702,20 @@ func _set_merlin_state(state: int) -> void:
 			core_orb.play_error()
 		_:
 			core_orb.set_idle()
+
+
+func _activity_text_for_state(state: int) -> String:
+	match state:
+		MerlinState.THINKING:
+			return "Merlin is focusing"
+		MerlinState.SPEAKING:
+			return "Merlin is responding"
+		MerlinState.EXECUTING_TOOL:
+			return "Executing verified tool action"
+		MerlinState.ERROR:
+			return "Attention required"
+		_:
+			return "Merlin is standing by"
 
 
 func _update_send_button() -> void:
@@ -609,11 +769,13 @@ func _render_tools(available_tools: Array) -> void:
 		name_label.text = str(tool.get("name", "Unnamed Tool"))
 		name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		name_label.add_theme_font_size_override("font_size", 16)
+		name_label.add_theme_color_override("font_color", COLOR_CYAN)
 		tool_box.add_child(name_label)
 
 		var description_label := Label.new()
 		description_label.text = str(tool.get("description", ""))
 		description_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		description_label.add_theme_color_override("font_color", COLOR_WHITE)
 		tool_box.add_child(description_label)
 
 		var examples = tool.get("examples", [])
@@ -622,7 +784,7 @@ func _render_tools(available_tools: Array) -> void:
 			examples_label.text = "Examples: %s" % _join_values(examples, ", ")
 			examples_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			examples_label.add_theme_font_size_override("font_size", 12)
-			examples_label.add_theme_color_override("font_color", Color(0.55, 0.58, 0.62))
+			examples_label.add_theme_color_override("font_color", COLOR_MUTED)
 			tool_box.add_child(examples_label)
 
 		tools_list.add_child(tool_box)
@@ -633,6 +795,7 @@ func _set_tools_placeholder(message: String) -> void:
 	var label := Label.new()
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.text = message
+	label.add_theme_color_override("font_color", COLOR_MUTED)
 	tools_list.add_child(label)
 
 
@@ -655,13 +818,21 @@ func _set_debug_labels_visible(node: Node, enabled: bool) -> void:
 func _message_color(kind: String) -> Color:
 	match kind:
 		"user":
-			return Color(0.82, 0.9, 1.0)
+			return COLOR_WHITE
 		"assistant":
-			return Color(0.9, 0.95, 0.88)
+			return COLOR_CYAN
+		"limitation":
+			return COLOR_BLUE
+		"safety":
+			return COLOR_AMBER
+		"confirmation":
+			return COLOR_AMBER
 		"error":
-			return Color(1.0, 0.55, 0.55)
+			return COLOR_RED
+		"system":
+			return COLOR_MUTED
 		_:
-			return Color(0.72, 0.74, 0.78)
+			return COLOR_MUTED
 
 
 func _generate_correlation_id() -> String:
