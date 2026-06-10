@@ -1,0 +1,149 @@
+[gd_scene load_steps=3 format=3 uid="uid://c8kmy5x8hj2pw"]
+
+[ext_resource type="Script" path="res://Scripts/Main.gd" id="1_main"]
+[ext_resource type="Script" path="res://Scripts/MerlinWebSocketClient.gd" id="2_ws"]
+
+[node name="Main" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_main")
+
+[node name="MerlinWebSocketClient" type="Node" parent="."]
+script = ExtResource("2_ws")
+
+[node name="RootMargin" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 18
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 18
+theme_override_constants/margin_bottom = 18
+
+[node name="Layout" type="VBoxContainer" parent="RootMargin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="Header" type="HBoxContainer" parent="RootMargin/Layout"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="TitleLabel" type="Label" parent="RootMargin/Layout/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Merlin"
+theme_override_font_sizes/font_size = 24
+
+[node name="ConnectionStateLabel" type="Label" parent="RootMargin/Layout/Header"]
+layout_mode = 2
+text = "disconnected"
+horizontal_alignment = 2
+
+[node name="ReconnectButton" type="Button" parent="RootMargin/Layout/Header"]
+layout_mode = 2
+text = "Reconnect"
+
+[node name="ShowDebugCheckBox" type="CheckBox" parent="RootMargin/Layout/Header"]
+layout_mode = 2
+text = "Show debug info"
+
+[node name="ErrorLabel" type="Label" parent="RootMargin/Layout"]
+visible = false
+layout_mode = 2
+text = ""
+autowrap_mode = 2
+
+[node name="Content" type="HBoxContainer" parent="RootMargin/Layout"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 10
+
+[node name="ChatColumn" type="VBoxContainer" parent="RootMargin/Layout/Content"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 8
+
+[node name="HistoryPanel" type="PanelContainer" parent="RootMargin/Layout/Content/ChatColumn"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="HistoryMargin" type="MarginContainer" parent="RootMargin/Layout/Content/ChatColumn/HistoryPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 10
+
+[node name="MessageScroll" type="ScrollContainer" parent="RootMargin/Layout/Content/ChatColumn/HistoryPanel/HistoryMargin"]
+layout_mode = 2
+follow_focus = true
+horizontal_scroll_mode = 0
+
+[node name="MessageList" type="VBoxContainer" parent="RootMargin/Layout/Content/ChatColumn/HistoryPanel/HistoryMargin/MessageScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="ThinkingLabel" type="Label" parent="RootMargin/Layout/Content/ChatColumn"]
+visible = false
+layout_mode = 2
+text = "Merlin is thinking..."
+
+[node name="ToolsPanel" type="PanelContainer" parent="RootMargin/Layout/Content"]
+custom_minimum_size = Vector2(280, 0)
+layout_mode = 2
+
+[node name="ToolsMargin" type="MarginContainer" parent="RootMargin/Layout/Content/ToolsPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 10
+
+[node name="ToolsLayout" type="VBoxContainer" parent="RootMargin/Layout/Content/ToolsPanel/ToolsMargin"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="ToolsHeader" type="HBoxContainer" parent="RootMargin/Layout/Content/ToolsPanel/ToolsMargin/ToolsLayout"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="ToolsTitleLabel" type="Label" parent="RootMargin/Layout/Content/ToolsPanel/ToolsMargin/ToolsLayout/ToolsHeader"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Available Tools"
+
+[node name="RefreshToolsButton" type="Button" parent="RootMargin/Layout/Content/ToolsPanel/ToolsMargin/ToolsLayout/ToolsHeader"]
+layout_mode = 2
+text = "Refresh Tools"
+
+[node name="ToolsScroll" type="ScrollContainer" parent="RootMargin/Layout/Content/ToolsPanel/ToolsMargin/ToolsLayout"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="ToolsList" type="VBoxContainer" parent="RootMargin/Layout/Content/ToolsPanel/ToolsMargin/ToolsLayout/ToolsScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="InputRow" type="HBoxContainer" parent="RootMargin/Layout"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="MessageInput" type="LineEdit" parent="RootMargin/Layout/InputRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Type a command, for example: list tools"
+
+[node name="SendButton" type="Button" parent="RootMargin/Layout/InputRow"]
+layout_mode = 2
+text = "Send"

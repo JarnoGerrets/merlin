@@ -6,6 +6,9 @@
 # dotenv files
 .env
 
+# Godot generated project data
+.godot/
+
 # User-specific files
 *.rsuser
 *.suo
