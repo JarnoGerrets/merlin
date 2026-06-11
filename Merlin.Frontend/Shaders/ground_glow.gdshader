@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode blend_add, cull_back, depth_draw_never, unshaded;
+render_mode blend_add, cull_back, depth_prepass_alpha, unshaded;
 
 uniform vec4 glow_color : source_color = vec4(0.0, 0.6, 1.0, 1.0);
 uniform float intensity : hint_range(0.0, 2.0) = 0.6;

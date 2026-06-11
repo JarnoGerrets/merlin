@@ -409,6 +409,10 @@ func _display_backend_response(
 			await _add_typed_chat_line("Merlin", _format_confirmation(message, confirmation, application_candidates), debug_text, "confirmation")
 			_add_notification("Confirmation required", "confirmation")
 			_clear_error()
+			activity_label.text = "Waiting for confirmation"
+			core_orb.play_confirmation()
+			_focus_message_input()
+			return
 		elif response_type == "limitation" or response_type == "safety":
 			var kind := _response_kind(response, success, response_type)
 			await _add_typed_chat_line("Merlin", message, debug_text, kind)
@@ -429,6 +433,12 @@ func _display_backend_response(
 
 func _prepare_orb_for_response(response: Dictionary, success: bool, response_type: String) -> void:
 	var has_confirmation := typeof(response.get("confirmation", null)) == TYPE_DICTIONARY
+	if has_confirmation:
+		activity_label.text = "Waiting for confirmation"
+		core_orb.play_confirmation()
+		await get_tree().create_timer(0.28).timeout
+		return
+
 	if response_type == "error" or (not success and not has_confirmation and response_type != "limitation" and response_type != "safety"):
 		_set_merlin_state(MerlinState.ERROR)
 		await get_tree().create_timer(0.28).timeout

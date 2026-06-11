@@ -1,38 +1,59 @@
 extends Node3D
 class_name OrbController
 
-enum OrbState { IDLE, THINKING, SPEAKING, EXECUTING, ERROR }
+enum OrbState { IDLE, THINKING, SPEAKING, EXECUTING, ERROR, CONFIRMATION }
 
-const CORE_PRIMARY := Color(0.0, 0.81, 1.0)
-const CORE_SECONDARY := Color(0.10, 0.56, 1.0)
-const CORE_HOT := Color(0.30, 0.87, 1.0)
-const NEAR_WHITE := Color(0.80, 0.94, 1.0)
-const AMBER := Color(1.0, 0.42, 0.0)
-const ERROR_RED := Color(0.8, 0.07, 0.07)
-
-const RING_SPEEDS := {
-	OrbState.IDLE: [0.30, -0.20, 0.15, 0.08, 0.10, -0.05, 0.04],
-	OrbState.THINKING: [1.80, -2.50, 1.20, 0.60, 0.80, -0.30, 0.15],
-	OrbState.SPEAKING: [1.00, -1.40, 0.80, 0.35, 0.55, -0.20, 0.10],
-	OrbState.EXECUTING: [3.00, -3.80, 2.00, 1.00, 1.40, -0.60, 0.25],
-	OrbState.ERROR: [0.60, -0.40, 0.30, 0.15, 0.20, -0.08, 0.05],
-}
+const COLOR_CORE_PRIMARY := Color(0.00, 0.81, 1.00)
+const COLOR_CORE_HOT := Color(0.20, 0.90, 1.00)
+const COLOR_SHELL := Color(0.05, 0.35, 0.85)
+const COLOR_RING_PRIMARY := Color(0.08, 0.50, 1.00)
+const COLOR_RING_OUTER := Color(0.04, 0.30, 0.80)
+const COLOR_AMBIENT_LIGHT := Color(0.00, 0.09, 0.16)
+const COLOR_THINKING := Color(0.10, 0.50, 1.00)
+const COLOR_EXECUTING := Color(1.00, 0.42, 0.00)
+const COLOR_EXECUTING_CORE := Color(0.80, 0.27, 0.00)
+const COLOR_ERROR := Color(0.85, 0.04, 0.04)
+const COLOR_ERROR_SOFT := Color(0.60, 0.02, 0.02)
+const COLOR_AMBER := Color(1.00, 0.50, 0.00)
+const COLOR_AMBER_SOFT := Color(0.85, 0.38, 0.00)
 
 const CORE_PARAMS := {
-	OrbState.IDLE: [1.00, 0.80],
-	OrbState.THINKING: [1.60, 1.30],
-	OrbState.SPEAKING: [1.30, 1.10],
-	OrbState.EXECUTING: [2.20, 1.60],
-	OrbState.ERROR: [0.50, 0.60],
+	OrbState.IDLE: [1.00, 0.75, 0.022, 0.00, 0.70, 0.010, -0.008, 0.006],
+	OrbState.THINKING: [1.30, 1.05, 0.040, 0.025, 1.20, 0.014, -0.010, 0.007],
+	OrbState.SPEAKING: [1.40, 1.28, 0.055, 0.240, 1.85, 0.008, -0.006, 0.004],
+	OrbState.EXECUTING: [2.05, 1.55, 0.065, 0.080, 1.45, 0.018, -0.014, 0.010],
+	OrbState.ERROR: [1.75, 0.65, 0.040, 0.020, 0.75, 0.006, -0.005, 0.004],
+	OrbState.CONFIRMATION: [1.10, 0.70, 0.030, 0.00, 0.80, 0.006, -0.005, 0.004],
 }
 
 const LIGHT_PARAMS := {
-	OrbState.IDLE: [CORE_PRIMARY, 3.0],
-	OrbState.THINKING: [Color(0.15, 0.70, 1.00), 5.0],
-	OrbState.SPEAKING: [Color(0.00, 0.90, 1.00), 4.5],
-	OrbState.EXECUTING: [AMBER, 7.0],
-	OrbState.ERROR: [ERROR_RED, 4.0],
+	OrbState.IDLE: [COLOR_CORE_PRIMARY, 3.0],
+	OrbState.THINKING: [COLOR_THINKING, 4.0],
+	OrbState.SPEAKING: [COLOR_CORE_PRIMARY, 3.6],
+	OrbState.EXECUTING: [COLOR_EXECUTING, 6.0],
+	OrbState.ERROR: [COLOR_ERROR, 5.5],
+	OrbState.CONFIRMATION: [COLOR_AMBER, 3.8],
 }
+
+const CORE_COLORS := {
+	OrbState.IDLE: [COLOR_CORE_PRIMARY, COLOR_CORE_HOT],
+	OrbState.THINKING: [COLOR_THINKING, COLOR_CORE_HOT],
+	OrbState.SPEAKING: [COLOR_CORE_PRIMARY, COLOR_CORE_HOT],
+	OrbState.EXECUTING: [COLOR_EXECUTING_CORE, COLOR_EXECUTING],
+	OrbState.ERROR: [COLOR_ERROR, COLOR_ERROR_SOFT],
+	OrbState.CONFIRMATION: [COLOR_AMBER_SOFT, COLOR_AMBER],
+}
+
+const SPEECH_PULSE_ADD := 0.24
+const SPEECH_PULSE_MAX := 1.0
+const SPEECH_PULSE_DECAY := 3.0
+const SPEECH_PULSE_MAX_EXTRA := 0.28
+const MAX_PULSE_INTENSITY := 2.5
+const ERROR_HOLD_DURATION := 2.5
+const CONFIRMATION_PULSE_PERIOD := 2.2
+const RINGS_ENABLED := false
+const RING_PATH_SEGMENTS_MIN := 192
+const RING_TUBE_SEGMENTS_MIN := 32
 
 @onready var camera: Camera3D = $Camera3D
 @onready var world_environment: WorldEnvironment = $WorldEnvironment
@@ -54,34 +75,43 @@ const LIGHT_PARAMS := {
 
 var current_state := OrbState.IDLE
 var previous_state := OrbState.IDLE
-var state_tween: Tween
-var speech_pulse_timer := 0.0
 var core_mat: ShaderMaterial
 var ground_mat: ShaderMaterial
-var ring_nodes: Array[MeshInstance3D] = []
-var ring_speeds: Array[float] = [0.30, -0.20, 0.15, 0.08, 0.10, -0.05, 0.04]
+var _speech_pulse := 0.0
 var _temporary_state_token := 0
+var _target_core_pulse_intensity := 1.0
+var _target_core_time_scale := 0.8
+var _target_surface_displacement := 0.025
+var _target_spike_strength := 0.0
+var _target_surface_activity := 0.7
+var _target_core_turn_speed := 0.010
+var _target_shell_turn_speed := -0.008
+var _target_inner_shell_turn_speed := 0.006
+var _core_turn_speed := 0.010
+var _shell_turn_speed := -0.008
+var _inner_shell_turn_speed := 0.006
+var _core_phase := 0.0
+var _shell_phase := 0.0
+var _inner_shell_phase := 0.0
+var _target_light_energy := 3.0
+var _target_light_color := COLOR_CORE_PRIMARY
+var _target_core_color := COLOR_CORE_PRIMARY
+var _target_plasma_color := COLOR_CORE_HOT
+var _ring_depth_offset_index := 0
+var _state_elapsed := 0.0
+var _error_recover_state := OrbState.IDLE
 
 
 func _ready() -> void:
 	_configure_scene()
 	_build_core()
 	_build_glass()
-	_build_rings()
-	_build_segment_details()
+	if RINGS_ENABLED:
+		_build_rings()
+		_build_segment_details()
 	_build_particles()
 	_build_ground_glow()
 	_build_animation_placeholders()
-
-	ring_nodes = [
-		inner_system.get_node("EnergyRing"),
-		inner_system.get_node("PulseRing"),
-		middle_system.get_node("DataRing"),
-		middle_system.get_node("SegmentRing"),
-		outer_system.get_node("HUDRing"),
-		outer_system.get_node("TechMarkerRing"),
-		orbit_system.get_node("OrbitRing"),
-	]
 
 	_transition_to(OrbState.IDLE, true)
 	animation_controller.play("idle_breathe")
@@ -89,7 +119,8 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-	_update_ring_rotations(delta)
+	_state_elapsed += delta
+	_update_core_and_light(delta)
 	_update_system_motion(delta)
 	_update_speech_pulse(delta)
 
@@ -118,37 +149,39 @@ func play_tool_execution(duration: float = 2.5) -> void:
 func play_error(duration: float = 3.0) -> void:
 	_temporary_state_token += 1
 	var token := _temporary_state_token
+	_error_recover_state = OrbState.IDLE if current_state == OrbState.ERROR else current_state
 	_transition_to(OrbState.ERROR)
-	await get_tree().create_timer(duration).timeout
+	await get_tree().create_timer(minf(duration, ERROR_HOLD_DURATION)).timeout
 	if token == _temporary_state_token and current_state == OrbState.ERROR:
-		_transition_to(OrbState.IDLE)
+		_transition_to(_error_recover_state)
+
+
+func play_confirmation() -> void:
+	_transition_to(OrbState.CONFIRMATION)
 
 
 func notify_speech_tick() -> void:
 	if current_state != OrbState.SPEAKING:
 		return
 
-	speech_pulse_timer = 0.12
-	var pulse_tween := create_tween()
-	var current_energy := omni_light.light_energy
-	var current_pulse = core_mat.get_shader_parameter("pulse_intensity")
-	pulse_tween.tween_property(omni_light, "light_energy", current_energy * 1.18, 0.06)
-	pulse_tween.tween_property(omni_light, "light_energy", current_energy, 0.10)
-	pulse_tween.parallel().tween_method(
-		func(value: float) -> void: core_mat.set_shader_parameter("pulse_intensity", value),
-		current_pulse,
-		current_pulse * 1.15,
-		0.06)
-	pulse_tween.parallel().tween_method(
-		func(value: float) -> void: core_mat.set_shader_parameter("pulse_intensity", value),
-		current_pulse * 1.15,
-		current_pulse,
-		0.10)
+	_speech_pulse = clampf(_speech_pulse + SPEECH_PULSE_ADD, 0.0, SPEECH_PULSE_MAX)
 
 
 func _configure_scene() -> void:
-	camera.position = Vector3(0.0, 0.4, 3.5)
-	camera.rotation_degrees = Vector3(-6.5, 0.0, 0.0)
+	position = Vector3.ZERO
+	inner_system.position = Vector3.ZERO
+	middle_system.position = Vector3.ZERO
+	outer_system.position = Vector3.ZERO
+	orbit_system.position = Vector3.ZERO
+	segment_system.position = Vector3.ZERO
+	inner_system.visible = RINGS_ENABLED
+	middle_system.visible = RINGS_ENABLED
+	outer_system.visible = RINGS_ENABLED
+	orbit_system.visible = RINGS_ENABLED
+	segment_system.visible = RINGS_ENABLED
+
+	camera.position = Vector3(0.0, 0.0, 3.65)
+	camera.rotation_degrees = Vector3.ZERO
 	camera.fov = 42.0
 	camera.near = 0.1
 	camera.far = 100.0
@@ -157,14 +190,14 @@ func _configure_scene() -> void:
 	var environment := Environment.new()
 	environment.background_mode = Environment.BG_COLOR
 	environment.background_color = Color(0.0, 0.031, 0.063)
-	environment.ambient_light_color = Color(0.0, 0.094, 0.157)
+	environment.ambient_light_color = COLOR_AMBIENT_LIGHT
 	environment.ambient_light_energy = 0.25
 	environment.glow_enabled = true
-	environment.glow_intensity = 1.8
-	environment.glow_strength = 1.2
-	environment.glow_bloom = 0.3
+	environment.glow_intensity = 1.4
+	environment.glow_strength = 1.0
+	environment.glow_bloom = 0.2
 	environment.glow_blend_mode = Environment.GLOW_BLEND_MODE_ADDITIVE
-	environment.glow_hdr_threshold = 0.7
+	environment.glow_hdr_threshold = 0.85
 	environment.glow_hdr_scale = 2.0
 	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	environment.tonemap_exposure = 1.0
@@ -180,7 +213,7 @@ func _configure_scene() -> void:
 	world_environment.environment = environment
 
 	omni_light.position = Vector3.ZERO
-	omni_light.light_color = CORE_PRIMARY
+	omni_light.light_color = COLOR_CORE_PRIMARY
 	omni_light.light_energy = 3.0
 	omni_light.omni_range = 4.0
 	omni_light.omni_attenuation = 0.5
@@ -188,7 +221,7 @@ func _configure_scene() -> void:
 
 	spot_light.position = Vector3(0.0, 4.0, 1.0)
 	spot_light.rotation_degrees = Vector3(-75.0, 0.0, 0.0)
-	spot_light.light_color = Color(0.2, 0.6, 1.0)
+	spot_light.light_color = COLOR_RING_PRIMARY
 	spot_light.light_energy = 1.5
 	spot_light.spot_range = 8.0
 	spot_light.spot_angle = 35.0
@@ -197,26 +230,30 @@ func _configure_scene() -> void:
 
 func _build_core() -> void:
 	var mesh := SphereMesh.new()
-	mesh.radius = 0.52
-	mesh.height = 1.04
-	mesh.radial_segments = 128
-	mesh.rings = 64
+	mesh.radius = 0.74
+	mesh.height = 1.48
+	mesh.radial_segments = 192
+	mesh.rings = 96
 	core_sphere.mesh = mesh
 	core_mat = ShaderMaterial.new()
 	core_mat.shader = load("res://Shaders/core_plasma.gdshader")
-	core_mat.set_shader_parameter("core_color", CORE_PRIMARY)
-	core_mat.set_shader_parameter("plasma_color", CORE_HOT)
+	core_mat.set_shader_parameter("core_color", COLOR_CORE_PRIMARY)
+	core_mat.set_shader_parameter("plasma_color", COLOR_CORE_HOT)
 	core_mat.set_shader_parameter("pulse_intensity", 1.0)
 	core_mat.set_shader_parameter("time_scale", 0.8)
 	core_mat.set_shader_parameter("noise_scale", 6.0)
 	core_mat.set_shader_parameter("fresnel_power", 3.0)
 	core_mat.set_shader_parameter("vein_sharpness", 8.0)
+	core_mat.set_shader_parameter("surface_displacement", 0.025)
+	core_mat.set_shader_parameter("spike_strength", 0.0)
+	core_mat.set_shader_parameter("surface_activity", 0.7)
+	core_mat.set_shader_parameter("speech_drive", 0.0)
 	core_sphere.material_override = core_mat
 
 
 func _build_glass() -> void:
-	_configure_shell(glass_shell, 1.12, 0.12, 0.08)
-	_configure_shell(inner_glass_shell, 0.72, 0.06, 0.04)
+	_configure_shell(glass_shell, 0.93, 0.10, 0.03)
+	_configure_shell(inner_glass_shell, 0.80, 0.05, 0.02)
 
 
 func _configure_shell(node: MeshInstance3D, radius: float, opacity: float, grid_opacity: float) -> void:
@@ -230,18 +267,18 @@ func _configure_shell(node: MeshInstance3D, radius: float, opacity: float, grid_
 	mat.shader = load("res://Shaders/glass_shell.gdshader")
 	mat.set_shader_parameter("opacity", opacity)
 	mat.set_shader_parameter("grid_opacity", grid_opacity)
-	mat.set_shader_parameter("shell_color", Color(0.05, 0.29, 0.88))
+	mat.set_shader_parameter("shell_color", COLOR_SHELL)
 	node.material_override = mat
 
 
 func _build_rings() -> void:
-	_add_ring(inner_system, "EnergyRing", 0.68, 0.73, 128, 6, Vector3(12, 0, 0), CORE_PRIMARY, 24, 1.8, 0.25, 0.75, 0.4)
-	_add_ring(inner_system, "PulseRing", 0.76, 0.79, 128, 4, Vector3(-8, 30, 5), NEAR_WHITE, 64, 2.5, 0.55, 0.70, 0.25)
-	_add_ring(middle_system, "DataRing", 0.88, 0.93, 192, 6, Vector3(5, 60, -10), CORE_SECONDARY, 48, 1.2, 0.35, 0.75, 0.4)
-	_add_ring(middle_system, "SegmentRing", 0.95, 0.97, 256, 4, Vector3(-15, 120, 8), CORE_PRIMARY, 16, 0.4, 0.15, 0.70, 0.6)
-	_add_ring(outer_system, "HUDRing", 1.06, 1.10, 256, 6, Vector3(20, 0, -5), CORE_SECONDARY, 32, 0.7, 0.4, 0.62, 0.4)
-	_add_ring(outer_system, "TechMarkerRing", 1.13, 1.14, 512, 3, Vector3(-5, 45, 12), Color(0.05, 0.4, 0.85), 96, 0.3, 0.6, 0.4, 0.45)
-	_add_ring(orbit_system, "OrbitRing", 1.28, 1.30, 256, 4, Vector3(75, 0, 20), Color(0.2, 0.6, 1.0), 12, 0.15, 0.2, 0.35, 0.35)
+	_add_ring(inner_system, "EnergyRing", 0.68, 0.73, 192, 32, Vector3(12, 0, 0), COLOR_CORE_PRIMARY, 24, 1.8, 0.25, 0.62, 0.32)
+	_add_ring(inner_system, "PulseRing", 0.77, 0.80, 192, 32, Vector3(-8, 30, 5), COLOR_CORE_HOT, 64, 2.0, 0.55, 0.50, 0.20)
+	_add_ring(middle_system, "DataRing", 0.88, 0.93, 224, 32, Vector3(5, 60, -10), COLOR_RING_PRIMARY, 48, 1.2, 0.35, 0.52, 0.32)
+	_add_ring(middle_system, "SegmentRing", 0.98, 1.00, 256, 32, Vector3(-15, 120, 8), COLOR_CORE_PRIMARY, 16, 0.4, 0.15, 0.46, 0.45)
+	_add_ring(outer_system, "HUDRing", 1.09, 1.12, 256, 32, Vector3(20, 0, -5), COLOR_RING_PRIMARY, 32, 0.7, 0.4, 0.34, 0.30)
+	_add_ring(outer_system, "TechMarkerRing", 1.18, 1.20, 512, 32, Vector3(-5, 45, 12), COLOR_RING_OUTER, 96, 0.3, 0.6, 0.22, 0.30)
+	_add_ring(orbit_system, "OrbitRing", 1.32, 1.34, 256, 32, Vector3(75, 0, 20), COLOR_RING_PRIMARY, 12, 0.15, 0.2, 0.18, 0.25)
 
 
 func _add_ring(
@@ -249,8 +286,8 @@ func _add_ring(
 	node_name: String,
 	inner_radius: float,
 	outer_radius: float,
-	ring_segments: int,
-	sections: int,
+	path_segments: int,
+	tube_segments: int,
 	rotation: Vector3,
 	color: Color,
 	segment_count: float,
@@ -263,10 +300,12 @@ func _add_ring(
 	var mesh := TorusMesh.new()
 	mesh.inner_radius = inner_radius
 	mesh.outer_radius = outer_radius
-	mesh.ring_segments = ring_segments
-	mesh.rings = sections
+	mesh.rings = maxi(path_segments, RING_PATH_SEGMENTS_MIN)
+	mesh.ring_segments = maxi(tube_segments, RING_TUBE_SEGMENTS_MIN)
 	ring.mesh = mesh
 	ring.rotation_degrees = rotation
+	ring.position.z = 0.001 + float(_ring_depth_offset_index) * 0.003
+	_ring_depth_offset_index += 1
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://Shaders/ring_data.gdshader")
 	mat.set_shader_parameter("ring_color", color)
@@ -275,13 +314,14 @@ func _add_ring(
 	mat.set_shader_parameter("gap_ratio", gap_ratio)
 	mat.set_shader_parameter("opacity", opacity)
 	mat.set_shader_parameter("brightness_variance", brightness_variance)
+	mat.set_shader_parameter("pulse_boost", 0.0)
 	ring.material_override = mat
 	parent.add_child(ring)
 
 
 func _build_segment_details() -> void:
 	for index in range(4):
-		_add_ring(segment_system, "ArcSegment%s" % index, 1.065 + index * 0.025, 1.070 + index * 0.025, 512, 3, Vector3(index * 7.0, index * 29.0, index * 17.0), NEAR_WHITE.lerp(CORE_PRIMARY, index * 0.22), 128, 0.05 + index * 0.02, 0.08, 0.45, 0.55)
+		_add_ring(segment_system, "ArcSegment%s" % index, 1.23 + index * 0.04, 1.236 + index * 0.04, 512, 32, Vector3(index * 7.0, index * 29.0, index * 17.0), COLOR_CORE_HOT.lerp(COLOR_CORE_PRIMARY, index * 0.22), 128, 0.05 + index * 0.02, 0.08, 0.22, 0.35)
 	_generate_tick_marks()
 
 
@@ -297,14 +337,14 @@ func _generate_tick_marks() -> void:
 		tick.mesh = mesh
 		tick.position = Vector3(sin(angle) * radius, cos(angle) * radius, 0.0)
 		tick.rotation.z = -angle
-		tick.material_override = _unshaded_material(Color(0.3, 0.75, 1.0, 0.7 if index % 6 == 0 else 0.4), 1.5 if index % 6 == 0 else 0.8)
+		tick.material_override = _unshaded_material(Color(COLOR_RING_PRIMARY.r, COLOR_RING_PRIMARY.g, COLOR_RING_PRIMARY.b, 0.55 if index % 6 == 0 else 0.28), 1.1 if index % 6 == 0 else 0.55)
 		segment_system.add_child(tick)
 
 
 func _build_particles() -> void:
-	_configure_particle_system(ambient_field, 180, 5.0, 0.5, 1.6, 0.03, 0.12, 0.008, 0.025, CORE_PRIMARY, true)
-	_configure_particle_system(orbit_particles, 60, 3.0, 1.0, 1.1, 0.8, 1.4, 0.010, 0.030, CORE_SECONDARY, true)
-	_configure_particle_system(pulse_burst, 100, 1.0, 1.0, 0.55, 0.8, 2.5, 0.008, 0.025, CORE_HOT, false)
+	_configure_particle_system(ambient_field, 140, 5.0, 0.45, 0.95, 0.02, 0.08, 0.006, 0.018, COLOR_CORE_PRIMARY, true)
+	_configure_particle_system(orbit_particles, 1, 3.0, 1.0, 1.1, 0.8, 1.4, 0.010, 0.030, COLOR_RING_PRIMARY, false)
+	_configure_particle_system(pulse_burst, 100, 1.0, 1.0, 0.55, 0.8, 2.5, 0.008, 0.025, COLOR_CORE_HOT, false)
 	pulse_burst.one_shot = false
 	pulse_burst.explosiveness = 0.15
 
@@ -356,7 +396,9 @@ func _build_ground_glow() -> void:
 	ground_glow.position = Vector3(0.0, -1.3, 0.0)
 	ground_mat = ShaderMaterial.new()
 	ground_mat.shader = load("res://Shaders/ground_glow.gdshader")
+	ground_mat.set_shader_parameter("glow_color", COLOR_RING_PRIMARY)
 	ground_mat.set_shader_parameter("intensity", 0.6)
+	ground_mat.set_shader_parameter("ring_count", 0.0)
 	ground_glow.material_override = ground_mat
 
 
@@ -380,25 +422,23 @@ func _transition_to(new_state: int, force: bool = false) -> void:
 
 	previous_state = current_state
 	current_state = new_state
-
-	if state_tween:
-		state_tween.kill()
-	state_tween = create_tween().set_parallel(true)
+	_state_elapsed = 0.0
 
 	var core_params: Array = CORE_PARAMS[new_state]
 	var light_params: Array = LIGHT_PARAMS[new_state]
-	state_tween.tween_method(
-		func(value: float) -> void: core_mat.set_shader_parameter("pulse_intensity", value),
-		core_mat.get_shader_parameter("pulse_intensity"),
-		core_params[0],
-		0.7)
-	state_tween.tween_method(
-		func(value: float) -> void: core_mat.set_shader_parameter("time_scale", value),
-		core_mat.get_shader_parameter("time_scale"),
-		core_params[1],
-		0.7)
-	state_tween.tween_property(omni_light, "light_color", light_params[0], 0.5)
-	state_tween.tween_property(omni_light, "light_energy", light_params[1], 0.5)
+	var core_colors: Array = CORE_COLORS[new_state]
+	_target_core_pulse_intensity = minf(core_params[0], MAX_PULSE_INTENSITY)
+	_target_core_time_scale = core_params[1]
+	_target_surface_displacement = core_params[2]
+	_target_spike_strength = core_params[3]
+	_target_surface_activity = core_params[4]
+	_target_core_turn_speed = core_params[5]
+	_target_shell_turn_speed = core_params[6]
+	_target_inner_shell_turn_speed = core_params[7]
+	_target_light_color = light_params[0]
+	_target_light_energy = light_params[1]
+	_target_core_color = core_colors[0]
+	_target_plasma_color = core_colors[1]
 
 	match new_state:
 		OrbState.IDLE:
@@ -416,40 +456,108 @@ func _transition_to(new_state: int, force: bool = false) -> void:
 		OrbState.ERROR:
 			pulse_burst.emitting = true
 			animation_controller.play("error_glitch")
+			core_mat.set_shader_parameter("core_color", COLOR_ERROR)
+			core_mat.set_shader_parameter("plasma_color", COLOR_ERROR_SOFT)
+			core_mat.set_shader_parameter("pulse_intensity", 1.8)
+			omni_light.light_color = COLOR_ERROR
+			omni_light.light_energy = 5.5
+		OrbState.CONFIRMATION:
+			pulse_burst.emitting = false
+			animation_controller.stop()
 
 
 func _update_ring_rotations(delta: float) -> void:
-	var targets: Array = RING_SPEEDS[current_state]
-	for index in range(ring_nodes.size()):
-		ring_speeds[index] = lerpf(ring_speeds[index], targets[index], delta * 2.5)
-
-	ring_nodes[0].rotate_y(ring_speeds[0] * delta)
-	ring_nodes[0].rotate_x(ring_speeds[0] * 0.25 * delta)
-	ring_nodes[1].rotate_z(ring_speeds[1] * delta)
-	ring_nodes[1].rotate_y(ring_speeds[1] * 0.3 * delta)
-	ring_nodes[2].rotate_y(ring_speeds[2] * delta)
-	ring_nodes[2].rotate_z(ring_speeds[2] * 0.2 * delta)
-	ring_nodes[3].rotate_x(ring_speeds[3] * delta)
-	ring_nodes[3].rotate_z(ring_speeds[3] * 0.15 * delta)
-	ring_nodes[4].rotate_y(ring_speeds[4] * delta)
-	ring_nodes[4].rotate_x(ring_speeds[4] * 0.1 * delta)
-	ring_nodes[5].rotate_z(ring_speeds[5] * delta)
-	ring_nodes[6].rotate_y(ring_speeds[6] * delta)
-	ring_nodes[6].rotate_z(ring_speeds[6] * 0.4 * delta)
+	pass
 
 
 func _update_system_motion(delta: float) -> void:
-	inner_system.rotate_y(0.05 * delta)
-	middle_system.rotate_x(0.025 * delta)
-	outer_system.rotate_z(-0.018 * delta)
-	orbit_system.rotate_y(0.012 * delta)
-	segment_system.rotate_z(0.006 * delta)
+	_core_turn_speed = lerpf(_core_turn_speed, _target_core_turn_speed, minf(delta * 1.8, 1.0))
+	_shell_turn_speed = lerpf(_shell_turn_speed, _target_shell_turn_speed, minf(delta * 1.8, 1.0))
+	_inner_shell_turn_speed = lerpf(_inner_shell_turn_speed, _target_inner_shell_turn_speed, minf(delta * 1.8, 1.0))
+
+	_core_phase = fmod(_core_phase + _core_turn_speed * delta, TAU)
+	_shell_phase = fmod(_shell_phase + _shell_turn_speed * delta, TAU)
+	_inner_shell_phase = fmod(_inner_shell_phase + _inner_shell_turn_speed * delta, TAU)
+
+	core_sphere.rotation = Vector3(0.0, _core_phase, 0.0)
+	glass_shell.rotation = Vector3(0.0, _shell_phase, 0.0)
+	inner_glass_shell.rotation = Vector3(_inner_shell_phase, 0.0, 0.0)
 
 
 func _update_speech_pulse(delta: float) -> void:
-	if current_state != OrbState.SPEAKING:
-		return
-	speech_pulse_timer = maxf(0.0, speech_pulse_timer - delta)
+	_speech_pulse = move_toward(_speech_pulse, 0.0, SPEECH_PULSE_DECAY * delta)
+
+
+func _update_ring_materials(delta: float) -> void:
+	pass
+
+
+func _update_core_and_light(delta: float) -> void:
+	var pulse_target := _target_core_pulse_intensity
+	if current_state == OrbState.THINKING:
+		var thinking_wave := pow(maxf(0.0, sin((_state_elapsed / 3.0) * TAU)), 4.0)
+		pulse_target += thinking_wave * 0.22
+	if current_state == OrbState.SPEAKING:
+		pulse_target = CORE_PARAMS[OrbState.SPEAKING][0] + _speech_pulse * SPEECH_PULSE_MAX_EXTRA
+	if current_state == OrbState.CONFIRMATION:
+		var confirmation_wave := (sin((_state_elapsed / CONFIRMATION_PULSE_PERIOD) * TAU) + 1.0) * 0.5
+		pulse_target += confirmation_wave * 0.18
+	pulse_target = clampf(pulse_target, 0.0, MAX_PULSE_INTENSITY)
+
+	var current_pulse := _shader_float("pulse_intensity", pulse_target)
+	var current_time_scale := _shader_float("time_scale", _target_core_time_scale)
+	var speech_drive := _speech_pulse if current_state == OrbState.SPEAKING else 0.0
+	var spike_target := _target_spike_strength
+	var displacement_target := _target_surface_displacement
+	var activity_target := _target_surface_activity
+	if current_state == OrbState.SPEAKING:
+		spike_target += _speech_pulse * 0.090
+		displacement_target += _speech_pulse * 0.030
+	if current_state == OrbState.THINKING:
+		var localized_flare := pow(maxf(0.0, sin((_state_elapsed / 2.7) * TAU)), 6.0)
+		displacement_target += localized_flare * 0.010
+		activity_target += localized_flare * 0.20
+
+	core_mat.set_shader_parameter("pulse_intensity", lerpf(current_pulse, pulse_target, minf(delta * 12.0, 1.0)))
+	core_mat.set_shader_parameter("time_scale", lerpf(current_time_scale, _target_core_time_scale, minf(delta * 4.0, 1.0)))
+	core_mat.set_shader_parameter("surface_displacement", lerpf(_shader_float("surface_displacement", displacement_target), displacement_target, minf(delta * 5.0, 1.0)))
+	core_mat.set_shader_parameter("spike_strength", lerpf(_shader_float("spike_strength", spike_target), spike_target, minf(delta * 7.0, 1.0)))
+	core_mat.set_shader_parameter("surface_activity", lerpf(_shader_float("surface_activity", activity_target), activity_target, minf(delta * 4.0, 1.0)))
+	core_mat.set_shader_parameter("speech_drive", lerpf(_shader_float("speech_drive", speech_drive), speech_drive, minf(delta * 10.0, 1.0)))
+
+	var light_target := _target_light_energy
+	if current_state == OrbState.SPEAKING:
+		light_target += _speech_pulse * 0.45
+	if current_state == OrbState.THINKING:
+		var thinking_light_wave := pow(maxf(0.0, sin((_state_elapsed / 3.0) * TAU)), 4.0)
+		light_target += thinking_light_wave * 0.45
+	if current_state == OrbState.CONFIRMATION:
+		var confirmation_light_wave := (sin((_state_elapsed / CONFIRMATION_PULSE_PERIOD) * TAU) + 1.0) * 0.5
+		light_target += confirmation_light_wave * 0.60
+	omni_light.light_energy = lerpf(omni_light.light_energy, light_target, minf(delta * 2.0, 1.0))
+	omni_light.light_color = omni_light.light_color.lerp(_target_light_color, minf(delta * 2.0, 1.0))
+
+	var current_core_color = core_mat.get_shader_parameter("core_color")
+	var core_color: Color = _target_core_color if current_core_color == null else current_core_color
+	var current_plasma_color = core_mat.get_shader_parameter("plasma_color")
+	var plasma_color: Color = _target_plasma_color if current_plasma_color == null else current_plasma_color
+	core_mat.set_shader_parameter("core_color", core_color.lerp(_target_core_color, minf(delta * 2.0, 1.0)))
+	core_mat.set_shader_parameter("plasma_color", plasma_color.lerp(_target_plasma_color, minf(delta * 2.0, 1.0)))
+
+	if ground_mat:
+		var target_ground := 0.50 + _speech_pulse * 0.12
+		if current_state == OrbState.CONFIRMATION:
+			target_ground += 0.12
+		if current_state == OrbState.ERROR:
+			target_ground += 0.18
+		var current_ground_value = ground_mat.get_shader_parameter("intensity")
+		var current_ground: float = 0.6 if current_ground_value == null else current_ground_value
+		ground_mat.set_shader_parameter("intensity", lerpf(current_ground, target_ground, minf(delta * 3.0, 1.0)))
+
+
+func _shader_float(parameter_name: String, fallback: float) -> float:
+	var value = core_mat.get_shader_parameter(parameter_name)
+	return fallback if value == null else value
 
 
 func _unshaded_material(color: Color, emission_energy: float) -> StandardMaterial3D:

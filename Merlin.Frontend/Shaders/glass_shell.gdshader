@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode blend_mix, cull_back, depth_draw_never;
+render_mode blend_mix, cull_back, depth_prepass_alpha;
 
 uniform float fresnel_power : hint_range(1.0, 8.0) = 4.5;
 uniform float opacity : hint_range(0.0, 1.0) = 0.12;
