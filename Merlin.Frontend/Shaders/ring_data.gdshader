@@ -1,7 +1,7 @@
 shader_type spatial;
 render_mode blend_add, cull_disabled, depth_prepass_alpha, unshaded;
 
-uniform vec4 ring_color : source_color = vec4(0.1, 0.55, 1.0, 1.0);
+uniform vec4 ring_color : source_color = vec4(0.06, 0.38, 1.0, 1.0);
 uniform float opacity : hint_range(0.0, 1.0) = 0.75;
 uniform float data_speed : hint_range(0.0, 8.0) = 1.0;
 uniform float segment_count : hint_range(2.0, 128.0) = 48.0;

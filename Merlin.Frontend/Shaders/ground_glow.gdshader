@@ -1,7 +1,7 @@
 shader_type spatial;
 render_mode blend_add, cull_back, depth_prepass_alpha, unshaded;
 
-uniform vec4 glow_color : source_color = vec4(0.0, 0.6, 1.0, 1.0);
+uniform vec4 glow_color : source_color = vec4(0.0, 0.42, 1.0, 1.0);
 uniform float intensity : hint_range(0.0, 2.0) = 0.6;
 uniform float ring_count : hint_range(1.0, 8.0) = 3.0;
 

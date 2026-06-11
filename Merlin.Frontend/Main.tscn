@@ -21,7 +21,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
-color = Color(0.0196078, 0.0313726, 0.0470588, 1)
+color = Color(0, 0.008, 0.026, 1)
 
 [node name="MerlinWebSocketClient" type="Node" parent="."]
 script = ExtResource("2_ws")

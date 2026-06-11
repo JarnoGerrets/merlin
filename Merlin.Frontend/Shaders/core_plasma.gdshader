@@ -3,8 +3,8 @@ render_mode blend_add, cull_back, depth_prepass_alpha, unshaded;
 
 uniform float time_scale : hint_range(0.1, 5.0) = 1.2;
 uniform float pulse_intensity : hint_range(0.0, 3.0) = 1.0;
-uniform vec4 core_color : source_color = vec4(0.0, 0.81, 1.0, 1.0);
-uniform vec4 plasma_color : source_color = vec4(0.3, 0.97, 1.0, 1.0);
+uniform vec4 core_color : source_color = vec4(0.0, 0.58, 1.0, 1.0);
+uniform vec4 plasma_color : source_color = vec4(0.24, 0.78, 1.0, 1.0);
 uniform float noise_scale : hint_range(1.0, 20.0) = 6.0;
 uniform float fresnel_power : hint_range(1.0, 8.0) = 3.0;
 uniform float vein_sharpness : hint_range(2.0, 20.0) = 8.0;
@@ -79,7 +79,7 @@ void fragment() {
 
 	float radial = pow(max(0.0, dot(NORMAL, vec3(0.0, 0.0, 1.0))), 2.0);
 	vec3 col = mix(core_color.rgb, plasma_color.rgb, plasma);
-	col += veins * vec3(0.7, 0.95, 1.0);
+	col += veins * vec3(0.45, 0.78, 1.0);
 	col += edge_energy * plasma_color.rgb * 0.45;
 	col += radial * core_color.rgb * 0.5;
 	col *= (fresnel * 0.4 + 0.65);

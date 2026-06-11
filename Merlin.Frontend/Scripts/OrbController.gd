@@ -3,13 +3,13 @@ class_name OrbController
 
 enum OrbState { IDLE, THINKING, SPEAKING, EXECUTING, ERROR, CONFIRMATION }
 
-const COLOR_CORE_PRIMARY := Color(0.00, 0.81, 1.00)
-const COLOR_CORE_HOT := Color(0.20, 0.90, 1.00)
-const COLOR_SHELL := Color(0.05, 0.35, 0.85)
-const COLOR_RING_PRIMARY := Color(0.08, 0.50, 1.00)
-const COLOR_RING_OUTER := Color(0.04, 0.30, 0.80)
-const COLOR_AMBIENT_LIGHT := Color(0.00, 0.09, 0.16)
-const COLOR_THINKING := Color(0.10, 0.50, 1.00)
+const COLOR_CORE_PRIMARY := Color(0.00, 0.58, 1.00)
+const COLOR_CORE_HOT := Color(0.18, 0.76, 1.00)
+const COLOR_SHELL := Color(0.04, 0.28, 0.88)
+const COLOR_RING_PRIMARY := Color(0.06, 0.38, 1.00)
+const COLOR_RING_OUTER := Color(0.03, 0.22, 0.78)
+const COLOR_AMBIENT_LIGHT := Color(0.00, 0.06, 0.18)
+const COLOR_THINKING := Color(0.08, 0.38, 1.00)
 const COLOR_EXECUTING := Color(1.00, 0.42, 0.00)
 const COLOR_EXECUTING_CORE := Color(0.80, 0.27, 0.00)
 const COLOR_ERROR := Color(0.85, 0.04, 0.04)
@@ -189,7 +189,7 @@ func _configure_scene() -> void:
 
 	var environment := Environment.new()
 	environment.background_mode = Environment.BG_COLOR
-	environment.background_color = Color(0.0, 0.031, 0.063)
+	environment.background_color = Color(0.0, 0.020, 0.070)
 	environment.ambient_light_color = COLOR_AMBIENT_LIGHT
 	environment.ambient_light_energy = 0.25
 	environment.glow_enabled = true

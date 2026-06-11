@@ -17,11 +17,11 @@ const TYPEWRITER_PUNCTUATION_DELAY := 0.030
 const TYPEWRITER_PARAGRAPH_DELAY := 0.060
 const MAX_NOTIFICATIONS := 5
 
-const COLOR_BACKGROUND := Color(0.000, 0.010, 0.020, 1.0)
-const COLOR_PANEL := Color(0.003, 0.030, 0.052, 0.40)
-const COLOR_PANEL_DARK := Color(0.001, 0.016, 0.032, 0.64)
-const COLOR_BLUE := Color(0.10, 0.52, 0.92, 1.0)
-const COLOR_CYAN := Color(0.30, 0.86, 1.0, 1.0)
+const COLOR_BACKGROUND := Color(0.000, 0.008, 0.026, 1.0)
+const COLOR_PANEL := Color(0.002, 0.024, 0.070, 0.40)
+const COLOR_PANEL_DARK := Color(0.001, 0.014, 0.044, 0.64)
+const COLOR_BLUE := Color(0.08, 0.42, 1.00, 1.0)
+const COLOR_CYAN := Color(0.24, 0.72, 1.0, 1.0)
 const COLOR_WHITE := Color(0.88, 0.96, 1.0, 1.0)
 const COLOR_MUTED := Color(0.50, 0.62, 0.70, 1.0)
 const COLOR_AMBER := Color(1.0, 0.68, 0.28, 1.0)
@@ -228,11 +228,11 @@ func _apply_visual_theme() -> void:
 	background.color = COLOR_BACKGROUND
 
 	status_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_PANEL, COLOR_BLUE, 1.0, 8))
-	activity_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.003, 0.030, 0.050, 0.30), COLOR_CYAN, 1.0, 8))
-	notification_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.001, 0.008, 0.016, 0.18), Color(0, 0, 0, 0), 0.0, 8))
+	activity_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.002, 0.026, 0.064, 0.30), COLOR_CYAN, 1.0, 8))
+	notification_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.001, 0.006, 0.020, 0.18), Color(0, 0, 0, 0), 0.0, 8))
 	chat_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_PANEL_DARK, Color(COLOR_BLUE.r, COLOR_BLUE.g, COLOR_BLUE.b, 0.45), 1.0, 8))
-	history_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.01, 0.025, 0.04, 0.36), Color(COLOR_CYAN.r, COLOR_CYAN.g, COLOR_CYAN.b, 0.28), 1.0, 6))
-	command_input_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.02, 0.08, 0.12, 0.64), COLOR_CYAN, 1.0, 10))
+	history_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.006, 0.022, 0.052, 0.36), Color(COLOR_CYAN.r, COLOR_CYAN.g, COLOR_CYAN.b, 0.28), 1.0, 6))
+	command_input_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.010, 0.052, 0.125, 0.64), COLOR_CYAN, 1.0, 10))
 
 	_style_button(send_button)
 	_style_button(reconnect_button)
@@ -259,17 +259,17 @@ func _panel_style(fill: Color, border: Color, border_width: float, radius: int) 
 
 
 func _style_button(button: Button) -> void:
-	button.add_theme_stylebox_override("normal", _panel_style(Color(0.004, 0.045, 0.055, 0.44), Color(COLOR_BLUE.r, COLOR_BLUE.g, COLOR_BLUE.b, 0.50), 1.0, 6))
-	button.add_theme_stylebox_override("hover", _panel_style(Color(0.006, 0.065, 0.080, 0.64), COLOR_CYAN, 1.0, 6))
-	button.add_theme_stylebox_override("pressed", _panel_style(Color(0.006, 0.085, 0.095, 0.72), COLOR_CYAN, 1.0, 6))
+	button.add_theme_stylebox_override("normal", _panel_style(Color(0.004, 0.034, 0.088, 0.44), Color(COLOR_BLUE.r, COLOR_BLUE.g, COLOR_BLUE.b, 0.50), 1.0, 6))
+	button.add_theme_stylebox_override("hover", _panel_style(Color(0.006, 0.052, 0.120, 0.64), COLOR_CYAN, 1.0, 6))
+	button.add_theme_stylebox_override("pressed", _panel_style(Color(0.006, 0.066, 0.150, 0.72), COLOR_CYAN, 1.0, 6))
 	button.add_theme_color_override("font_color", COLOR_WHITE)
 	button.add_theme_color_override("font_hover_color", COLOR_WHITE)
 	button.add_theme_color_override("font_pressed_color", COLOR_WHITE)
 
 
 func _style_line_edit(line_edit: LineEdit) -> void:
-	line_edit.add_theme_stylebox_override("normal", _panel_style(Color(0.0, 0.018, 0.030, 0.32), Color(COLOR_CYAN.r, COLOR_CYAN.g, COLOR_CYAN.b, 0.50), 1.0, 6))
-	line_edit.add_theme_stylebox_override("focus", _panel_style(Color(0.0, 0.035, 0.055, 0.56), COLOR_CYAN, 1.0, 6))
+	line_edit.add_theme_stylebox_override("normal", _panel_style(Color(0.0, 0.014, 0.042, 0.32), Color(COLOR_CYAN.r, COLOR_CYAN.g, COLOR_CYAN.b, 0.50), 1.0, 6))
+	line_edit.add_theme_stylebox_override("focus", _panel_style(Color(0.0, 0.028, 0.078, 0.56), COLOR_CYAN, 1.0, 6))
 	line_edit.add_theme_color_override("font_color", COLOR_WHITE)
 	line_edit.add_theme_color_override("font_placeholder_color", COLOR_MUTED)
 	line_edit.add_theme_color_override("caret_color", COLOR_CYAN)
@@ -542,7 +542,7 @@ func _add_notification(message: String, kind: String = "system") -> void:
 	var notification := PanelContainer.new()
 	notification.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	notification.focus_mode = Control.FOCUS_NONE
-	notification.add_theme_stylebox_override("panel", _panel_style(Color(0.02, 0.06, 0.09, 0.62), _message_color(kind), 1.0, 6))
+	notification.add_theme_stylebox_override("panel", _panel_style(Color(0.010, 0.046, 0.115, 0.62), _message_color(kind), 1.0, 6))
 
 	var margin := MarginContainer.new()
 	margin.add_theme_constant_override("margin_left", 10)

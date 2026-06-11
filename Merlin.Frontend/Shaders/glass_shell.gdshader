@@ -3,7 +3,7 @@ render_mode blend_mix, cull_back, depth_prepass_alpha;
 
 uniform float fresnel_power : hint_range(1.0, 8.0) = 4.5;
 uniform float opacity : hint_range(0.0, 1.0) = 0.12;
-uniform vec4 shell_color : source_color = vec4(0.05, 0.45, 0.9, 1.0);
+uniform vec4 shell_color : source_color = vec4(0.04, 0.30, 0.95, 1.0);
 uniform float grid_density : hint_range(4.0, 48.0) = 22.0;
 uniform float grid_opacity : hint_range(0.0, 1.0) = 0.08;
 

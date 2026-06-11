@@ -21,10 +21,10 @@ const STATE_SPEAKING := MerlinState.SPEAKING
 const STATE_EXECUTING_TOOL := MerlinState.EXECUTING_TOOL
 const STATE_ERROR := MerlinState.ERROR
 
-const BASE_COLOR := Color(0.48, 0.82, 1.0, 0.95)
-const THINKING_COLOR := Color(0.36, 0.72, 1.0, 0.98)
-const SPEAKING_COLOR := Color(0.42, 1.0, 0.86, 0.98)
-const TOOL_COLOR := Color(0.52, 1.0, 0.66, 1.0)
+const BASE_COLOR := Color(0.30, 0.66, 1.0, 0.95)
+const THINKING_COLOR := Color(0.22, 0.54, 1.0, 0.98)
+const SPEAKING_COLOR := Color(0.28, 0.76, 1.0, 0.98)
+const TOOL_COLOR := Color(0.34, 0.82, 1.0, 1.0)
 const ERROR_COLOR := Color(1.0, 0.25, 0.34, 1.0)
 
 var current_state: int = MerlinState.IDLE
