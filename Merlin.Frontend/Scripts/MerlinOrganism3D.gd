@@ -64,7 +64,7 @@ const ORB_RADIUS := 2.65
 const CORE_RADIUS := ORB_RADIUS * 0.48
 const MAX_CONNECTION_DISTANCE := 0.92
 const HUB_CONNECTION_DISTANCE := 1.20
-const MAX_PULSES := 18
+const MAX_PULSES := 36
 const MAX_DESTINATION_FLASHES := 24
 const ORGANISM_DISPLAY_SCALE := 0.76
 
@@ -115,6 +115,7 @@ var _activity := 0.18
 var _target_activity := 0.18
 var _brightness := 1.0
 var _target_brightness := 1.0
+var _rotation_y := 0.0
 var _pulse_timer := 0.0
 var _speech_energy := 0.0
 var _speech_global_morph := 0.0
@@ -193,8 +194,8 @@ func notify_speech_tick(_character: String = "", delay: float = 0.0, progress: f
 		_pick_speech_region(progress)
 	if _speech_tick_count % 72 == 0:
 		_speech_global_morph = clampf(_speech_global_morph + 0.08, 0.0, 0.34)
-	if _speech_tick_count % 12 == 0 and _pulses.size() < 2:
-		_spawn_energy_pulse()
+	if _speech_tick_count % 18 == 0:
+		_pick_speech_region(progress)
 
 
 func _set_state(state: int, palette: Dictionary, activity: float, brightness: float) -> void:
@@ -324,14 +325,15 @@ func _generate_nodes() -> void:
 			var spark := OrganismNode.new()
 			spark.hub = true
 			spark.phase = _rng.randf() * TAU
-			var hub_cluster_radius := 0.24 * lerpf(1.0, 1.28, hub_importance - 1.0)
-			var cluster_radius := pow(_rng.randf(), 1.52) * _rng.randf_range(0.035, hub_cluster_radius)
-			spark.base_position = hub_node.base_position + _random_unit_vector() * cluster_radius
+			var hub_cluster_radius: float = 0.30 * lerpf(1.0, 1.18, hub_importance - 1.0)
+			var cluster_radius: float = pow(_rng.randf(), 1.18) * _rng.randf_range(0.035, hub_cluster_radius)
+			var radial_jitter: float = _rng.randf_range(-0.018, 0.026) if hub_order >= 6 else _rng.randf_range(-0.055, 0.070)
+			spark.base_position = _surface_patch_position(hub_node.base_position, cluster_radius, radial_jitter)
 			spark.current_position = spark.base_position
 			spark.source_node = hub_index
 			var cluster_t := cluster_radius / hub_cluster_radius
-			spark.radius = _rng.randf_range(0.0032, 0.0084) * lerpf(1.34, 0.74, cluster_t) * hub_importance
-			spark.brightness = _rng.randf_range(0.90, 1.95) * lerpf(1.88, 0.78, cluster_t) * lerpf(1.0, 1.16, hub_importance - 1.0)
+			spark.radius = _rng.randf_range(0.0028, 0.0072) * lerpf(1.18, 0.72, cluster_t) * lerpf(1.0, 1.10, hub_importance - 1.0)
+			spark.brightness = _rng.randf_range(0.68, 1.45) * lerpf(1.46, 0.70, cluster_t) * lerpf(1.0, 1.12, hub_importance - 1.0)
 			_dust.append(spark)
 
 	for cluster_index in range(BRIGHT_CLUSTER_COUNT):
@@ -423,6 +425,20 @@ func _hub_importance(index: int) -> float:
 
 func _dust_position() -> Vector3:
 	return _irregular_orb_position(_rng.randf_range(ORB_RADIUS * 0.35, ORB_RADIUS * 1.18), 0.36)
+
+
+func _surface_patch_position(anchor: Vector3, spread: float, radial_jitter: float) -> Vector3:
+	var normal: Vector3 = anchor.normalized() if anchor.length_squared() > 0.001 else Vector3.UP
+	var tangent_a: Vector3 = normal.cross(Vector3.UP)
+	if tangent_a.length_squared() < 0.001:
+		tangent_a = normal.cross(Vector3.RIGHT)
+	tangent_a = tangent_a.normalized()
+	var tangent_b: Vector3 = normal.cross(tangent_a).normalized()
+	var angle: float = _rng.randf() * TAU
+	var oval: Vector2 = Vector2(cos(angle), sin(angle) * _rng.randf_range(0.55, 1.0)) * spread
+	var tangent_offset: Vector3 = tangent_a * oval.x + tangent_b * oval.y
+	var surface_radius: float = anchor.length() + radial_jitter
+	return (normal * surface_radius + tangent_offset).limit_length(ORB_RADIUS * 1.12)
 
 
 func _irregular_orb_position(radius: float, noise: float) -> Vector3:
@@ -581,7 +597,8 @@ func _process(delta: float) -> void:
 
 	var breath := 1.0 + sin(_time * 0.82) * (0.020 + _activity * 0.012)
 	_graph_root.scale = Vector3.ONE * ORGANISM_DISPLAY_SCALE * breath
-	_graph_root.rotation.y = _time * (0.045 + _activity * 0.020)
+	_rotation_y += delta * 0.054
+	_graph_root.rotation.y = _rotation_y
 	_graph_root.rotation.x = sin(_time * 0.21) * 0.055
 	_graph_root.rotation.z = sin(_time * 0.13) * 0.020
 
@@ -636,7 +653,6 @@ func _lerp_palette(from_palette: Dictionary, to_palette: Dictionary, amount: flo
 func _update_autonomous_speech_motion(delta: float) -> void:
 	if current_state != OrganismState.SPEAKING:
 		_speech_energy = move_toward(_speech_energy, 0.0, delta * 2.4)
-		_update_speech_ripples(delta)
 		return
 
 	var voice_wave := 0.5 + sin(_time * 5.2 + sin(_time * 1.7) * 0.8) * 0.5
@@ -645,22 +661,13 @@ func _update_autonomous_speech_motion(delta: float) -> void:
 
 	_speech_region_timer -= delta
 	if _speech_region_timer <= 0.0:
-		_speech_region_timer = _rng.randf_range(0.18, 0.46)
+		_speech_region_timer = _rng.randf_range(0.85, 1.45)
 		_pick_speech_region(_rng.randf())
 
 	_speech_global_timer -= delta
 	if _speech_global_timer <= 0.0:
 		_speech_global_timer = _rng.randf_range(2.4, 4.2)
 		_speech_global_morph = clampf(_speech_global_morph + _rng.randf_range(0.06, 0.16), 0.0, 0.34)
-
-	_speech_ripple_timer -= delta
-	if _speech_ripple_timer <= 0.0:
-		_speech_ripple_timer = _rng.randf_range(0.09, 0.22)
-		_spawn_speech_ripple()
-		if _rng.randf() > 0.72:
-			_spawn_speech_ripple()
-
-	_update_speech_ripples(delta)
 
 
 func _reset_speech_regions() -> void:
@@ -703,7 +710,7 @@ func _update_speech_ripples(delta: float) -> void:
 
 
 func _update_speech_region_axes(delta: float) -> void:
-	var amount := minf(delta * 6.0, 1.0)
+	var amount := minf(delta * 4.6, 1.0)
 	var count := mini(_speech_region_axes.size(), _speech_region_targets.size())
 	for index in range(count):
 		var axis: Vector3 = _speech_region_axes[index]
@@ -713,13 +720,15 @@ func _update_speech_region_axes(delta: float) -> void:
 
 func _pick_speech_region(progress: float = -1.0) -> void:
 	var roll := _rng.randf()
-	var region_count := 1
-	if roll > 0.88:
-		region_count = 6
+	var region_count := 2
+	if roll > 0.95:
+		region_count = 5
 		_speech_global_morph = clampf(_speech_global_morph + _rng.randf_range(0.10, 0.20), 0.0, 0.68)
-	elif roll > 0.66:
-		region_count = _rng.randi_range(3, 4)
-	elif roll > 0.38:
+	elif roll > 0.82:
+		region_count = 4
+	elif roll > 0.58:
+		region_count = 3
+	elif roll > 0.30:
 		region_count = 2
 
 	_speech_region_targets.clear()
@@ -759,11 +768,10 @@ func _speech_influence(position: Vector3) -> float:
 		if index < _speech_region_weights.size():
 			weight = _speech_region_weights[index]
 		var axis: Vector3 = _speech_region_axes[index]
-		regional += pow(clampf(radial.dot(axis) * 0.5 + 0.5, 0.0, 1.0), 6.0) * weight
-	regional = clampf(regional, 0.0, 1.35) * _speech_energy
-	var ripple_signal := _speech_ripple_influence(radial)
+		regional += pow(clampf(radial.dot(axis) * 0.5 + 0.5, 0.0, 1.0), 12.0) * weight
+	regional = clampf(regional, 0.0, 1.05) * _speech_energy
 	var center_t := 1.0 - clampf(position.length() / ORB_RADIUS, 0.0, 1.0)
-	return clampf(regional * 0.82 + ripple_signal + _speech_global_morph * (0.22 + center_t * 0.34), 0.0, 1.0)
+	return clampf(regional * 0.92 + _speech_global_morph * (0.10 + center_t * 0.18), 0.0, 1.0)
 
 
 func _speech_ripple_influence(radial: Vector3) -> float:
@@ -797,9 +805,10 @@ func _speech_morph_offset(position: Vector3, phase: float, amount_scale: float) 
 	if tangent.length_squared() < 0.001:
 		tangent = Vector3.RIGHT
 	tangent = tangent.normalized()
-	var wave := sin(_time * 8.4 + phase * 1.7) * 0.5 + 0.5
-	var regional_push := radial * influence * (0.006 + wave * 0.012)
-	var lateral_pull := tangent * influence * sin(_time * 9.4 + phase) * 0.090
+	var wave := sin(_time * 4.2 + phase * 1.7)
+	var smooth_wave := signf(wave) * pow(absf(wave), 0.72)
+	var regional_push := radial * influence * smooth_wave * 0.145
+	var lateral_pull := tangent * influence * sin(_time * 4.8 + phase) * 0.018
 	return (regional_push + lateral_pull) * amount_scale
 
 
@@ -813,15 +822,6 @@ func _speech_tangent_axis(radial: Vector3) -> Vector3:
 		var local := axis.cross(radial)
 		if local.length_squared() > 0.001:
 			tangent += local.normalized() * weight
-	for index in range(_speech_ripples.size()):
-		var ripple: SpeechRipple = _speech_ripples[index]
-		var life := clampf(ripple.age / maxf(ripple.duration, 0.001), 0.0, 1.0)
-		var local := ripple.axis.cross(radial)
-		if local.length_squared() > 0.001:
-			var angular_distance := 1.0 - clampf(radial.dot(ripple.axis) * 0.5 + 0.5, 0.0, 1.0)
-			var distance_t := (angular_distance - life * 0.72) / ripple.width
-			var band := pow(2.7182818, -distance_t * distance_t)
-			tangent += local.normalized() * band * ripple.strength * ripple.spin
 	return tangent
 
 
@@ -850,7 +850,7 @@ func _update_nodes(_delta: float) -> void:
 		) * drift_scale
 		var radial := node.base_position.normalized() if node.base_position.length_squared() > 0.001 else Vector3.UP
 		var local_breath := radial * sin(_time * 0.56 + node.phase) * (0.012 + _activity * 0.018)
-		var speech_morph := Vector3.ZERO
+		var speech_morph: Vector3 = _speech_morph_offset(node.base_position, node.phase, 1.0) if current_state == OrganismState.SPEAKING else Vector3.ZERO
 		node.current_position = node.base_position + drift + local_breath + speech_morph
 
 		var center_t := 1.0 - clampf(node.current_position.length() / ORB_RADIUS, 0.0, 1.0)
@@ -884,7 +884,9 @@ func _update_dust(_delta: float) -> void:
 			sin(_time * 0.071 + dust.phase * 1.2),
 			cos(_time * 0.043 + dust.phase * 0.7)
 		) * 0.045
-		dust.current_position = dust.base_position + orbit
+		var can_morph: bool = dust.hub or dust.source_node >= 0
+		var speech_morph: Vector3 = _speech_morph_offset(dust.base_position, dust.phase, 0.52) if current_state == OrganismState.SPEAKING and can_morph else Vector3.ZERO
+		dust.current_position = dust.base_position + orbit + speech_morph
 		var depth_t := _balanced_depth_light(dust.current_position, 0.82, 1.06)
 		var cluster_pulse := 0.0
 		if dust.hub:
@@ -1029,11 +1031,11 @@ func _mesh_from_arrays(vertices: PackedVector3Array, colors: PackedColorArray, i
 func _update_pulses(delta: float) -> void:
 	_pulse_timer -= delta
 	if _pulse_timer <= 0.0:
-		_pulse_timer = _rng.randf_range(0.46, 0.88) if current_state == OrganismState.SPEAKING else _rng.randf_range(0.18, 0.48)
-		if current_state == OrganismState.SPEAKING and _pulses.size() < 2:
-			_spawn_energy_pulse()
-			if _pulses.size() < 2:
-				_spawn_energy_pulse()
+		if current_state == OrganismState.THINKING:
+			_pulse_timer = _rng.randf_range(0.34, 0.68)
+			_spawn_energy_burst(_rng.randi_range(4, 6))
+		else:
+			_pulse_timer = _rng.randf_range(0.18, 0.48)
 
 	for index in range(_pulses.size() - 1, -1, -1):
 		var pulse: EnergyPulse = _pulses[index]
@@ -1068,7 +1070,7 @@ func _rebuild_speech_light_maps() -> void:
 	_node_speech_light.clear()
 	_dust_speech_light.clear()
 	_connection_speech_light.clear()
-	if current_state != OrganismState.SPEAKING:
+	if current_state != OrganismState.THINKING:
 		return
 	for index in range(_destination_flashes.size()):
 		var flash: DestinationFlash = _destination_flashes[index]
@@ -1154,8 +1156,14 @@ func _spawn_energy_pulse() -> void:
 		_add_energy_pulse(connection_index, start_node, next_node, _rng.randf_range(0.70, 0.96), 0, true)
 
 
+func _spawn_energy_burst(count: int) -> void:
+	var launch_limit: int = mini(count, MAX_PULSES - _pulses.size())
+	for index in range(launch_limit):
+		_spawn_energy_pulse()
+
+
 func _arrive_energy_pulse(pulse: EnergyPulse) -> void:
-	if current_state != OrganismState.SPEAKING:
+	if current_state != OrganismState.THINKING:
 		return
 	_add_destination_flash(pulse.to_node, pulse.brightness)
 	if pulse.generation >= 2 or _pulses.size() >= MAX_PULSES:
