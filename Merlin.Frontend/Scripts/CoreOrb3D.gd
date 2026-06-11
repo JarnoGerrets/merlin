@@ -30,8 +30,6 @@ class CloudLink:
 	var b := 0
 	var base_opacity := 0.0
 	var opacity := 0.0
-	var phase := 0.0
-	var speed := 1.0
 	var active_bias := 0.0
 	var structural := false
 
@@ -39,12 +37,8 @@ class CloudLink:
 class CloudBridge:
 	var a_cluster := 0
 	var b_cluster := 0
-	var phase := 0.0
-	var speed := 1.0
 	var strength := 1.0
 	var width := 1.0
-	var curve_side := 1.0
-	var lane_offset := 0.0
 	var stack_count := 1
 
 
@@ -73,24 +67,23 @@ class SpeechGlobalShift:
 	var compression := 0.0
 
 
-const CORE_PARTICLES := 2800
-const FIELD_PARTICLES := 1700
-const DUST_PARTICLES := 650
+const CORE_PARTICLES := 3350
+const FIELD_PARTICLES := 1550
+const DUST_PARTICLES := 260
 const PARTICLE_COUNT := CORE_PARTICLES + FIELD_PARTICLES + DUST_PARTICLES
-const CLUSTER_COUNT := 28
-const MAX_LINKS := 6200
+const CLUSTER_COUNT := 31
+const MAX_LINKS := 17500
 const CLOUD_RADIUS := 165.0
 const FIELD_RADIUS := 190.0
 const DUST_RADIUS := 205.0
-const VISUAL_SCALE := 1.95
-const MAX_SPARKS := 520
-const LINK_CELL_SIZE := 76.0
-const LINK_DISTANCE_CORE := 92.0
-const LINK_DISTANCE_FIELD := 116.0
-const LINK_DISTANCE_BRIDGE := 168.0
-const MAX_LINKS_PER_PARTICLE := 2
+const VISUAL_SCALE := 2.42
+const LINK_CELL_SIZE := 72.0
+const LINK_DISTANCE_CORE := 108.0
+const LINK_DISTANCE_FIELD := 126.0
+const LINK_DISTANCE_BRIDGE := 184.0
+const MAX_LINKS_PER_PARTICLE := 5
 const BRIDGE_STRIDE := 6
-const STRUCTURAL_LINKS_PER_CLUSTER := 3
+const STRUCTURAL_LINKS_PER_CLUSTER := 5
 const SPEECH_ENERGY_ADD := 0.22
 const SPEECH_ENERGY_DECAY := 2.8
 const SPEECH_MORPH_PROFILE_COUNT := 6
@@ -108,12 +101,12 @@ const THINKING_PULSE_INTERVAL_MIN := 0.65
 const THINKING_PULSE_INTERVAL_MAX := 1.8
 
 const CYAN := {
-	"hot": Color("#E6FBFF"),
-	"primary": Color("#5CCEFF"),
-	"dim": Color("#0D5F8D"),
-	"line": Color("#9DEBFF"),
-	"line_dim": Color("#1B6FA3"),
-	"glow": Color("#B8F4FF"),
+	"hot": Color("#F2FDFF"),
+	"primary": Color("#35BFFF"),
+	"dim": Color("#0568C5"),
+	"line": Color("#8BEAFF"),
+	"line_dim": Color("#0B78D6"),
+	"glow": Color("#B6F5FF"),
 }
 
 const RED := {
@@ -138,12 +131,11 @@ const STATE_PARAMS := {
 	CloudState.IDLE: {
 		"activity": 0.16,
 		"drift_speed": 0.26,
-		"brightness": 1.18,
+		"brightness": 1.28,
 		"glow": 0.72,
 		"breath_speed": 0.34,
 		"breath_depth": 0.035,
-		"link_visibility": 0.72,
-		"link_motion": 0.34,
+		"link_visibility": 1.10,
 	},
 	CloudState.THINKING: {
 		"activity": 0.36,
@@ -152,18 +144,16 @@ const STATE_PARAMS := {
 		"glow": 0.96,
 		"breath_speed": 0.56,
 		"breath_depth": 0.052,
-		"link_visibility": 0.78,
-		"link_motion": 1.15,
+		"link_visibility": 0.92,
 	},
 	CloudState.SPEAKING: {
 		"activity": 0.58,
 		"drift_speed": 0.72,
-		"brightness": 1.82,
+		"brightness": 1.86,
 		"glow": 1.30,
 		"breath_speed": 0.92,
 		"breath_depth": 0.0,
-		"link_visibility": 1.08,
-		"link_motion": 1.85,
+		"link_visibility": 1.28,
 	},
 	CloudState.EXECUTING: {
 		"activity": 0.50,
@@ -173,7 +163,6 @@ const STATE_PARAMS := {
 		"breath_speed": 0.80,
 		"breath_depth": 0.080,
 		"link_visibility": 0.82,
-		"link_motion": 1.45,
 	},
 	CloudState.ERROR: {
 		"activity": 0.46,
@@ -183,7 +172,6 @@ const STATE_PARAMS := {
 		"breath_speed": 0.82,
 		"breath_depth": 0.070,
 		"link_visibility": 0.72,
-		"link_motion": 1.20,
 	},
 	CloudState.CONFIRMATION: {
 		"activity": 0.18,
@@ -193,7 +181,6 @@ const STATE_PARAMS := {
 		"breath_speed": 0.26,
 		"breath_depth": 0.050,
 		"link_visibility": 0.48,
-		"link_motion": 0.38,
 	},
 }
 
@@ -419,27 +406,36 @@ func _create_cluster_anchors() -> void:
 				_rng.randf_range(-6.0, 6.0),
 				_rng.randf_range(-5.0, 5.0)
 			)
-			weight = 3.8
-		else:
-			var shell_mix: float = float(index - 1) / maxf(float(CLUSTER_COUNT - 2), 1.0)
-			var band: int = index % 3
-			var radius_min: float = CLOUD_RADIUS * (0.20 if band == 0 else 0.36 if band == 1 else 0.52)
-			var radius_max: float = CLOUD_RADIUS * (0.38 if band == 0 else 0.58 if band == 1 else 0.76)
-			var radius: float = lerpf(radius_min, radius_max, pow(shell_mix, 0.78))
-			radius *= _rng.randf_range(0.84, 1.08)
-			var theta: float = (float(index) / CLUSTER_COUNT) * TAU * 2.618 + _rng.randf_range(-0.46, 0.46)
-			var phi: float = acos(_rng.randf_range(-0.72, 0.72))
+			weight = 5.7
+		elif index < 5:
+			var inner_theta: float = float(index - 1) * TAU / 4.0 + _rng.randf_range(-0.22, 0.22)
+			var inner_radius: float = CLOUD_RADIUS * _rng.randf_range(0.15, 0.31)
 			anchor = Vector3(
-				radius * sin(phi) * cos(theta),
-				radius * sin(phi) * sin(theta),
-				radius * cos(phi) * 0.66
+				inner_radius * cos(inner_theta),
+				inner_radius * sin(inner_theta),
+				_rng.randf_range(-11.0, 11.0)
+			)
+			weight = _rng.randf_range(2.45, 3.35)
+		else:
+			var shell_mix: float = float(index - 5) / maxf(float(CLUSTER_COUNT - 6), 1.0)
+			var band: int = index % 3
+			var radius_min: float = CLOUD_RADIUS * (0.34 if band == 0 else 0.47 if band == 1 else 0.58)
+			var radius_max: float = CLOUD_RADIUS * (0.51 if band == 0 else 0.66 if band == 1 else 0.78)
+			var radius: float = lerpf(radius_min, radius_max, pow(shell_mix, 0.62))
+			radius *= _rng.randf_range(0.91, 1.02)
+			var theta: float = (float(index - 5) * 2.39996323) + _rng.randf_range(-0.20, 0.20)
+			var depth_phase: float = theta * 1.73 + float(band) * 0.91
+			anchor = Vector3(
+				radius * cos(theta),
+				radius * sin(theta),
+				sin(depth_phase) * CLOUD_RADIUS * _rng.randf_range(0.12, 0.28)
 			)
 			anchor += Vector3(
-				_rng.randf_range(-10.0, 10.0),
-				_rng.randf_range(-9.0, 9.0),
-				_rng.randf_range(-8.0, 8.0)
+				_rng.randf_range(-4.0, 4.0),
+				_rng.randf_range(-4.0, 4.0),
+				_rng.randf_range(-4.0, 4.0)
 			)
-			weight = _rng.randf_range(1.05, 1.85)
+			weight = _rng.randf_range(1.05, 1.78)
 			if band == 1:
 				weight += 0.35
 		_cluster_anchors.append(anchor)
@@ -453,18 +449,24 @@ func _generate_position(layer: int, cluster: bool, cluster_id: int) -> Vector3:
 	if cluster:
 		return _cluster_anchors[cluster_id]
 
-	if layer != 2 and _rng.randf() < (0.72 if layer == 0 else 0.50):
+	if layer != 2 and _rng.randf() < (0.92 if layer == 0 else 0.76):
 		var anchor: Vector3 = _cluster_anchors[cluster_id]
-		var cluster_spread: float = _rng.randf_range(24.0, 82.0) if layer == 0 else _rng.randf_range(44.0, 118.0)
-		var offset: Vector3 = _random_unit_vector() * pow(_rng.randf(), 1.18) * cluster_spread
-		var blended: Vector3 = (anchor + offset).lerp(_random_orb_position(radius_limit, layer), 0.14 if layer == 0 else 0.24)
+		var center_pull: float = 1.0 - clampf(anchor.length() / CLOUD_RADIUS, 0.0, 1.0)
+		var cluster_spread: float = (_rng.randf_range(18.0, 88.0) if layer == 0 else _rng.randf_range(34.0, 98.0)) * lerpf(1.18, 0.84, center_pull)
+		var offset: Vector3 = _random_unit_vector() * pow(_rng.randf(), 1.06) * cluster_spread
+		var body_blend: float = 0.12 if layer == 0 else 0.18
+		if cluster_id == 0:
+			body_blend = 0.05
+		elif cluster_id < 5:
+			body_blend = 0.08
+		var blended: Vector3 = (anchor + offset).lerp(_random_orb_position(radius_limit, layer), body_blend)
 		return _shape_position(blended, layer, radius_limit)
 
 	return _random_orb_position(radius_limit, layer)
 
 
 func _random_orb_position(radius_limit: float, layer: int) -> Vector3:
-	var exponent: float = 2.95 if layer == 0 else 2.55 if layer == 1 else 3.10
+	var exponent: float = 2.55 if layer == 0 else 2.45 if layer == 1 else 4.80
 	var radius: float = pow(_rng.randf(), exponent) * radius_limit
 
 	var theta: float = _rng.randf() * TAU
@@ -475,9 +477,9 @@ func _random_orb_position(radius_limit: float, layer: int) -> Vector3:
 		radius * cos(phi)
 	)
 	var irregular: Vector3 = Vector3(
-		_rng.randf_range(-0.075, 0.075),
-		_rng.randf_range(-0.065, 0.065),
-		_rng.randf_range(-0.070, 0.070)
+		_rng.randf_range(-0.050, 0.050),
+		_rng.randf_range(-0.046, 0.046),
+		_rng.randf_range(-0.050, 0.050)
 	) * radius_limit
 	position += irregular
 	return _shape_position(position, layer, radius_limit)
@@ -485,13 +487,14 @@ func _random_orb_position(radius_limit: float, layer: int) -> Vector3:
 
 func _shape_position(position: Vector3, layer: int, radius_limit: float) -> Vector3:
 	if layer == 0:
-		position *= Vector3(1.02, 0.98, 0.90)
+		position *= Vector3(1.00, 1.00, 0.78)
 	elif layer == 1:
-		position *= Vector3(1.04, 1.00, 0.84)
+		position *= Vector3(1.00, 1.00, 0.72)
 	else:
-		position *= Vector3(1.06, 1.02, 0.74)
+		position *= Vector3(1.00, 1.00, 0.66)
 
-	return position.limit_length(radius_limit * _rng.randf_range(0.56, 0.82))
+	var outer_limit: float = radius_limit * (_rng.randf_range(0.50, 0.72) if layer != 2 else _rng.randf_range(0.42, 0.57))
+	return position.limit_length(outer_limit)
 
 
 func _random_unit_vector() -> Vector3:
@@ -540,8 +543,16 @@ func _density_weight_for_position(position: Vector3, cluster_id: int, layer: int
 	var anchor := _cluster_anchors[cluster_id]
 	var distance := position.distance_to(anchor)
 	var cluster_weight := _cluster_weights[cluster_id]
-	var radius: float = (82.0 if layer == 0 else 132.0) * lerpf(0.92, 1.28, clampf((cluster_weight - 1.0) / 2.8, 0.0, 1.0))
-	return pow(1.0 - clampf(distance / radius, 0.0, 1.0), 1.55) * lerpf(0.92, 1.75, clampf((cluster_weight - 1.0) / 2.8, 0.0, 1.0))
+	var weight_t: float = clampf((cluster_weight - 1.0) / 2.8, 0.0, 1.0)
+	var radius: float = (92.0 if layer == 0 else 136.0) * lerpf(0.94, 1.34, weight_t)
+	if cluster_id == 0:
+		radius *= 1.34
+	elif cluster_id < 5:
+		radius *= 1.16
+	var local_density: float = pow(1.0 - clampf(distance / radius, 0.0, 1.0), 1.42) * lerpf(0.96, 1.90, weight_t)
+	var center_radius: float = 108.0 if layer == 0 else 122.0
+	var center_body: float = pow(1.0 - clampf(position.length() / center_radius, 0.0, 1.0), 1.28) * (1.15 if layer == 0 else 0.62)
+	return maxf(local_density, center_body)
 
 
 func _create_links() -> void:
@@ -553,7 +564,14 @@ func _create_links() -> void:
 	for particle_index in range(CORE_PARTICLES + FIELD_PARTICLES):
 		var particle := _particles[particle_index]
 		var cell: Vector3i = _grid_cell(particle.base_position)
-		var local_limit: int = 1 if particle.layer == 1 and not particle.cluster else MAX_LINKS_PER_PARTICLE
+		var density_t: float = clampf(particle.density_weight, 0.0, 1.0)
+		var local_limit: int = MAX_LINKS_PER_PARTICLE
+		if particle.cluster:
+			local_limit = 9
+		elif particle.layer == 1:
+			local_limit = 3
+		if not particle.cluster and density_t > 0.34:
+			local_limit += 1
 		var best_indices: Array[int] = []
 		var best_distances: Array[float] = []
 		for x in range(cell.x - 1, cell.x + 2):
@@ -570,10 +588,15 @@ func _create_links() -> void:
 						var max_distance: float = LINK_DISTANCE_FIELD if particle.layer == 1 or other.layer == 1 else LINK_DISTANCE_CORE
 						var distance_squared: float = particle.base_position.distance_squared_to(other.base_position)
 						if distance_squared <= max_distance * max_distance:
-							var bias: float = 0.82 if particle.cluster or other.cluster else 1.0
+							var local_density: float = maxf(particle.density_weight, other.density_weight)
+							var bias: float = 0.74 if particle.cluster or other.cluster else 1.0
+							bias *= lerpf(1.07, 0.70, clampf(local_density, 0.0, 1.0))
 							_track_best_neighbor(best_indices, best_distances, other_index, distance_squared * bias, local_limit)
 		for local_index in range(best_indices.size()):
 			_add_link_candidate(candidates, seen, particle_index, best_indices[local_index], LINK_DISTANCE_FIELD, 1.0, false)
+
+	_add_structural_cluster_links(candidates, seen)
+	_add_cluster_facet_links(candidates, seen)
 
 	candidates.sort_custom(func(left, right): return left["d"] < right["d"])
 	var link_count := mini(MAX_LINKS, candidates.size())
@@ -583,16 +606,32 @@ func _create_links() -> void:
 		link.a = candidate["a"]
 		link.b = candidate["b"]
 		link.structural = bool(candidate.get("structural", false))
-		var closeness := 1.0 - clampf(float(candidate["d"]) / (LINK_DISTANCE_BRIDGE * LINK_DISTANCE_BRIDGE), 0.0, 1.0)
+		var a_particle := _particles[link.a]
+		var b_particle := _particles[link.b]
+		var raw_distance_squared: float = a_particle.base_position.distance_squared_to(b_particle.base_position)
+		var distance_limit: float = LINK_DISTANCE_CORE
 		if link.structural:
-			link.base_opacity = 0.060 + closeness * 0.155
+			distance_limit = LINK_DISTANCE_BRIDGE
+		elif a_particle.layer == 1 or b_particle.layer == 1:
+			distance_limit = LINK_DISTANCE_FIELD
+		var closeness: float = 1.0 - clampf(raw_distance_squared / (distance_limit * distance_limit), 0.0, 1.0)
+		var endpoint_weight: float = a_particle.cluster_weight + b_particle.cluster_weight
+		var endpoint_strength: float = clampf((endpoint_weight - 2.0) / 4.6, 0.0, 1.0)
+		var density_strength: float = clampf((a_particle.density_weight + b_particle.density_weight) * 0.5, 0.0, 1.0)
+		var center_strength := 0.0
+		if a_particle.cluster_id == 0 or b_particle.cluster_id == 0:
+			center_strength = 1.0
+		elif a_particle.cluster_id < 5 or b_particle.cluster_id < 5:
+			center_strength = 0.55
+		if link.structural:
+			link.base_opacity = 0.070 + closeness * 0.150 + endpoint_strength * 0.075 + density_strength * 0.095 + center_strength * 0.018
+			link.active_bias = 0.82 + endpoint_strength * 0.16 + density_strength * 0.20 + center_strength * 0.05
 		else:
-			link.base_opacity = 0.012 + closeness * 0.035
-			if _particles[link.a].cluster or _particles[link.b].cluster:
-				link.base_opacity += 0.018
-		link.phase = _rng.randf() * TAU
-		link.speed = _rng.randf_range(0.18, 0.72) if not link.structural else _rng.randf_range(0.08, 0.32)
-		link.active_bias = _rng.randf_range(0.72, 1.0) if link.structural else _rng.randf_range(0.25, 0.75)
+			link.base_opacity = 0.012 + closeness * 0.054 + endpoint_strength * 0.020 + density_strength * 0.112 + center_strength * 0.010
+			if a_particle.cluster or b_particle.cluster:
+				link.base_opacity += 0.022 + endpoint_strength * 0.018 + density_strength * 0.040 + center_strength * 0.008
+			link.active_bias = 0.48 + endpoint_strength * 0.22 + density_strength * 0.46 + center_strength * 0.06 + _rng.randf_range(-0.04, 0.06)
+		link.active_bias = clampf(link.active_bias, 0.30, 1.24)
 		_links.append(link)
 
 
@@ -607,9 +646,13 @@ func _create_bridges() -> void:
 				continue
 			var target := _cluster_anchors[other_index]
 			var distance_squared: float = origin.distance_squared_to(target)
-			if distance_squared > LINK_DISTANCE_BRIDGE * LINK_DISTANCE_BRIDGE * 1.8:
+			if distance_squared > LINK_DISTANCE_BRIDGE * LINK_DISTANCE_BRIDGE * 1.75:
 				continue
 			var weight_bonus := (_cluster_weights[cluster_index] + _cluster_weights[other_index]) * 0.12
+			if cluster_index == 0 or other_index == 0:
+				weight_bonus += 0.18
+			elif cluster_index < 5 or other_index < 5:
+				weight_bonus += 0.10
 			var radial_bias := 1.0 - clampf(abs(origin.length() - target.length()) / CLOUD_RADIUS, 0.0, 0.55)
 			ranked.append({
 				"index": other_index,
@@ -628,19 +671,21 @@ func _add_bridge_candidate(seen: Dictionary, a_cluster: int, b_cluster: int) -> 
 	if seen.has(key):
 		var existing: CloudBridge = seen[key]
 		existing.stack_count += 1
-		existing.strength = clampf(existing.strength + 0.22, 0.70, 2.2)
-		existing.width = clampf(existing.width + 0.18, 0.80, 2.4)
+		existing.strength = clampf(existing.strength + 0.10, 0.58, 1.35)
+		existing.width = clampf(existing.width + 0.07, 0.32, 1.15)
 		return
 	var bridge := CloudBridge.new()
 	bridge.a_cluster = low
 	bridge.b_cluster = high
-	bridge.phase = _rng.randf() * TAU
-	bridge.speed = _rng.randf_range(0.10, 0.42)
 	var weight_sum: float = _cluster_weights[low] + _cluster_weights[high]
-	bridge.strength = clampf(0.55 + weight_sum * 0.16, 0.70, 1.35)
-	bridge.width = _rng.randf_range(0.80, 1.24) * bridge.strength
-	bridge.curve_side = -1.0 if _rng.randf() < 0.5 else 1.0
-	bridge.lane_offset = _rng.randf_range(-1.0, 1.0)
+	var weight_strength: float = clampf((weight_sum - 2.0) / 4.6, 0.0, 1.0)
+	var center_boost := 0.0
+	if low == 0 or high == 0:
+		center_boost = 0.14
+	elif low < 5 or high < 5:
+		center_boost = 0.08
+	bridge.strength = clampf(0.58 + weight_strength * 0.74 + center_boost, 0.56, 1.38)
+	bridge.width = lerpf(0.32, 0.72, weight_strength) * bridge.strength * (1.0 + center_boost * 0.18)
 	_bridges.append(bridge)
 	seen[key] = bridge
 
@@ -672,7 +717,26 @@ func _add_structural_cluster_links(candidates: Array[Dictionary], seen: Dictiona
 		ranked.sort_custom(func(left, right): return left["d"] < right["d"])
 		var count: int = mini(STRUCTURAL_LINKS_PER_CLUSTER, ranked.size())
 		for link_index in range(count):
-			_add_link_candidate(candidates, seen, cluster_index, int(ranked[link_index]["index"]), LINK_DISTANCE_BRIDGE * 1.10, 0.55, true)
+			_add_link_candidate(candidates, seen, cluster_index, int(ranked[link_index]["index"]), LINK_DISTANCE_BRIDGE * 1.20, 0.36, true)
+
+
+func _add_cluster_facet_links(candidates: Array[Dictionary], seen: Dictionary) -> void:
+	for cluster_index in range(CLUSTER_COUNT):
+		var cluster_particles: Array = _cluster_particle_indices[cluster_index]
+		if cluster_particles.size() < 5:
+			continue
+		var facet_count: int = mini(15 if cluster_index < 5 else 9, cluster_particles.size() - 3)
+		var stride: int = maxi(1, floori(float(cluster_particles.size()) / float(maxi(facet_count, 1))))
+		for facet_index in range(facet_count):
+			var base_slot: int = (facet_index * stride + cluster_index * 3) % cluster_particles.size()
+			var a: int = int(cluster_particles[base_slot])
+			var b: int = int(cluster_particles[(base_slot + stride) % cluster_particles.size()])
+			var c: int = int(cluster_particles[(base_slot + stride * 2) % cluster_particles.size()])
+			var max_distance: float = LINK_DISTANCE_CORE * (1.20 if cluster_index < 5 else 1.08)
+			_add_link_candidate(candidates, seen, a, b, max_distance, 0.36, false)
+			_add_link_candidate(candidates, seen, b, c, max_distance, 0.38, false)
+			if facet_index % 2 == 0:
+				_add_link_candidate(candidates, seen, a, c, max_distance * 1.08, 0.42, false)
 
 
 func _track_best_neighbor(indices: Array[int], distances: Array[float], candidate_index: int, distance: float, limit: int) -> void:
@@ -737,7 +801,13 @@ func _add_link_candidate(candidates: Array[Dictionary], seen: Dictionary, a: int
 	if distance_squared > max_distance * max_distance:
 		return
 	seen[key] = true
+	var center_bias := 1.0
+	if _particles[low].cluster_id == 0 or _particles[high].cluster_id == 0:
+		center_bias = 0.50
+	elif _particles[low].cluster_id < 5 or _particles[high].cluster_id < 5:
+		center_bias = 0.72
 	var cluster_bias: float = 0.62 if _particles[low].cluster or _particles[high].cluster else 1.0
+	cluster_bias *= center_bias
 	candidates.append({ "a": low, "b": high, "d": distance_squared * bias * cluster_bias, "structural": structural })
 
 
@@ -1150,10 +1220,16 @@ func _update_particles(delta: float) -> void:
 		particle.depth = clampf(particle.current_position.z / DUST_RADIUS, -1.0, 1.0)
 		particle.projected_position = _project(particle.current_position)
 
-		var center_factor := 1.0 - clampf(particle.current_position.length() / (DUST_RADIUS * 1.05), 0.0, 1.0)
-		var density_light := particle.density_weight * (1.80 + center_factor * 1.18)
-		var target_brightness := (particle.base_brightness + density_light + center_factor * 1.08 + speech_wave * 0.90 + particle.pulse) * brightness_mult * 1.42
-		particle.brightness = lerpf(particle.brightness, clampf(target_brightness, 0.0, 5.8), minf(delta * 4.2, 1.0))
+		var center_factor := 1.0 - clampf(particle.current_position.length() / (DUST_RADIUS * 0.92), 0.0, 1.0)
+		var hub_factor := pow(1.0 - clampf(particle.current_position.length() / 72.0, 0.0, 1.0), 1.35)
+		var inner_cluster_light := 0.0
+		if particle.cluster_id == 0:
+			inner_cluster_light = 0.70
+		elif particle.cluster_id < 5:
+			inner_cluster_light = 0.34
+		var density_light := particle.density_weight * (1.85 + center_factor * 1.20 + hub_factor * 0.82)
+		var target_brightness := (particle.base_brightness + density_light + center_factor * 0.78 + hub_factor * 2.15 + inner_cluster_light + speech_wave * 0.72 + particle.pulse) * brightness_mult * 1.36
+		particle.brightness = lerpf(particle.brightness, clampf(target_brightness, 0.0, 6.8), minf(delta * 4.2, 1.0))
 		particle.pulse = move_toward(particle.pulse, 0.0, delta * 2.4)
 
 
@@ -1185,12 +1261,8 @@ func _boost_nearby_links(particle_id: int, amount: float) -> void:
 
 func _update_links(delta: float) -> void:
 	var visibility: float = _params["link_visibility"]
-	var motion: float = _params["link_motion"]
 	for link in _links:
-		var wave := (sin(_time * link.speed * motion + link.phase) + 1.0) * 0.5
-		var target := link.base_opacity * visibility * (0.45 + wave * 0.75) * link.active_bias
-		if current_state == CloudState.SPEAKING:
-			target += _speech_energy * link.base_opacity * 0.85
+		var target: float = link.base_opacity * visibility * link.active_bias
 		link.opacity = lerpf(link.opacity, target, minf(delta * 3.5, 1.0))
 
 
@@ -1248,8 +1320,8 @@ func _rebuild_render_meshes() -> void:
 		density_colors,
 		density_indices
 	)
-	_build_link_meshes(link_glow_vertices, link_glow_colors, link_glow_indices, link_vertices, link_colors, link_indices, spark_vertices, spark_uvs, spark_colors, spark_indices)
-	_build_bridge_meshes(link_glow_vertices, link_glow_colors, link_glow_indices, link_vertices, link_colors, link_indices, spark_vertices, spark_uvs, spark_colors, spark_indices)
+	_build_link_meshes(link_glow_vertices, link_glow_colors, link_glow_indices, link_vertices, link_colors, link_indices)
+	_build_bridge_meshes(link_glow_vertices, link_glow_colors, link_glow_indices, link_vertices, link_colors, link_indices)
 
 	_commit_mesh(_dust_mesh, dust_vertices, dust_colors, dust_indices, dust_uvs)
 	_commit_mesh(_link_glow_mesh, link_glow_vertices, link_glow_colors, link_glow_indices, PackedVector2Array())
@@ -1291,33 +1363,41 @@ func _build_particle_meshes(
 		var particle := _particles[index]
 		var depth_factor: float = clampf((particle.depth + 1.0) * 0.5, 0.22, 1.20)
 		if particle.dust:
-			var radial_fade: float = pow(1.0 - clampf(particle.current_position.length() / (DUST_RADIUS * 0.78), 0.0, 1.0), 1.45)
-			var dust_alpha: float = clampf(particle.brightness * depth_factor * radial_fade * 0.82, 0.0, 0.34)
+			var radial_fade: float = pow(1.0 - clampf(particle.current_position.length() / (DUST_RADIUS * 0.58), 0.0, 1.0), 2.15)
+			var dust_alpha: float = clampf(particle.brightness * depth_factor * radial_fade * 0.46, 0.0, 0.18)
 			if dust_alpha < 0.024:
 				continue
 			var dust_radius := maxf(0.46, particle.size * depth_factor * VISUAL_SCALE * 0.78)
 			_add_particle_quad(dust_vertices, dust_uvs, dust_colors, dust_indices, particle.projected_position, dust_radius, Color(dim.r, dim.g, dim.b, dust_alpha))
 			continue
 
-		var body_fade: float = pow(1.0 - clampf(particle.current_position.length() / (FIELD_RADIUS * 1.02), 0.0, 1.0), 0.34)
-		if body_fade < 0.12 and not particle.cluster:
+		var radial_ratio: float = clampf(particle.current_position.length() / (FIELD_RADIUS * 0.78), 0.0, 1.0)
+		var body_fade: float = pow(1.0 - radial_ratio, 0.30)
+		if body_fade < 0.20 and not particle.cluster:
 			continue
-		var brightness: float = clampf(particle.brightness * depth_factor * 1.95, 0.0, 7.5)
-		brightness *= lerpf(0.34, 1.0, body_fade)
-		var particle_color: Color = dim.lerp(primary, clampf(brightness * 0.82, 0.0, 1.0))
+		var hub_factor: float = pow(1.0 - clampf(particle.current_position.length() / 72.0, 0.0, 1.0), 1.20)
+		var brightness: float = clampf(particle.brightness * depth_factor * 1.72, 0.0, 7.2)
+		brightness *= lerpf(0.30, 1.0, body_fade)
+		var particle_color: Color = dim.lerp(primary, clampf(0.34 + brightness * 0.64, 0.0, 1.0))
+		particle_color = particle_color.lerp(hot, clampf(hub_factor * 0.62 + (brightness - 4.8) * 0.08, 0.0, 0.72))
 		if particle.cluster:
-			particle_color = particle_color.lerp(hot, clampf((brightness - 0.72) * 0.16, 0.0, 0.46))
-		particle_color.a = clampf((0.22 + brightness * (0.56 if particle.layer == 0 else 0.40)) * lerpf(0.48, 1.0, body_fade), 0.075, 0.96)
+			particle_color = particle_color.lerp(hot, clampf((brightness - 1.05) * 0.16, 0.0, 0.58))
+		particle_color.a = clampf((0.16 + brightness * (0.46 if particle.layer == 0 else 0.30) + hub_factor * 0.24) * lerpf(0.36, 0.92, body_fade), 0.055, 0.88)
 		var radius := particle.size * VISUAL_SCALE * (0.50 + depth_factor * 0.58) * (1.0 + particle.pulse * 0.12)
 		if particle.layer == 0 and particle.density_weight >= 0.28:
-			radius *= 1.0 + particle.density_weight * 0.20
+			radius *= 1.0 + particle.density_weight * 0.26 + hub_factor * 0.34
 
 		if particle.cluster:
 			var cluster_t: float = clampf((particle.cluster_weight - 1.0) / 2.8, 0.0, 1.0)
-			var cluster_glow: Color = glow.lerp(hot, clampf(cluster_t * 0.18, 0.0, 0.18))
-			cluster_glow.a = clampf(particle_color.a * lerpf(0.18, 0.64, cluster_t), 0.10, 0.62)
-			_add_particle_quad(aura_vertices, aura_uvs, aura_colors, aura_indices, particle.projected_position, radius * lerpf(2.8, 6.0, cluster_t), cluster_glow)
-			_add_particle_quad(cluster_vertices, cluster_uvs, cluster_colors, cluster_indices, particle.projected_position, radius * 3.15, particle_color)
+			var center_cluster := 0.0
+			if particle.cluster_id == 0:
+				center_cluster = 1.0
+			elif particle.cluster_id < 5:
+				center_cluster = 0.45
+			var cluster_glow: Color = glow.lerp(hot, clampf(cluster_t * 0.18 + center_cluster * 0.40, 0.0, 0.62))
+			cluster_glow.a = clampf(particle_color.a * lerpf(0.20, 0.58, cluster_t) + center_cluster * 0.06, 0.10, 0.58)
+			_add_particle_quad(aura_vertices, aura_uvs, aura_colors, aura_indices, particle.projected_position, radius * lerpf(3.0, 6.2, clampf(cluster_t + center_cluster * 0.20, 0.0, 1.0)), cluster_glow)
+			_add_particle_quad(cluster_vertices, cluster_uvs, cluster_colors, cluster_indices, particle.projected_position, radius * (3.45 + center_cluster * 1.30), particle_color)
 		else:
 			_add_particle_quad(particle_vertices, particle_uvs, particle_colors, particle_indices, particle.projected_position, radius, particle_color)
 
@@ -1325,18 +1405,19 @@ func _build_particle_meshes(
 			var phase := particle.seed * TAU + _time * (0.24 + particle.seed * 0.18)
 			var offset_distance := 2.0 + particle.seed * 7.0
 			var aura_point := particle.projected_position + Vector2(cos(phase), sin(phase * 1.37)) * offset_distance
-			var aura_color: Color = primary.lerp(hot, clampf((brightness - 0.62) * 0.24, 0.0, 0.58))
-			aura_color.a = clampf(brightness * depth_factor * 0.13, 0.030, 0.24)
+			var aura_color: Color = primary.lerp(hot, clampf((brightness - 0.90) * 0.16, 0.0, 0.38))
+			aura_color.a = clampf(brightness * depth_factor * (0.080 + hub_factor * 0.055), 0.020, 0.22)
 			_add_particle_quad(aura_vertices, aura_uvs, aura_colors, aura_indices, aura_point, 0.48 + particle.seed * 0.72, aura_color)
 
 		if particle.layer == 0 and index % 2 == 0 and particle.density_weight >= 0.18:
 			var density_brightness: float = clampf(particle.brightness * particle.density_weight * depth_factor * 1.8, 0.0, 6.0)
 			if density_brightness >= 0.18:
 				var density_color: Color = primary.lerp(glow, clampf(density_brightness * 0.18, 0.0, 0.55))
-				density_color.a = clampf(density_brightness * 0.30, 0.070, 0.62)
+				density_color = density_color.lerp(hot, clampf(hub_factor * 0.36, 0.0, 0.46))
+				density_color.a = clampf(density_brightness * (0.22 + hub_factor * 0.08), 0.06, 0.48)
 				var density_phase := particle.seed * TAU
 				var density_offset: Vector2 = Vector2(cos(density_phase), sin(density_phase)) * (1.2 + particle.seed * 3.2)
-				_add_particle_quad(density_vertices, density_uvs, density_colors, density_indices, particle.projected_position + density_offset, 0.72 + particle.density_weight * 1.45, density_color)
+				_add_particle_quad(density_vertices, density_uvs, density_colors, density_indices, particle.projected_position + density_offset, 1.02 + particle.density_weight * 2.45 + hub_factor * 1.20, density_color)
 
 
 func _build_link_meshes(
@@ -1345,40 +1426,43 @@ func _build_link_meshes(
 	link_glow_indices: PackedInt32Array,
 	link_vertices: PackedVector3Array,
 	link_colors: PackedColorArray,
-	link_indices: PackedInt32Array,
-	spark_vertices: PackedVector3Array,
-	spark_uvs: PackedVector2Array,
-	spark_colors: PackedColorArray,
-	spark_indices: PackedInt32Array
+	link_indices: PackedInt32Array
 ) -> void:
 	var line: Color = _palette["line"]
 	var line_dim: Color = _palette["line_dim"]
 	var hot: Color = _palette["hot"]
-	var sparks_drawn := 0
 	for link in _links:
 		if link.opacity <= 0.004:
 			continue
 		var a := _particles[link.a]
 		var b := _particles[link.b]
 		var depth_factor: float = clampf(((a.depth + b.depth) * 0.5 + 1.0) * 0.5, 0.25, 1.0)
-		var alpha: float = clampf(link.opacity * depth_factor * 1.55, 0.0, 0.18)
-		var color: Color = line_dim.lerp(line, alpha * 4.0)
+		var endpoint_weight: float = a.cluster_weight + b.cluster_weight
+		var endpoint_strength: float = clampf((endpoint_weight - 2.0) / 4.6, 0.0, 1.0)
+		var density_strength: float = clampf((a.density_weight + b.density_weight) * 0.5, 0.0, 1.0)
+		var center_strength := 0.0
+		if a.cluster_id == 0 or b.cluster_id == 0:
+			center_strength = 1.0
+		elif a.cluster_id < 5 or b.cluster_id < 5:
+			center_strength = 0.46
+		var structural_boost: float = 0.28 if link.structural else 0.0
+		var density_curve: float = pow(density_strength, 0.62)
+		var link_strength: float = clampf(endpoint_strength * 0.40 + density_curve * 0.92 + structural_boost * 0.60 + center_strength * 0.16, 0.0, 1.0)
+		var outer_ratio: float = maxf(a.current_position.length(), b.current_position.length()) / (FIELD_RADIUS * 0.82)
+		var outer_fade: float = pow(1.0 - clampf((outer_ratio - 0.64) / 0.36, 0.0, 1.0), 1.45)
+		if outer_fade < 0.18 and not link.structural:
+			continue
+		var alpha: float = clampf(link.opacity * depth_factor * outer_fade * (1.55 + density_curve * 2.15 + structural_boost * 0.25), 0.0, 0.46)
+		var color: Color = line_dim.lerp(line, clampf(0.28 + link_strength * 0.64 + alpha * 0.56, 0.0, 1.0))
+		color = color.lerp(hot, clampf(density_curve * 0.16 + structural_boost * 0.06 + center_strength * 0.08, 0.0, 0.34))
 		var glow_color: Color = color
-		glow_color.a = alpha * 0.11
+		glow_color.a = alpha * (0.06 + density_curve * 0.10 + center_strength * 0.025)
 		color.a = alpha
-		var glow_width := 0.80 + alpha * 0.70
-		var line_width := 0.18 + alpha * 0.42
+		var endpoint_cap: float = maxf(0.08, minf(a.size, b.size) * VISUAL_SCALE * 0.34)
+		var line_width: float = minf(0.10 + density_curve * 0.12 + structural_boost * 0.04 + alpha * 0.08, endpoint_cap)
+		var glow_width: float = minf(line_width * (1.9 + density_curve * 0.7), endpoint_cap * 2.8)
 		_add_line_quad(link_glow_vertices, link_glow_colors, link_glow_indices, a.projected_position, b.projected_position, glow_width, glow_color)
 		_add_line_quad(link_vertices, link_colors, link_indices, a.projected_position, b.projected_position, line_width, color)
-
-		if link.opacity > 0.055 and sparks_drawn < int(MAX_SPARKS / 5):
-			var t: float = fmod(link.phase * 0.137 + _time * link.speed * 0.17, 1.0)
-			var point: Vector2 = a.projected_position.lerp(b.projected_position, t)
-			var spark_alpha: float = clampf(link.opacity * 0.92, 0.035, 0.26)
-			var spark_color: Color = line.lerp(hot, clampf(spark_alpha * 1.7, 0.0, 0.42))
-			spark_color.a = spark_alpha
-			_add_particle_quad(spark_vertices, spark_uvs, spark_colors, spark_indices, point, 0.55 + spark_alpha * 2.4, spark_color)
-			sparks_drawn += 1
 
 
 func _build_bridge_meshes(
@@ -1387,64 +1471,38 @@ func _build_bridge_meshes(
 	link_glow_indices: PackedInt32Array,
 	link_vertices: PackedVector3Array,
 	link_colors: PackedColorArray,
-	link_indices: PackedInt32Array,
-	spark_vertices: PackedVector3Array,
-	spark_uvs: PackedVector2Array,
-	spark_colors: PackedColorArray,
-	spark_indices: PackedInt32Array
+	link_indices: PackedInt32Array
 ) -> void:
 	var line: Color = _palette["line"]
 	var line_dim: Color = _palette["line_dim"]
 	var hot: Color = _palette["hot"]
+	var visibility: float = float(_params["link_visibility"])
 	for bridge in _bridges:
-		var a: Vector2 = _cluster_projected_positions[bridge.a_cluster]
-		var b: Vector2 = _cluster_projected_positions[bridge.b_cluster]
+		var a_particle := _particles[bridge.a_cluster]
+		var b_particle := _particles[bridge.b_cluster]
+		var a: Vector2 = a_particle.projected_position
+		var b: Vector2 = b_particle.projected_position
 		var distance: float = a.distance_to(b)
 		if distance < 12.0:
 			continue
-		var slow_wave: float = pow(maxf(0.0, sin(_time * bridge.speed + bridge.phase)), 2.6)
-		var flicker_wave: float = pow(maxf(0.0, sin(_time * (1.1 + bridge.speed * 1.7) + bridge.phase * 2.31)), 7.0)
-		var pulse: float = 0.35 + slow_wave * 0.30 + flicker_wave * 0.45
-		if current_state == CloudState.SPEAKING:
-			pulse += _speech_energy * 0.28
+		var weight_sum: float = _cluster_weights[bridge.a_cluster] + _cluster_weights[bridge.b_cluster]
+		var weight_strength: float = clampf((weight_sum - 2.0) / 4.6, 0.0, 1.0)
 		var stack_boost: float = 1.0 + float(bridge.stack_count - 1) * 0.28
-		var alpha: float = clampf(pulse * bridge.strength * stack_boost * float(_params["link_visibility"]) * 0.24, 0.035, 0.30)
-		var color: Color = line_dim.lerp(line, clampf(alpha * 2.6, 0.0, 1.0)).lerp(hot, clampf(alpha * 0.24, 0.0, 0.14))
+		var center_strength := 0.0
+		if bridge.a_cluster == 0 or bridge.b_cluster == 0:
+			center_strength = 1.0
+		elif bridge.a_cluster < 5 or bridge.b_cluster < 5:
+			center_strength = 0.45
+		var alpha: float = clampf((0.060 + weight_strength * 0.170 + center_strength * 0.026) * bridge.strength * stack_boost * visibility, 0.030, 0.34)
+		var color: Color = line_dim.lerp(line, clampf(0.42 + weight_strength * 0.48 + center_strength * 0.10, 0.0, 1.0)).lerp(hot, clampf(weight_strength * 0.14 + center_strength * 0.10, 0.0, 0.24))
 		color.a = alpha
 		var glow_color: Color = color
-		glow_color.a = alpha * 0.20
-		var base_curve: Vector2 = _bridge_curve_offset(a, b, bridge.phase) * bridge.curve_side
-		var normal: Vector2 = _line_normal(a, b)
-		var pulse_position: float = fmod(_time * (0.10 + bridge.speed * 0.32) + bridge.phase * 0.071, 1.0)
-		var segment_count: int = 12
-		var lane_count: int = 3
-		for lane in range(lane_count):
-			var lane_t: float = float(lane) - 1.0
-			var lane_offset: Vector2 = normal * (lane_t * 0.55 + bridge.lane_offset * 0.18)
-			var lane_curve: Vector2 = base_curve + normal * lane_t * 0.70
-			var previous: Vector2 = a + lane_offset
-			for segment in range(1, segment_count + 1):
-				var t: float = float(segment) / float(segment_count)
-				var point: Vector2 = _curved_bridge_point(a + lane_offset, b + lane_offset, lane_curve, t)
-				point += lane_curve.rotated(PI * 0.5) * sin(t * TAU * 2.0 + bridge.phase + lane_t) * 0.045
-				var mid_t: float = (t + float(segment - 1) / float(segment_count)) * 0.5
-				var pulse_distance: float = abs(mid_t - pulse_position)
-				pulse_distance = minf(pulse_distance, 1.0 - pulse_distance)
-				var travelling_pulse: float = pow(maxf(0.0, 1.0 - pulse_distance * 7.5), 2.3)
-				var segment_alpha: float = alpha * (0.30 + travelling_pulse * 1.45)
-				var segment_color: Color = line_dim.lerp(line, clampf(segment_alpha * 4.4, 0.0, 1.0)).lerp(hot, clampf(travelling_pulse * 0.18, 0.0, 0.18))
-				segment_color.a = clampf(segment_alpha, 0.012, 0.36)
-				var segment_glow: Color = segment_color
-				segment_glow.a = segment_color.a * 0.22
-				var width: float = bridge.width * (0.14 + travelling_pulse * 0.32 + float(bridge.stack_count - 1) * 0.04)
-				_add_line_quad(link_glow_vertices, link_glow_colors, link_glow_indices, previous, point, width * 1.65, segment_glow)
-				_add_line_quad(link_vertices, link_colors, link_indices, previous, point, width, segment_color)
-				previous = point
-
-		var spark_point: Vector2 = _curved_bridge_point(a, b, base_curve, pulse_position)
-		var spark_color: Color = line.lerp(hot, 0.10)
-		spark_color.a = clampf(alpha * 0.45, 0.035, 0.14)
-		_add_particle_quad(spark_vertices, spark_uvs, spark_colors, spark_indices, spark_point, 0.58 + alpha * 1.20, spark_color)
+		glow_color.a = alpha * (0.07 + weight_strength * 0.09 + center_strength * 0.025)
+		var endpoint_cap: float = maxf(0.10, minf(a_particle.size, b_particle.size) * VISUAL_SCALE * 0.42)
+		var core_width: float = minf(bridge.width * (0.20 + weight_strength * 0.25 + center_strength * 0.04 + float(bridge.stack_count - 1) * 0.025), endpoint_cap)
+		var glow_width: float = minf(core_width * (2.0 + weight_strength * 0.5 + center_strength * 0.15), endpoint_cap * 2.9)
+		_add_line_quad(link_glow_vertices, link_glow_colors, link_glow_indices, a, b, glow_width, glow_color)
+		_add_line_quad(link_vertices, link_colors, link_indices, a, b, core_width, color)
 
 
 func _add_particle_quad(
@@ -1503,20 +1561,6 @@ func _add_line_quad(
 	indices.append(start)
 	indices.append(start + 2)
 	indices.append(start + 3)
-
-
-func _curved_bridge_point(a: Vector2, b: Vector2, curve_offset: Vector2, t: float) -> Vector2:
-	return a.lerp(b, t) + curve_offset * sin(t * PI)
-
-
-func _bridge_curve_offset(a: Vector2, b: Vector2, phase: float) -> Vector2:
-	var direction := b - a
-	if direction.length_squared() < 0.01:
-		return Vector2.ZERO
-	var normal := _line_normal(a, b)
-	var length_factor: float = clampf(direction.length() / 180.0, 0.0, 1.0)
-	var side: float = -1.0 if sin(phase) < 0.0 else 1.0
-	return normal * side * (7.0 + length_factor * 16.0)
 
 
 func _line_normal(a: Vector2, b: Vector2) -> Vector2:

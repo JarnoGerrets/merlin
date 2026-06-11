@@ -17,11 +17,11 @@ const TYPEWRITER_PUNCTUATION_DELAY := 0.030
 const TYPEWRITER_PARAGRAPH_DELAY := 0.060
 const MAX_NOTIFICATIONS := 5
 
-const COLOR_BACKGROUND := Color(0.000, 0.006, 0.012, 1.0)
-const COLOR_PANEL := Color(0.004, 0.026, 0.042, 0.40)
-const COLOR_PANEL_DARK := Color(0.002, 0.014, 0.026, 0.64)
-const COLOR_BLUE := Color(0.18, 0.55, 0.86, 1.0)
-const COLOR_CYAN := Color(0.42, 0.88, 1.0, 1.0)
+const COLOR_BACKGROUND := Color(0.000, 0.010, 0.020, 1.0)
+const COLOR_PANEL := Color(0.003, 0.030, 0.052, 0.40)
+const COLOR_PANEL_DARK := Color(0.001, 0.016, 0.032, 0.64)
+const COLOR_BLUE := Color(0.10, 0.52, 0.92, 1.0)
+const COLOR_CYAN := Color(0.30, 0.86, 1.0, 1.0)
 const COLOR_WHITE := Color(0.88, 0.96, 1.0, 1.0)
 const COLOR_MUTED := Color(0.50, 0.62, 0.70, 1.0)
 const COLOR_AMBER := Color(1.0, 0.68, 0.28, 1.0)
