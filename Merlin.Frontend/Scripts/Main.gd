@@ -44,9 +44,6 @@ const COLOR_RED := Color(1.0, 0.28, 0.34, 1.0)
 @onready var message_scroll: ScrollContainer = $ChatPanel/Content/ChatColumn/HistoryPanel/HistoryMargin/MessageScroll
 @onready var message_list: VBoxContainer = $ChatPanel/Content/ChatColumn/HistoryPanel/HistoryMargin/MessageScroll/MessageList
 @onready var thinking_label: Label = $ChatPanel/Content/ChatColumn/ThinkingLabel
-@onready var tools_panel: PanelContainer = $ChatPanel/Content/ToolsPanel
-@onready var refresh_tools_button: Button = $ChatPanel/Content/ToolsPanel/ToolsMargin/ToolsLayout/ToolsHeader/RefreshToolsButton
-@onready var tools_list: VBoxContainer = $ChatPanel/Content/ToolsPanel/ToolsMargin/ToolsLayout/ToolsScroll/ToolsList
 @onready var command_input_panel: PanelContainer = $CommandInput
 @onready var message_input: LineEdit = $CommandInput/InputRow/MessageInput
 @onready var send_button: Button = $CommandInput/InputRow/SendButton
@@ -66,7 +63,6 @@ func _ready() -> void:
 	error_label.focus_mode = Control.FOCUS_NONE
 	send_button.pressed.connect(_on_send_pressed)
 	reconnect_button.pressed.connect(_on_reconnect_pressed)
-	refresh_tools_button.pressed.connect(_on_refresh_tools_pressed)
 	show_debug_check_box.toggled.connect(_on_show_debug_check_box_toggled)
 	message_input.text_submitted.connect(_on_message_submitted)
 
@@ -78,7 +74,6 @@ func _ready() -> void:
 	_add_system_message("Connecting to Merlin.Backend...")
 	_add_notification("Connecting to Merlin.Backend", "system")
 	_update_pending_state()
-	_set_tools_placeholder("Click Refresh Tools after connecting.")
 	web_socket_client.connect_to_backend()
 	_focus_message_input()
 
@@ -102,9 +97,6 @@ func _on_message_submitted(_text: String) -> void:
 	_send_current_message()
 	_focus_message_input()
 
-
-func _on_refresh_tools_pressed() -> void:
-	_send_backend_message("list tools", false)
 
 
 func _send_current_message() -> void:
@@ -240,12 +232,10 @@ func _apply_visual_theme() -> void:
 	notification_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.01, 0.025, 0.04, 0.18), Color(0, 0, 0, 0), 0.0, 8))
 	chat_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_PANEL_DARK, Color(COLOR_BLUE.r, COLOR_BLUE.g, COLOR_BLUE.b, 0.45), 1.0, 8))
 	history_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.01, 0.025, 0.04, 0.36), Color(COLOR_CYAN.r, COLOR_CYAN.g, COLOR_CYAN.b, 0.28), 1.0, 6))
-	tools_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.01, 0.025, 0.04, 0.28), Color(COLOR_BLUE.r, COLOR_BLUE.g, COLOR_BLUE.b, 0.25), 1.0, 6))
 	command_input_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.02, 0.08, 0.12, 0.64), COLOR_CYAN, 1.0, 10))
 
 	_style_button(send_button)
 	_style_button(reconnect_button)
-	_style_button(refresh_tools_button)
 	_style_line_edit(message_input)
 
 	connection_state_label.add_theme_color_override("font_color", COLOR_CYAN)
@@ -413,11 +403,6 @@ func _display_backend_response(
 	if success:
 		await _add_typed_chat_line("Merlin", _format_success_response(message, available_tools, diagnostics, confirmation), debug_text, _response_kind(response, success, response_type))
 		_clear_error()
-		if typeof(available_tools) == TYPE_ARRAY:
-			_render_tools(available_tools)
-			_add_notification("Capabilities refreshed", "system")
-		elif _is_tool_execution_response(response):
-			_add_notification(message, "assistant")
 	else:
 		var formatted_error := _format_error_response(error_code, message)
 		if typeof(confirmation) == TYPE_DICTIONARY:
@@ -436,7 +421,7 @@ func _display_backend_response(
 		else:
 			await _add_typed_chat_line("Error", formatted_error, debug_text, "error")
 			_add_notification("Error", "error")
-			_show_error(formatted_error)
+			_clear_error()
 
 	_settle_orb_after_response()
 	_focus_message_input()
@@ -721,7 +706,6 @@ func _activity_text_for_state(state: int) -> String:
 func _update_send_button() -> void:
 	var connected := web_socket_client.is_backend_connected()
 	send_button.disabled = not connected
-	refresh_tools_button.disabled = not connected
 	reconnect_button.disabled = web_socket_client.get_connection_state() == "connecting"
 
 
@@ -752,57 +736,6 @@ func _show_error(message: String) -> void:
 func _clear_error() -> void:
 	error_label.text = ""
 	error_label.visible = false
-
-
-func _render_tools(available_tools: Array) -> void:
-	_clear_children(tools_list)
-
-	for tool in available_tools:
-		if typeof(tool) != TYPE_DICTIONARY:
-			continue
-
-		var tool_box := VBoxContainer.new()
-		tool_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		tool_box.add_theme_constant_override("separation", 3)
-
-		var name_label := Label.new()
-		name_label.text = str(tool.get("name", "Unnamed Tool"))
-		name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		name_label.add_theme_font_size_override("font_size", 16)
-		name_label.add_theme_color_override("font_color", COLOR_CYAN)
-		tool_box.add_child(name_label)
-
-		var description_label := Label.new()
-		description_label.text = str(tool.get("description", ""))
-		description_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		description_label.add_theme_color_override("font_color", COLOR_WHITE)
-		tool_box.add_child(description_label)
-
-		var examples = tool.get("examples", [])
-		if typeof(examples) == TYPE_ARRAY and not examples.is_empty():
-			var examples_label := Label.new()
-			examples_label.text = "Examples: %s" % _join_values(examples, ", ")
-			examples_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			examples_label.add_theme_font_size_override("font_size", 12)
-			examples_label.add_theme_color_override("font_color", COLOR_MUTED)
-			tool_box.add_child(examples_label)
-
-		tools_list.add_child(tool_box)
-
-
-func _set_tools_placeholder(message: String) -> void:
-	_clear_children(tools_list)
-	var label := Label.new()
-	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	label.text = message
-	label.add_theme_color_override("font_color", COLOR_MUTED)
-	tools_list.add_child(label)
-
-
-func _clear_children(node: Node) -> void:
-	for child in node.get_children():
-		child.queue_free()
-
 
 func _on_show_debug_check_box_toggled(enabled: bool) -> void:
 	_set_debug_labels_visible(message_list, enabled)
