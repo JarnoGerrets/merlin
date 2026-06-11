@@ -54,15 +54,16 @@ class SpeechRipple:
 const STRUCTURAL_NODE_COUNT := 1700
 const HUB_NODE_COUNT := 30
 const BRIGHT_CLUSTER_COUNT := 52
+const STRUCTURAL_FEATURE_CLUSTER_COUNT := 11
 const AMBIENT_DUST_NODE_COUNT := 1800
 const HUB_CLUSTER_PARTICLE_COUNT := 56
-const BRIGHT_CLUSTER_PARTICLE_COUNT := 34
-const CORE_CLUSTER_PARTICLE_COUNT := 980
+const BRIGHT_CLUSTER_PARTICLE_COUNT := 58
+const CORE_CLUSTER_PARTICLE_COUNT := 1580
 const DUST_NODE_COUNT := AMBIENT_DUST_NODE_COUNT + HUB_NODE_COUNT * HUB_CLUSTER_PARTICLE_COUNT + BRIGHT_CLUSTER_COUNT * BRIGHT_CLUSTER_PARTICLE_COUNT + CORE_CLUSTER_PARTICLE_COUNT
 const ORB_RADIUS := 2.65
-const CORE_RADIUS := ORB_RADIUS * 0.34
-const MAX_CONNECTION_DISTANCE := 0.82
-const HUB_CONNECTION_DISTANCE := 1.16
+const CORE_RADIUS := ORB_RADIUS * 0.48
+const MAX_CONNECTION_DISTANCE := 0.92
+const HUB_CONNECTION_DISTANCE := 1.20
 const MAX_PULSES := 18
 const MAX_DESTINATION_FLASHES := 24
 const ORGANISM_DISPLAY_SCALE := 0.76
@@ -104,6 +105,7 @@ var _node_connections: Array = []
 var _node_dust_indices: Array = []
 var _route_connection_indices: Array[int] = []
 var _cluster_node_indices: Array[int] = []
+var _structural_cluster_anchors: Array[Vector3] = []
 var _node_speech_light := {}
 var _dust_speech_light := {}
 var _connection_speech_light := {}
@@ -288,6 +290,7 @@ func _generate_nodes() -> void:
 	_nodes.clear()
 	_dust.clear()
 	_cluster_node_indices.clear()
+	_build_structural_cluster_anchors()
 
 	for index in range(STRUCTURAL_NODE_COUNT):
 		var node := OrganismNode.new()
@@ -307,49 +310,59 @@ func _generate_nodes() -> void:
 		hub.base_position = _hub_position(index)
 		hub.current_position = hub.base_position
 		var center_t := 1.0 - clampf(hub.base_position.length() / ORB_RADIUS, 0.0, 1.0)
-		hub.radius = _rng.randf_range(0.009, 0.017) * lerpf(0.95, 1.18, center_t)
-		hub.brightness = lerpf(1.35, 2.15, pow(center_t, 0.52))
+		var hub_importance := _hub_importance(index)
+		hub.radius = _rng.randf_range(0.009, 0.017) * lerpf(0.95, 1.18, center_t) * hub_importance
+		hub.brightness = lerpf(1.35, 2.15, pow(center_t, 0.52)) * lerpf(1.0, 1.14, hub_importance - 1.0)
 		_cluster_node_indices.append(_nodes.size())
 		_nodes.append(hub)
 
 	for hub_index in range(STRUCTURAL_NODE_COUNT, _nodes.size()):
 		var hub_node := _nodes[hub_index]
+		var hub_order := hub_index - STRUCTURAL_NODE_COUNT
+		var hub_importance := _hub_importance(hub_order)
 		for cluster_index in range(HUB_CLUSTER_PARTICLE_COUNT):
 			var spark := OrganismNode.new()
 			spark.hub = true
 			spark.phase = _rng.randf() * TAU
-			var cluster_radius := pow(_rng.randf(), 1.65) * _rng.randf_range(0.035, 0.24)
+			var hub_cluster_radius := 0.24 * lerpf(1.0, 1.28, hub_importance - 1.0)
+			var cluster_radius := pow(_rng.randf(), 1.52) * _rng.randf_range(0.035, hub_cluster_radius)
 			spark.base_position = hub_node.base_position + _random_unit_vector() * cluster_radius
 			spark.current_position = spark.base_position
 			spark.source_node = hub_index
-			spark.radius = _rng.randf_range(0.0032, 0.0084) * lerpf(1.24, 0.70, cluster_radius / 0.24)
-			spark.brightness = _rng.randf_range(0.90, 1.95) * lerpf(1.70, 0.72, cluster_radius / 0.24)
+			var cluster_t := cluster_radius / hub_cluster_radius
+			spark.radius = _rng.randf_range(0.0032, 0.0084) * lerpf(1.34, 0.74, cluster_t) * hub_importance
+			spark.brightness = _rng.randf_range(0.90, 1.95) * lerpf(1.88, 0.78, cluster_t) * lerpf(1.0, 1.16, hub_importance - 1.0)
 			_dust.append(spark)
 
 	for cluster_index in range(BRIGHT_CLUSTER_COUNT):
 		var anchor_index := _rng.randi_range(0, STRUCTURAL_NODE_COUNT - 1)
 		var anchor := _nodes[anchor_index]
+		var feature_cluster := cluster_index % 5 == 0
 		for spark_index in range(BRIGHT_CLUSTER_PARTICLE_COUNT):
 			var spark := OrganismNode.new()
 			spark.hub = true
 			spark.phase = _rng.randf() * TAU
-			var cluster_radius := pow(_rng.randf(), 1.50) * _rng.randf_range(0.030, 0.18)
+			var cluster_max_radius := 0.34 if feature_cluster else 0.20
+			var cluster_radius := pow(_rng.randf(), 1.65 if feature_cluster else 1.50) * _rng.randf_range(0.030 if feature_cluster else 0.030, cluster_max_radius)
 			spark.base_position = anchor.base_position + _random_unit_vector() * cluster_radius
 			spark.current_position = spark.base_position
 			spark.source_node = anchor_index
-			spark.radius = _rng.randf_range(0.0028, 0.0072) * lerpf(1.20, 0.76, cluster_radius / 0.18)
-			spark.brightness = _rng.randf_range(0.70, 1.55) * lerpf(1.48, 0.76, cluster_radius / 0.18)
+			var cluster_t := cluster_radius / cluster_max_radius
+			var feature_size := 1.65 if feature_cluster else 1.0
+			var feature_brightness := 1.62 if feature_cluster else 1.0
+			spark.radius = _rng.randf_range(0.0030, 0.0078) * lerpf(1.40, 0.84, cluster_t) * feature_size
+			spark.brightness = _rng.randf_range(0.74, 1.68) * lerpf(1.92, 0.88, cluster_t) * feature_brightness
 			_dust.append(spark)
 
 	for core_index in range(CORE_CLUSTER_PARTICLE_COUNT):
 		var spark := OrganismNode.new()
 		spark.hub = true
 		spark.phase = _rng.randf() * TAU
-		var core_radius := pow(_rng.randf(), 1.95) * CORE_RADIUS * 0.95
+		var core_radius := pow(_rng.randf(), 1.72) * CORE_RADIUS
 		spark.base_position = _irregular_orb_position(core_radius, 0.30)
 		spark.current_position = spark.base_position
-		spark.radius = _rng.randf_range(0.0026, 0.0076) * lerpf(1.45, 0.72, core_radius / (CORE_RADIUS * 0.95))
-		spark.brightness = _rng.randf_range(0.82, 1.90) * lerpf(1.85, 0.72, core_radius / (CORE_RADIUS * 0.95))
+		spark.radius = _rng.randf_range(0.0030, 0.0088) * lerpf(1.62, 0.78, core_radius / CORE_RADIUS)
+		spark.brightness = _rng.randf_range(0.90, 2.14) * lerpf(2.10, 0.78, core_radius / CORE_RADIUS)
 		_dust.append(spark)
 
 	for index in range(AMBIENT_DUST_NODE_COUNT):
@@ -363,13 +376,33 @@ func _generate_nodes() -> void:
 
 
 func _network_position(index: int) -> Vector3:
-	if index < int(STRUCTURAL_NODE_COUNT * 0.16):
+	if index < int(STRUCTURAL_NODE_COUNT * 0.24):
 		return _irregular_orb_position(_rng.randf_range(0.03, CORE_RADIUS), 0.42)
+
+	var cluster_start := int(STRUCTURAL_NODE_COUNT * 0.24)
+	var cluster_end := int(STRUCTURAL_NODE_COUNT * 0.46)
+	if index < cluster_end and not _structural_cluster_anchors.is_empty():
+		var local_index := index - cluster_start
+		var anchor_index := local_index % _structural_cluster_anchors.size()
+		var anchor := _structural_cluster_anchors[anchor_index]
+		var radius_t := clampf(anchor.length() / ORB_RADIUS, 0.0, 1.0)
+		var cluster_radius := _rng.randf_range(0.10, 0.34) * lerpf(1.10, 0.78, 1.0 - radius_t)
+		var local_position := anchor + _random_unit_vector() * pow(_rng.randf(), 1.45) * cluster_radius
+		return _shape_local_position(local_position)
 
 	var shell_roll := _rng.randf()
 	if shell_roll < 0.56:
 		return _irregular_orb_position(_rng.randf_range(ORB_RADIUS * 0.70, ORB_RADIUS * 1.04), 0.20)
 	return _irregular_orb_position(pow(_rng.randf(), 1.05) * ORB_RADIUS * 0.94, 0.30)
+
+
+func _build_structural_cluster_anchors() -> void:
+	_structural_cluster_anchors.clear()
+	for index in range(STRUCTURAL_FEATURE_CLUSTER_COUNT):
+		var radius_min := ORB_RADIUS * (0.40 if index % 3 == 0 else 0.56)
+		var radius_max := ORB_RADIUS * (0.76 if index % 3 == 0 else 1.03)
+		var anchor := _irregular_orb_position(_rng.randf_range(radius_min, radius_max), 0.18)
+		_structural_cluster_anchors.append(anchor)
 
 
 func _hub_position(index: int) -> Vector3:
@@ -378,6 +411,14 @@ func _hub_position(index: int) -> Vector3:
 	if index < 6:
 		return _irregular_orb_position(_rng.randf_range(ORB_RADIUS * 0.18, ORB_RADIUS * 0.58), 0.18)
 	return _irregular_orb_position(_rng.randf_range(ORB_RADIUS * 0.62, ORB_RADIUS * 1.04), 0.16)
+
+
+func _hub_importance(index: int) -> float:
+	if index == 0:
+		return 1.22
+	if index < 6:
+		return 1.12
+	return 1.24 if index % 4 == 0 else 1.14
 
 
 func _dust_position() -> Vector3:
@@ -395,6 +436,13 @@ func _irregular_orb_position(radius: float, noise: float) -> Vector3:
 	position.y *= 0.96
 	position.z *= 1.02
 	return position
+
+
+func _shape_local_position(position: Vector3) -> Vector3:
+	position.x *= 1.04
+	position.y *= 0.96
+	position.z *= 1.02
+	return position.limit_length(ORB_RADIUS * 1.10)
 
 
 func _random_unit_vector() -> Vector3:
@@ -432,16 +480,17 @@ func _generate_connections() -> void:
 
 		ranked.sort_custom(func(left, right): return left["distance"] < right["distance"])
 		var radius_t := clampf(node.base_position.length() / ORB_RADIUS, 0.0, 1.0)
-		var neighbor_min := 6 if radius_t < 0.72 else 7
-		var neighbor_max := 8 if radius_t < 0.72 else 9
-		var count := mini((10 if node.hub else _rng.randi_range(neighbor_min, neighbor_max)), ranked.size())
+		var neighbor_min := 8 if radius_t < 0.72 else 9
+		var neighbor_max := 10 if radius_t < 0.72 else 11
+		var count := mini((11 if node.hub else _rng.randi_range(neighbor_min, neighbor_max)), ranked.size())
 		for slot in range(count):
 			_add_connection(index, int(ranked[slot]["index"]), float(ranked[slot]["distance"]))
 
 	for index in range(STRUCTURAL_NODE_COUNT, _nodes.size()):
 		for other_index in range(index + 1, _nodes.size()):
-			if _rng.randf() < 0.12:
-				_add_connection(index, other_index, _nodes[index].base_position.distance_to(_nodes[other_index].base_position), true)
+			var distance := _nodes[index].base_position.distance_to(_nodes[other_index].base_position)
+			if distance <= HUB_CONNECTION_DISTANCE * 0.92 and _rng.randf() < 0.10:
+				_add_connection(index, other_index, distance, true)
 
 
 func _add_connection(a: int, b: int, distance: float, force_route: bool = false) -> void:
@@ -462,13 +511,13 @@ func _add_connection(a: int, b: int, distance: float, force_route: bool = false)
 	var closeness := 1.0 - clampf(distance / HUB_CONNECTION_DISTANCE, 0.0, 1.0)
 	var shell_t := clampf(midpoint.length() / ORB_RADIUS, 0.0, 1.0)
 	var shell_band := pow(clampf((shell_t - 0.52) / 0.48, 0.0, 1.0), 0.78)
-	connection.route = force_route or hub_t > 0.0 and _rng.randf() < 0.18
-	connection.base_alpha = 0.125 + closeness * 0.20 + pow(center_t, 0.7) * 0.085 + shell_band * 0.085 + hub_t * 0.035
+	connection.route = force_route or hub_t > 0.0 and closeness > 0.24 and _rng.randf() < 0.16
+	connection.base_alpha = 0.150 + closeness * 0.24 + pow(center_t, 0.7) * 0.105 + shell_band * 0.110 + hub_t * 0.035
 	if connection.route:
-		connection.base_alpha += 0.060 + hub_t * 0.022
-	connection.width = lerpf(0.0023, 0.0042, pow(center_t, 0.7)) + shell_band * 0.00065 + hub_t * 0.00018
+		connection.base_alpha += 0.058 + hub_t * 0.020
+	connection.width = lerpf(0.0028, 0.0049, pow(center_t, 0.7)) + shell_band * 0.00085 + hub_t * 0.00022
 	if connection.route:
-		connection.width *= 1.22
+		connection.width *= 1.18
 	var connection_index := _connections.size()
 	_connections.append(connection)
 	var a_connections: Array = _node_connections[connection.a]
@@ -873,15 +922,15 @@ func _update_connections() -> void:
 		var shell_band := pow(clampf((shell_t - 0.52) / 0.48, 0.0, 1.0), 0.72)
 		var flicker := 0.84 + pow(maxf(0.0, sin(_time * 1.2 + connection.phase)), 3.2) * 0.18
 		var speech_light := _connection_light(connection_index)
-		var route_boost := 1.0 + route_t * 0.20
+		var route_boost := 1.08 + route_t * 0.18
 		var alpha := clampf(connection.base_alpha * flicker * depth_t * route_boost * _brightness * (1.0 + _activity * 0.08 + speech_light * 1.15), 0.075, 0.88)
-		var color := Color(_palette["dim"]).lerp(Color(_palette["line"]), clampf(0.28 + center_t * 0.20 + shell_band * 0.24 + route_t * 0.16, 0.0, 1.0))
-		color = color.lerp(Color(_palette["hot"]), clampf(center_t * 0.12 + shell_band * 0.08 + route_t * 0.18 + speech_light * 0.68, 0.0, 0.72))
+		var color := Color(_palette["dim"]).lerp(Color(_palette["line"]), clampf(0.36 + center_t * 0.20 + shell_band * 0.26 + route_t * 0.14, 0.0, 1.0))
+		color = color.lerp(Color(_palette["hot"]), clampf(center_t * 0.13 + shell_band * 0.10 + route_t * 0.14 + speech_light * 0.68, 0.0, 0.72))
 		color.a = alpha
 		var glow_color := color
-		glow_color.a = alpha * (0.026 + center_t * 0.014 + shell_band * 0.020 + route_t * 0.030 + speech_light * 0.090)
-		_add_line_quad_3d(glow_vertices, glow_colors, glow_indices, a.current_position, b.current_position, connection.width * (1.45 + route_t * 0.42 + speech_light * 1.35), glow_color, local_camera_forward, local_camera_up)
-		_add_line_quad_3d(core_vertices, core_colors, core_indices, a.current_position, b.current_position, connection.width * (0.96 + route_t * 0.12 + speech_light * 0.74), color, local_camera_forward, local_camera_up)
+		glow_color.a = alpha * (0.040 + center_t * 0.018 + shell_band * 0.028 + route_t * 0.030 + speech_light * 0.090)
+		_add_line_quad_3d(glow_vertices, glow_colors, glow_indices, a.current_position, b.current_position, connection.width * (1.75 + route_t * 0.40 + speech_light * 1.35), glow_color, local_camera_forward, local_camera_up)
+		_add_line_quad_3d(core_vertices, core_colors, core_indices, a.current_position, b.current_position, connection.width * (1.08 + route_t * 0.12 + speech_light * 0.74), color, local_camera_forward, local_camera_up)
 
 	_add_traveling_light_segments(core_vertices, core_colors, core_indices, glow_vertices, glow_colors, glow_indices, local_camera_forward, local_camera_up)
 
