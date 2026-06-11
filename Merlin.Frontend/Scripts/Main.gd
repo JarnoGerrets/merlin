@@ -12,16 +12,16 @@ enum MerlinState {
 	LOADING_MODEL
 }
 
-const TYPEWRITER_CHARS_PER_SECOND := 72.0
-const TYPEWRITER_PUNCTUATION_DELAY := 0.045
-const TYPEWRITER_PARAGRAPH_DELAY := 0.09
+const TYPEWRITER_CHARS_PER_SECOND := 104.0
+const TYPEWRITER_PUNCTUATION_DELAY := 0.030
+const TYPEWRITER_PARAGRAPH_DELAY := 0.060
 const MAX_NOTIFICATIONS := 5
 
-const COLOR_BACKGROUND := Color(0.02, 0.035, 0.055, 1.0)
-const COLOR_PANEL := Color(0.025, 0.07, 0.105, 0.46)
-const COLOR_PANEL_DARK := Color(0.015, 0.035, 0.055, 0.62)
-const COLOR_BLUE := Color(0.20, 0.62, 1.0, 1.0)
-const COLOR_CYAN := Color(0.32, 0.95, 1.0, 1.0)
+const COLOR_BACKGROUND := Color(0.000, 0.006, 0.012, 1.0)
+const COLOR_PANEL := Color(0.004, 0.026, 0.042, 0.40)
+const COLOR_PANEL_DARK := Color(0.002, 0.014, 0.026, 0.64)
+const COLOR_BLUE := Color(0.18, 0.55, 0.86, 1.0)
+const COLOR_CYAN := Color(0.42, 0.88, 1.0, 1.0)
 const COLOR_WHITE := Color(0.88, 0.96, 1.0, 1.0)
 const COLOR_MUTED := Color(0.50, 0.62, 0.70, 1.0)
 const COLOR_AMBER := Color(1.0, 0.68, 0.28, 1.0)
@@ -228,8 +228,8 @@ func _apply_visual_theme() -> void:
 	background.color = COLOR_BACKGROUND
 
 	status_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_PANEL, COLOR_BLUE, 1.0, 8))
-	activity_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.02, 0.10, 0.15, 0.34), COLOR_CYAN, 1.0, 8))
-	notification_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.01, 0.025, 0.04, 0.18), Color(0, 0, 0, 0), 0.0, 8))
+	activity_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.003, 0.030, 0.050, 0.30), COLOR_CYAN, 1.0, 8))
+	notification_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.001, 0.008, 0.016, 0.18), Color(0, 0, 0, 0), 0.0, 8))
 	chat_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_PANEL_DARK, Color(COLOR_BLUE.r, COLOR_BLUE.g, COLOR_BLUE.b, 0.45), 1.0, 8))
 	history_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.01, 0.025, 0.04, 0.36), Color(COLOR_CYAN.r, COLOR_CYAN.g, COLOR_CYAN.b, 0.28), 1.0, 6))
 	command_input_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.02, 0.08, 0.12, 0.64), COLOR_CYAN, 1.0, 10))
@@ -259,9 +259,9 @@ func _panel_style(fill: Color, border: Color, border_width: float, radius: int) 
 
 
 func _style_button(button: Button) -> void:
-	button.add_theme_stylebox_override("normal", _panel_style(Color(0.02, 0.10, 0.15, 0.42), Color(COLOR_BLUE.r, COLOR_BLUE.g, COLOR_BLUE.b, 0.55), 1.0, 6))
-	button.add_theme_stylebox_override("hover", _panel_style(Color(0.03, 0.14, 0.20, 0.64), COLOR_CYAN, 1.0, 6))
-	button.add_theme_stylebox_override("pressed", _panel_style(Color(0.02, 0.18, 0.24, 0.70), COLOR_CYAN, 1.0, 6))
+	button.add_theme_stylebox_override("normal", _panel_style(Color(0.004, 0.045, 0.055, 0.44), Color(COLOR_BLUE.r, COLOR_BLUE.g, COLOR_BLUE.b, 0.50), 1.0, 6))
+	button.add_theme_stylebox_override("hover", _panel_style(Color(0.006, 0.065, 0.080, 0.64), COLOR_CYAN, 1.0, 6))
+	button.add_theme_stylebox_override("pressed", _panel_style(Color(0.006, 0.085, 0.095, 0.72), COLOR_CYAN, 1.0, 6))
 	button.add_theme_color_override("font_color", COLOR_WHITE)
 	button.add_theme_color_override("font_hover_color", COLOR_WHITE)
 	button.add_theme_color_override("font_pressed_color", COLOR_WHITE)
@@ -601,22 +601,39 @@ func _add_typed_chat_line(author: String, message: String, debug_text: String, k
 func _typewriter_reveal(label: RichTextLabel, author: String, message: String) -> void:
 	var visible_text := ""
 	var character_delay := 1.0 / TYPEWRITER_CHARS_PER_SECOND
+	var time_budget := character_delay
+	var last_ticks_usec := Time.get_ticks_usec()
+	var index := 0
+	var frames_since_scroll := 0
 	_set_merlin_state(MerlinState.SPEAKING)
 
-	for index in range(message.length()):
-		var character := message.substr(index, 1)
-		visible_text += character
-		label.text = "%s: %s" % [author, visible_text]
+	while index < message.length():
+		var now_ticks_usec := Time.get_ticks_usec()
+		time_budget += float(now_ticks_usec - last_ticks_usec) / 1000000.0
+		last_ticks_usec = now_ticks_usec
 
-		if index % 3 == 0:
-			core_orb.notify_speech_tick()
-		if index % 8 == 0:
-			_scroll_messages_to_bottom()
+		var revealed_count := 0
+		while index < message.length():
+			var next_character := message.substr(index, 1)
+			var next_delay := _typewriter_delay_for_character(next_character)
+			var reveal_delay := next_delay if next_delay > 0.0 else character_delay
+			if time_budget < reveal_delay:
+				break
+			time_budget -= reveal_delay
 
-		var delay := _typewriter_delay_for_character(character)
-		await get_tree().create_timer(delay if delay > 0.0 else character_delay).timeout
+			visible_text += next_character
+			index += 1
+			revealed_count += 1
 
-	core_orb.notify_speech_tick()
+		if revealed_count > 0:
+			label.text = "%s: %s" % [author, visible_text]
+			frames_since_scroll += 1
+			if frames_since_scroll >= 4 or index >= message.length():
+				_scroll_messages_to_bottom()
+				frames_since_scroll = 0
+
+		await get_tree().process_frame
+
 	_scroll_messages_to_bottom()
 
 
