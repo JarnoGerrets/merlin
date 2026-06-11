@@ -29,7 +29,7 @@ const COLOR_RED := Color(1.0, 0.28, 0.34, 1.0)
 
 @onready var web_socket_client: MerlinWebSocketClient = $MerlinWebSocketClient
 @onready var background: ColorRect = $Background
-@onready var core_orb: CoreOrb = $CoreOrb
+@onready var core_orb = $CoreOrb
 @onready var status_panel: PanelContainer = $StatusPanel
 @onready var connection_state_label: Label = $StatusPanel/Header/ConnectionStateLabel
 @onready var reconnect_button: Button = $StatusPanel/Header/ReconnectButton

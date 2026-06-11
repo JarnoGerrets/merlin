@@ -151,10 +151,22 @@ Use this file to find the right code quickly. Inspect only the sections relevant
   - Main Godot UI behavior, command-center styling, notification rendering, assistant log rendering, typewriter response display, responseType display, tools panel, debug info, and CoreOrb state coordination.
 
 - `Merlin.Frontend/Scripts/CoreOrb.gd`
-  - Layered state-driven animated orb component for idle, thinking, speaking, tool execution, and error states.
+  - Previous 2D orb component. Keep for reference unless intentionally removing the old fallback.
+
+- `Merlin.Frontend/Scripts/CoreOrb3D.gd`
+  - UI wrapper for the SubViewport-rendered 3D orb. Maintains the public API used by `Main.gd`.
+
+- `Merlin.Frontend/Scripts/OrbController.gd`
+  - 3D orb controller that builds meshes, materials, particles, ring motion, and state transitions.
 
 - `Merlin.Frontend/Scenes/CoreOrb.tscn`
-  - Scene for the CoreOrb component and its visual layers.
+  - Previous scene for the 2D CoreOrb component.
+
+- `Merlin.Frontend/Scenes/CoreOrb3D.tscn`
+  - Current scene for the premium 3D CoreOrb component with SubViewport, 3D scene, particles, and controller.
+
+- `Merlin.Frontend/Shaders/*.gdshader`
+  - Core orb shaders for plasma, glass shell, data rings, and ground glow.
 
 - `Merlin.Frontend/Scripts/MerlinWebSocketClient.gd`
   - WebSocket connection, sending, receiving, state handling.
