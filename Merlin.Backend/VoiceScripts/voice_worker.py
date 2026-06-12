@@ -6,18 +6,13 @@ import traceback
 
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
-import numpy as np
-import soundfile as sf
 from faster_whisper import WhisperModel
-from kokoro import KPipeline
 
 
 class VoiceWorker:
     def __init__(self) -> None:
         self.whisper_model = None
         self.whisper_key = None
-        self.kokoro_pipeline = None
-        self.kokoro_lang_code = None
 
     def transcribe(self, request: dict) -> dict:
         model_size = request.get("model_size", "tiny.en")
@@ -46,41 +41,6 @@ class VoiceWorker:
             "duration": float(info.duration or 0.0),
         }
 
-    def synthesize(self, request: dict) -> dict:
-        lang_code = request.get("lang_code", "b")
-        if self.kokoro_pipeline is None or self.kokoro_lang_code != lang_code:
-            self.kokoro_pipeline = KPipeline(lang_code=lang_code)
-            self.kokoro_lang_code = lang_code
-
-        chunks = []
-        for _graphemes, _phonemes, audio in self.kokoro_pipeline(
-            request["text"],
-            voice=request.get("voice", "bm_george"),
-            speed=float(request.get("speed", 1.0)),
-        ):
-            chunks.append(np.asarray(audio, dtype=np.float32))
-
-        waveform = np.concatenate(chunks) if chunks else np.zeros(1, dtype=np.float32)
-        sf.write(request["output"], waveform, 24000, subtype="PCM_16")
-        return {"output": request["output"], "samples": int(waveform.size), "sample_rate": 24000}
-
-    def warmup(self, request: dict) -> dict:
-        model_size = request.get("model_size", "tiny.en")
-        device = request.get("device", "cpu")
-        compute_type = request.get("compute_type", "int8")
-        model_key = (model_size, device, compute_type)
-        if self.whisper_model is None or self.whisper_key != model_key:
-            self.whisper_model = WhisperModel(model_size, device=device, compute_type=compute_type)
-            self.whisper_key = model_key
-
-        lang_code = request.get("lang_code", "b")
-        if self.kokoro_pipeline is None or self.kokoro_lang_code != lang_code:
-            self.kokoro_pipeline = KPipeline(lang_code=lang_code)
-            self.kokoro_lang_code = lang_code
-
-        return {"warmed": True}
-
-
 def write_response(response: dict) -> None:
     print(json.dumps(response, ensure_ascii=False), flush=True)
 
@@ -94,10 +54,6 @@ def main() -> int:
             started = time.perf_counter()
             if command == "transcribe":
                 payload = worker.transcribe(request)
-            elif command == "synthesize":
-                payload = worker.synthesize(request)
-            elif command == "warmup":
-                payload = worker.warmup(request)
             else:
                 raise ValueError(f"Unknown command: {command}")
 

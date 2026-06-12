@@ -67,6 +67,9 @@ const HUB_CONNECTION_DISTANCE := 1.20
 const MAX_PULSES := 36
 const MAX_DESTINATION_FLASHES := 24
 const ORGANISM_DISPLAY_SCALE := 0.76
+const ORB_FRAME_PROFILER_ENABLED := true
+const ORB_FRAME_PROFILER_REPORT_SECONDS := 1.0
+const ORB_FRAME_PROFILER_SPIKE_MS := 20.0
 
 const CYAN := {
 	"hot": Color("#F4FBFF"),
@@ -145,6 +148,16 @@ var _hub_material: StandardMaterial3D
 var _dust_material: StandardMaterial3D
 var _pulse_material: StandardMaterial3D
 var _core_material: StandardMaterial3D
+var _orb_profile_last_report_usec := 0
+var _orb_profile_frames := 0
+var _orb_profile_total_ms := 0.0
+var _orb_profile_max_ms := 0.0
+var _orb_profile_nodes_ms := 0.0
+var _orb_profile_dust_ms := 0.0
+var _orb_profile_connections_ms := 0.0
+var _orb_profile_pulses_ms := 0.0
+var _orb_profile_materials_ms := 0.0
+var _orb_profile_spikes := 0
 
 
 func _ready() -> void:
@@ -216,8 +229,8 @@ func _build_scene() -> void:
 	_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
 	_camera.size = 5.35
 	_camera.position = Vector3(0.0, 0.0, 7.2)
-	_camera.look_at(Vector3.ZERO, Vector3.UP)
 	add_child(_camera)
+	_camera.look_at(Vector3.ZERO, Vector3.UP)
 
 	var environment := WorldEnvironment.new()
 	var env := Environment.new()
@@ -590,6 +603,7 @@ func _new_multimesh(mesh: Mesh, count: int) -> MultiMesh:
 
 
 func _process(delta: float) -> void:
+	var profile_started_usec := Time.get_ticks_usec()
 	_time += delta
 	_activity = lerpf(_activity, _target_activity, minf(delta * 2.6, 1.0))
 	_brightness = lerpf(_brightness, _target_brightness, minf(delta * 2.6, 1.0))
@@ -607,12 +621,92 @@ func _process(delta: float) -> void:
 	_graph_root.rotation.x = sin(_time * 0.21) * 0.055
 	_graph_root.rotation.z = sin(_time * 0.13) * 0.020
 
+	var section_started_usec := Time.get_ticks_usec()
 	_update_pulses(delta)
+	_orb_profile_pulses_ms += _elapsed_ms_since_usec(section_started_usec)
+	section_started_usec = Time.get_ticks_usec()
 	_update_nodes(delta)
+	_orb_profile_nodes_ms += _elapsed_ms_since_usec(section_started_usec)
+	section_started_usec = Time.get_ticks_usec()
 	_update_dust(delta)
+	_orb_profile_dust_ms += _elapsed_ms_since_usec(section_started_usec)
+	section_started_usec = Time.get_ticks_usec()
 	_update_connections()
+	_orb_profile_connections_ms += _elapsed_ms_since_usec(section_started_usec)
+	section_started_usec = Time.get_ticks_usec()
 	_update_core_glow()
 	_update_materials()
+	_orb_profile_materials_ms += _elapsed_ms_since_usec(section_started_usec)
+	_record_orb_frame(profile_started_usec)
+
+
+func _elapsed_ms_since_usec(started_usec: int) -> float:
+	return float(Time.get_ticks_usec() - started_usec) / 1000.0
+
+
+func _record_orb_frame(started_usec: int) -> void:
+	if not ORB_FRAME_PROFILER_ENABLED:
+		return
+
+	var now_usec := Time.get_ticks_usec()
+	if _orb_profile_last_report_usec <= 0:
+		_orb_profile_last_report_usec = now_usec
+
+	var elapsed_ms := _elapsed_ms_since_usec(started_usec)
+	_orb_profile_frames += 1
+	_orb_profile_total_ms += elapsed_ms
+	_orb_profile_max_ms = maxf(_orb_profile_max_ms, elapsed_ms)
+	if elapsed_ms >= ORB_FRAME_PROFILER_SPIKE_MS:
+		_orb_profile_spikes += 1
+
+	var report_due := float(now_usec - _orb_profile_last_report_usec) / 1000000.0 >= ORB_FRAME_PROFILER_REPORT_SECONDS
+	if report_due and (_orb_profile_spikes > 0 or _orb_profile_max_ms >= ORB_FRAME_PROFILER_SPIKE_MS):
+		var average_ms := _orb_profile_total_ms / maxf(float(_orb_profile_frames), 1.0)
+		print("Orb frame profile: state=%s frames=%s avgMs=%.2f maxMs=%.2f spikes=%s nodesMs=%.2f dustMs=%.2f connectionsMs=%.2f pulsesMs=%.2f materialsMs=%.2f nodes=%s dust=%s connections=%s" % [
+			_organism_state_name(current_state),
+			_orb_profile_frames,
+			average_ms,
+			_orb_profile_max_ms,
+			_orb_profile_spikes,
+			_orb_profile_nodes_ms,
+			_orb_profile_dust_ms,
+			_orb_profile_connections_ms,
+			_orb_profile_pulses_ms,
+			_orb_profile_materials_ms,
+			_nodes.size(),
+			_dust.size(),
+			_connections.size()
+		])
+		_orb_profile_last_report_usec = now_usec
+		_orb_profile_frames = 0
+		_orb_profile_total_ms = 0.0
+		_orb_profile_max_ms = 0.0
+		_orb_profile_nodes_ms = 0.0
+		_orb_profile_dust_ms = 0.0
+		_orb_profile_connections_ms = 0.0
+		_orb_profile_pulses_ms = 0.0
+		_orb_profile_materials_ms = 0.0
+		_orb_profile_spikes = 0
+
+
+func _organism_state_name(state: int) -> String:
+	match state:
+		OrganismState.IDLE:
+			return "IDLE"
+		OrganismState.LISTENING:
+			return "LISTENING"
+		OrganismState.THINKING:
+			return "THINKING"
+		OrganismState.SPEAKING:
+			return "SPEAKING"
+		OrganismState.EXECUTING:
+			return "EXECUTING"
+		OrganismState.ERROR:
+			return "ERROR"
+		OrganismState.CONFIRMATION:
+			return "CONFIRMATION"
+		_:
+			return "UNKNOWN"
 
 
 func _state_activity_floor() -> float:

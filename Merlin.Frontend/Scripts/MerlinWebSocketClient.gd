@@ -5,6 +5,7 @@ signal connection_state_changed(state: String, detail: String)
 signal response_received(response: Dictionary)
 signal malformed_response(raw_message: String, detail: String)
 signal socket_closed(code: int, reason: String)
+signal frontend_work_observed(metrics: Dictionary)
 
 const DEFAULT_URL := "ws://localhost:5000/ws"
 
@@ -69,6 +70,11 @@ func get_connection_state() -> String:
 
 
 func _process(_delta: float) -> void:
+	var frame_started_usec := Time.get_ticks_usec()
+	var packets_processed := 0
+	var bytes_processed := 0
+	var json_parse_count := 0
+	var json_parse_usec := 0
 	_socket.poll()
 
 	var peer_state := _socket.get_ready_state()
@@ -78,11 +84,28 @@ func _process(_delta: float) -> void:
 
 	while _socket.get_available_packet_count() > 0:
 		var packet := _socket.get_packet()
+		packets_processed += 1
+		bytes_processed += packet.size()
 		var raw_message := packet.get_string_from_utf8()
+		var parse_started_usec := Time.get_ticks_usec()
 		_handle_raw_message(raw_message)
+		json_parse_count += 1
+		json_parse_usec += Time.get_ticks_usec() - parse_started_usec
 
 	if peer_state == WebSocketPeer.STATE_CLOSED:
 		set_process(false)
+
+	var elapsed_usec := Time.get_ticks_usec() - frame_started_usec
+	if packets_processed > 0 or elapsed_usec >= 1000:
+		frontend_work_observed.emit({
+			"source": "websocket",
+			"http_polled": false,
+			"bytes": bytes_processed,
+			"json_parse_count": json_parse_count,
+			"json_parse_ms": float(json_parse_usec) / 1000.0,
+			"packets": packets_processed,
+			"work_ms": float(elapsed_usec) / 1000.0
+		})
 
 
 func _handle_peer_state_changed(peer_state: int) -> void:

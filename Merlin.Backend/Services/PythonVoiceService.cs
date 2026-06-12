@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 
 namespace Merlin.Backend.Services;
 
-public sealed class PythonVoiceService : IVoiceService, IVoiceWarmupService, IDisposable
+public sealed class PythonVoiceService : IVoiceTranscriptionService, IDisposable
 {
     private static readonly JsonSerializerOptions JsonSerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly IWebHostEnvironment _environment;
@@ -36,6 +36,7 @@ public sealed class PythonVoiceService : IVoiceService, IVoiceWarmupService, IDi
     {
         var extension = NormalizeAudioExtension(fileExtension);
         var inputPath = Path.Combine(Path.GetTempPath(), $"merlin-stt-{Guid.NewGuid():N}{extension}");
+        var stopwatch = Stopwatch.StartNew();
 
         try
         {
@@ -46,9 +47,18 @@ public sealed class PythonVoiceService : IVoiceService, IVoiceWarmupService, IDi
 
             var audioLength = new FileInfo(inputPath).Length;
             _logger.LogInformation(
-                "Received audio for transcription. Path: {InputPath}. Bytes: {AudioBytes}",
+                "Voice timing: STT upload saved. Path: {InputPath}. Bytes: {AudioBytes}. ElapsedMs: {ElapsedMs}.",
                 inputPath,
-                audioLength);
+                audioLength,
+                stopwatch.Elapsed.TotalMilliseconds);
+
+            _logger.LogInformation(
+                "Voice timing: STT start. Model: {Model}. Device: {Device}. ComputeType: {ComputeType}. BeamSize: {BeamSize}. VadSilenceMs: {VadSilenceMs}.",
+                _options.WhisperModelSize,
+                _options.WhisperDevice,
+                _options.WhisperComputeType,
+                _options.WhisperBeamSize,
+                _options.WhisperVadMinSilenceDurationMs);
 
             var result = await SendWorkerCommandAsync(
                 new Dictionary<string, object?>
@@ -65,6 +75,10 @@ public sealed class PythonVoiceService : IVoiceService, IVoiceWarmupService, IDi
                 cancellationToken);
 
             var transcription = result.Deserialize<VoiceTranscriptionResponse>(JsonSerializerOptions);
+            _logger.LogInformation(
+                "Voice timing: STT complete. ElapsedMs: {ElapsedMs}. TranscriptChars: {TranscriptChars}.",
+                stopwatch.Elapsed.TotalMilliseconds,
+                transcription?.Text?.Length ?? 0);
 
             return transcription ?? new VoiceTranscriptionResponse();
         }
@@ -72,56 +86,6 @@ public sealed class PythonVoiceService : IVoiceService, IVoiceWarmupService, IDi
         {
             TryDelete(inputPath);
         }
-    }
-
-    public async Task<byte[]> SynthesizeAsync(string text, CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return [];
-        }
-
-        var outputPath = Path.Combine(Path.GetTempPath(), $"merlin-tts-{Guid.NewGuid():N}.wav");
-
-        try
-        {
-            await SendWorkerCommandAsync(
-                new Dictionary<string, object?>
-                {
-                    ["command"] = "synthesize",
-                    ["text"] = text,
-                    ["output"] = outputPath,
-                    ["voice"] = _options.KokoroVoice,
-                    ["lang_code"] = _options.KokoroLanguageCode,
-                    ["speed"] = _options.KokoroSpeed
-                },
-                cancellationToken);
-
-            return await File.ReadAllBytesAsync(outputPath, cancellationToken);
-        }
-        finally
-        {
-            TryDelete(outputPath);
-        }
-    }
-
-    public async Task WarmupAsync(CancellationToken cancellationToken, bool force = false)
-    {
-        if (!_options.WarmupOnStartup && !force)
-        {
-            return;
-        }
-
-        await SendWorkerCommandAsync(
-            new Dictionary<string, object?>
-            {
-                ["command"] = "warmup",
-                ["model_size"] = _options.WhisperModelSize,
-                ["device"] = _options.WhisperDevice,
-                ["compute_type"] = _options.WhisperComputeType,
-                ["lang_code"] = _options.KokoroLanguageCode
-            },
-            cancellationToken);
     }
 
     private string GetScriptPath(string scriptName)
@@ -148,8 +112,8 @@ public sealed class PythonVoiceService : IVoiceService, IVoiceWarmupService, IDi
         {
             StartWorkerIfNeeded();
 
-            var input = _workerInput ?? throw new InvalidOperationException("Python voice worker input is unavailable.");
-            var output = _workerOutput ?? throw new InvalidOperationException("Python voice worker output is unavailable.");
+            var input = _workerInput ?? throw new InvalidOperationException("Python STT worker input is unavailable.");
+            var output = _workerOutput ?? throw new InvalidOperationException("Python STT worker output is unavailable.");
             var line = JsonSerializer.Serialize(command, JsonSerializerOptions);
             var commandName = command.TryGetValue("command", out var configuredCommand)
                 ? Convert.ToString(configuredCommand, System.Globalization.CultureInfo.InvariantCulture)
@@ -162,7 +126,7 @@ public sealed class PythonVoiceService : IVoiceService, IVoiceWarmupService, IDi
             var response = await ReadWorkerResponseAsync(output, timeoutCts.Token);
             if (response.Ok != true)
             {
-                throw new InvalidOperationException($"Python voice worker failed: {response.Error}");
+                throw new InvalidOperationException($"Python STT worker failed: {response.Error}");
             }
 
             stopwatch.Stop();
@@ -171,7 +135,7 @@ public sealed class PythonVoiceService : IVoiceService, IVoiceWarmupService, IDi
                 && workerElapsed.TryGetDouble(out var workerElapsedMs))
             {
                 _logger.LogInformation(
-                    "Voice worker command completed. Command: {Command}. WorkerElapsedMs: {WorkerElapsedMs}. TotalElapsedMs: {TotalElapsedMs}.",
+                    "Python STT worker command completed. Command: {Command}. WorkerElapsedMs: {WorkerElapsedMs}. TotalElapsedMs: {TotalElapsedMs}.",
                     commandName,
                     workerElapsedMs,
                     stopwatch.Elapsed.TotalMilliseconds);
@@ -182,7 +146,7 @@ public sealed class PythonVoiceService : IVoiceService, IVoiceWarmupService, IDi
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             StopWorker();
-            throw new TimeoutException($"Python voice worker timed out after {timeout.TotalSeconds:N0} seconds.");
+            throw new TimeoutException($"Python STT worker timed out after {timeout.TotalSeconds:N0} seconds.");
         }
         catch
         {
@@ -228,7 +192,7 @@ public sealed class PythonVoiceService : IVoiceService, IVoiceWarmupService, IDi
         startInfo.ArgumentList.Add(scriptPath);
 
         _workerProcess = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Could not start Python voice process.");
+            ?? throw new InvalidOperationException("Could not start Python STT process.");
         _workerInput = _workerProcess.StandardInput;
         _workerOutput = _workerProcess.StandardOutput;
         _ = Task.Run(() => LogWorkerErrorsAsync(_workerProcess.StandardError));
@@ -241,7 +205,7 @@ public sealed class PythonVoiceService : IVoiceService, IVoiceWarmupService, IDi
             var line = await output.ReadLineAsync(cancellationToken);
             if (line is null)
             {
-                throw new InvalidOperationException("Python voice worker exited unexpectedly.");
+                throw new InvalidOperationException("Python STT worker exited unexpectedly.");
             }
 
             try
@@ -254,7 +218,7 @@ public sealed class PythonVoiceService : IVoiceService, IVoiceWarmupService, IDi
             }
             catch (JsonException)
             {
-                _logger.LogDebug("Ignoring non-protocol output from Python voice worker: {Line}", line);
+                _logger.LogDebug("Ignoring non-protocol output from Python STT worker: {Line}", line);
             }
         }
     }
@@ -263,7 +227,7 @@ public sealed class PythonVoiceService : IVoiceService, IVoiceWarmupService, IDi
     {
         while (await error.ReadLineAsync() is { } line)
         {
-            _logger.LogWarning("Python voice worker: {Line}", line);
+            _logger.LogWarning("Python STT worker: {Line}", line);
         }
     }
 

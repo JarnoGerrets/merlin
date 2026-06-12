@@ -17,11 +17,18 @@ const TYPEWRITER_PUNCTUATION_DELAY := 0.030
 const TYPEWRITER_PARAGRAPH_DELAY := 0.060
 const MAX_NOTIFICATIONS := 5
 const VOICE_TRANSCRIBE_URL := "http://localhost:5000/api/voice/transcribe?extension=.wav"
-const VOICE_WARMUP_URL := "http://localhost:5000/api/voice/warmup"
-const VOICE_SYNTHESIS_URL := "http://localhost:5000/api/voice/synthesize"
+const VOICE_SYNTHESIS_STREAM_HOST := "localhost"
+const VOICE_SYNTHESIS_STREAM_PORT := 5000
+const VOICE_SYNTHESIS_STREAM_PATH := "/api/voice/synthesize-stream"
+const VOICE_STREAM_POC_HOST := "localhost"
+const VOICE_STREAM_POC_PORT := 5000
+const VOICE_STREAM_POC_PATH := "/api/voice/stream-pcm-test"
+const VOICE_GENERATOR_BUFFER_SECONDS := 0.50
+const VOICE_OUTPUT_DRAIN_SECONDS := 0.12
 const RECORD_BUS_NAME := "MerlinRecord"
-const VOICE_RESPONSE_PATH := "user://merlin-response.wav"
-const SPEECH_CHUNK_TARGET_CHARS := 260
+const FRAME_PROFILER_ENABLED := true
+const FRAME_PROFILER_REPORT_SECONDS := 1.0
+const FRAME_PROFILER_SPIKE_MS := 33.0
 
 const COLOR_BACKGROUND := Color(0.000, 0.008, 0.026, 1.0)
 const COLOR_PANEL := Color(0.002, 0.024, 0.070, 0.40)
@@ -66,9 +73,45 @@ var _focus_request_id := 0
 var _record_effect: AudioEffectRecord
 var _is_recording := false
 var _record_bus_index := -1
-var _voice_warmup_complete := false
-var _voice_warmup_in_progress := false
 var _speech_turn_active := false
+var _voice_turn_started_usec := 0
+var _llm_response_received_usec := 0
+var _stream_poc_client: HTTPClient
+var _stream_poc_active := false
+var _stream_poc_header_complete := false
+var _stream_poc_header_bytes := PackedByteArray()
+var _stream_poc_pcm_bytes := PackedByteArray()
+var _stream_poc_playback: AudioStreamGeneratorPlayback
+var _stream_poc_channels := 1
+var _stream_poc_sample_rate := 24000
+var _stream_poc_started_usec := 0
+var _stream_poc_first_byte_logged := false
+var _stream_poc_first_audio_logged := false
+var _stream_poc_request_sent := false
+var _stream_poc_stream_complete := false
+var _stream_poc_body_started := false
+var _voice_phase := "idle"
+var _frame_profile_window_started_usec := 0
+var _frame_profile_last_report_usec := 0
+var _frame_profile_frame_count := 0
+var _frame_profile_total_ms := 0.0
+var _frame_profile_max_ms := 0.0
+var _frame_profile_over_16 := 0
+var _frame_profile_over_33 := 0
+var _frame_profile_over_50 := 0
+var _frame_profile_over_100 := 0
+var _frame_profile_http_polled := false
+var _frame_profile_bytes := 0
+var _frame_profile_pcm_frames := 0
+var _frame_profile_json_parse_count := 0
+var _frame_profile_json_parse_ms := 0.0
+var _frame_profile_large_copy_count := 0
+var _frame_profile_large_copy_bytes := 0
+var _frame_profile_sync_work_ms := 0.0
+var _frame_profile_sync_work_label := ""
+var _frame_profile_audio_push_ms := 0.0
+var _frame_profile_websocket_packets := 0
+var _frame_profile_websocket_work_ms := 0.0
 
 
 func _ready() -> void:
@@ -91,13 +134,25 @@ func _ready() -> void:
 	web_socket_client.response_received.connect(_on_response_received)
 	web_socket_client.malformed_response.connect(_on_malformed_response)
 	web_socket_client.socket_closed.connect(_on_socket_closed)
+	web_socket_client.frontend_work_observed.connect(_on_frontend_work_observed)
 
 	_add_system_message("Connecting to Merlin.Backend...")
 	_add_notification("Connecting to Merlin.Backend", "system")
 	_update_pending_state()
 	web_socket_client.connect_to_backend()
-	_warmup_voice_worker()
 	_focus_message_input()
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F9:
+		_start_streaming_pcm_poc()
+
+
+func _process(delta: float) -> void:
+	_frame_profile_begin_frame()
+	if _stream_poc_active:
+		_poll_streaming_pcm_poc()
+	_frame_profile_end_frame(delta)
 
 
 func _on_reconnect_pressed() -> void:
@@ -200,6 +255,7 @@ func _on_voice_button_down() -> void:
 
 	_is_recording = true
 	voice_button.text = "Listening..."
+	_set_voice_phase("recording")
 	_set_merlin_state(MerlinState.LISTENING)
 	_record_effect.set_recording_active(true)
 
@@ -212,7 +268,12 @@ func _on_voice_button_up() -> void:
 	voice_button.disabled = true
 	voice_button.text = "Transcribing..."
 	_record_effect.set_recording_active(false)
+	_voice_turn_started_usec = Time.get_ticks_usec()
+	print("Voice timing: recording finished.")
+	_set_voice_phase("recording_finished")
+	var recording_started_usec := Time.get_ticks_usec()
 	var recording := _record_effect.get_recording()
+	_record_sync_work("get_recording", recording_started_usec)
 	await _send_recording_for_transcription(recording)
 
 
@@ -223,8 +284,11 @@ func _send_recording_for_transcription(recording: AudioStreamWAV) -> void:
 		_set_merlin_state(MerlinState.IDLE)
 		return
 
+	_set_voice_phase("upload_prepare")
 	var path := "user://merlin-recording.wav"
+	var save_started_usec := Time.get_ticks_usec()
 	var save_error := recording.save_to_wav(path)
+	_record_sync_work("save_recording_wav", save_started_usec)
 	if save_error != OK:
 		_show_error("Could not save microphone recording. Error code: %s" % save_error)
 		_add_notification("Recording failed", "error")
@@ -232,7 +296,9 @@ func _send_recording_for_transcription(recording: AudioStreamWAV) -> void:
 		_set_merlin_state(MerlinState.ERROR)
 		return
 
+	var open_started_usec := Time.get_ticks_usec()
 	var file := FileAccess.open(path, FileAccess.READ)
+	_record_sync_work("open_recording_wav", open_started_usec)
 	if file == null:
 		_show_error("Could not read microphone recording.")
 		_add_notification("Recording failed", "error")
@@ -240,7 +306,10 @@ func _send_recording_for_transcription(recording: AudioStreamWAV) -> void:
 		_set_merlin_state(MerlinState.ERROR)
 		return
 
+	var read_started_usec := Time.get_ticks_usec()
 	var audio_bytes := file.get_buffer(file.get_length())
+	_record_sync_work("read_recording_wav", read_started_usec)
+	_record_large_copy(audio_bytes.size())
 	file.close()
 	if audio_bytes.size() < 2048:
 		_show_error("Microphone recording was empty or too small. Check Godot microphone permission and input device.")
@@ -250,12 +319,16 @@ func _send_recording_for_transcription(recording: AudioStreamWAV) -> void:
 		return
 
 	_add_notification("Captured %.1f KB of microphone audio" % (float(audio_bytes.size()) / 1024.0), "system")
+	print("Voice timing: upload/send start. Bytes: %s. ElapsedMs: %.1f" % [audio_bytes.size(), _voice_elapsed_ms()])
+	_set_voice_phase("upload_send_start")
+	var request_started_usec := Time.get_ticks_usec()
 	var request_error := voice_transcribe_request.request_raw(
 		VOICE_TRANSCRIBE_URL,
 		PackedStringArray(["Content-Type: audio/wav"]),
 		HTTPClient.METHOD_POST,
 		audio_bytes
 	)
+	_record_sync_work("stt_request_raw", request_started_usec)
 	if request_error != OK:
 		_show_error("Could not send audio to Merlin.Backend. Error code: %s" % request_error)
 		_add_notification("Transcription failed", "error")
@@ -263,11 +336,14 @@ func _send_recording_for_transcription(recording: AudioStreamWAV) -> void:
 		_set_merlin_state(MerlinState.ERROR)
 		return
 
+	_set_voice_phase("waiting_stt")
 	var result = await voice_transcribe_request.request_completed
+	_set_voice_phase("stt_response")
 	var request_result: int = int(result[0])
 	var response_code: int = int(result[1])
 	var body: PackedByteArray = result[3]
 	var response_text := body.get_string_from_utf8()
+	print("Voice timing: STT response received. HTTP: %s. ElapsedMs: %.1f" % [response_code, _voice_elapsed_ms()])
 	if request_result != HTTPRequest.RESULT_SUCCESS:
 		_show_error("Transcription request failed. Result: %s" % request_result)
 		_add_notification("Transcription failed", "error")
@@ -281,7 +357,9 @@ func _send_recording_for_transcription(recording: AudioStreamWAV) -> void:
 		_set_merlin_state(MerlinState.ERROR)
 		return
 
+	var stt_parse_started_usec := Time.get_ticks_usec()
 	var parsed = JSON.parse_string(response_text)
+	_record_json_parse(stt_parse_started_usec)
 	if typeof(parsed) != TYPE_DICTIONARY:
 		_show_error("Transcription response was not valid JSON.")
 		_add_notification("Transcription failed", "error")
@@ -298,6 +376,7 @@ func _send_recording_for_transcription(recording: AudioStreamWAV) -> void:
 
 	_add_notification("Heard: %s" % transcript, "system")
 	_send_backend_message(transcript, false)
+	_set_voice_phase("waiting_llm")
 	_show_question_acknowledgement(transcript)
 	_reset_voice_button()
 
@@ -307,34 +386,195 @@ func _reset_voice_button() -> void:
 	voice_button.text = "Hold to talk"
 
 
-func _warmup_voice_worker() -> void:
-	if _voice_warmup_complete or _voice_warmup_in_progress:
+func _start_streaming_pcm_poc() -> void:
+	if _stream_poc_active:
+		print("Voice stream POC: already active.")
 		return
 
-	_voice_warmup_in_progress = true
-	var request := HTTPRequest.new()
-	add_child(request)
-	var request_error := request.request(
-		VOICE_WARMUP_URL,
-		PackedStringArray(["Content-Type: application/json"]),
-		HTTPClient.METHOD_POST,
-		"{}"
-	)
-	if request_error != OK:
-		_voice_warmup_in_progress = false
-		request.queue_free()
-		_add_notification("Voice warmup request failed", "error")
+	_stream_poc_client = HTTPClient.new()
+	_stream_poc_active = true
+	_stream_poc_header_complete = false
+	_stream_poc_header_bytes.clear()
+	_stream_poc_pcm_bytes.clear()
+	_stream_poc_playback = null
+	_stream_poc_channels = 1
+	_stream_poc_sample_rate = 24000
+	_stream_poc_started_usec = Time.get_ticks_usec()
+	_stream_poc_first_byte_logged = false
+	_stream_poc_first_audio_logged = false
+	_stream_poc_request_sent = false
+	_stream_poc_stream_complete = false
+	_stream_poc_body_started = false
+
+	print("Voice stream POC: request start.")
+	var error := _stream_poc_client.connect_to_host(VOICE_STREAM_POC_HOST, VOICE_STREAM_POC_PORT)
+	if error != OK:
+		_stop_streaming_pcm_poc("connect failed: %s" % error)
+
+
+func _poll_streaming_pcm_poc() -> void:
+	if _stream_poc_client == null:
+		_stop_streaming_pcm_poc("client missing")
 		return
 
-	var result = await request.request_completed
-	_voice_warmup_in_progress = false
-	request.queue_free()
-	var response_code: int = int(result[1])
-	if response_code >= 200 and response_code < 300:
-		_voice_warmup_complete = true
-		_add_notification("Voice warmed", "system")
-	else:
-		_add_notification("Voice warmup failed", "error")
+	var poll_error := _stream_poc_client.poll()
+	if poll_error != OK:
+		if _stream_poc_body_started:
+			_mark_streaming_pcm_poc_complete()
+			_stream_poc_client.close()
+			_stream_poc_active = false
+			return
+		_stop_streaming_pcm_poc("poll failed: %s" % poll_error)
+		return
+
+	var status := _stream_poc_client.get_status()
+	match status:
+		HTTPClient.STATUS_CONNECTED:
+			if not _stream_poc_request_sent:
+				var request_error := _stream_poc_client.request(
+					HTTPClient.METHOD_GET,
+					VOICE_STREAM_POC_PATH,
+					PackedStringArray([
+						"Accept: application/octet-stream",
+						"Connection: close"
+					])
+				)
+				if request_error != OK:
+					_stop_streaming_pcm_poc("request failed: %s" % request_error)
+					return
+				_stream_poc_request_sent = true
+			elif _stream_poc_body_started:
+				_mark_streaming_pcm_poc_complete()
+		HTTPClient.STATUS_BODY:
+			_stream_poc_body_started = true
+			_read_streaming_pcm_poc_body()
+		HTTPClient.STATUS_DISCONNECTED:
+			if _stream_poc_request_sent:
+				_mark_streaming_pcm_poc_complete()
+			if _stream_poc_pcm_bytes.is_empty():
+				_stream_poc_active = false
+		HTTPClient.STATUS_CANT_CONNECT, HTTPClient.STATUS_CANT_RESOLVE, HTTPClient.STATUS_CONNECTION_ERROR, HTTPClient.STATUS_TLS_HANDSHAKE_ERROR:
+			_stop_streaming_pcm_poc("connection status failed: %s" % status)
+
+	if _stream_poc_playback != null and not _stream_poc_pcm_bytes.is_empty():
+		_push_streaming_pcm_poc_frames()
+
+
+func _read_streaming_pcm_poc_body() -> void:
+	while _stream_poc_client.get_status() == HTTPClient.STATUS_BODY:
+		var chunk := _stream_poc_client.read_response_body_chunk()
+		if chunk.is_empty():
+			break
+
+		if not _stream_poc_first_byte_logged:
+			_stream_poc_first_byte_logged = true
+			print("Voice stream POC: first byte received. ElapsedMs: %.1f" % _elapsed_ms_since(_stream_poc_started_usec))
+
+		_consume_streaming_pcm_poc_bytes(chunk)
+
+
+func _mark_streaming_pcm_poc_complete() -> void:
+	if _stream_poc_stream_complete:
+		return
+	_stream_poc_stream_complete = true
+	print("Voice stream POC: stream complete. ElapsedMs: %.1f" % _elapsed_ms_since(_stream_poc_started_usec))
+
+
+func _consume_streaming_pcm_poc_bytes(chunk: PackedByteArray) -> void:
+	if _stream_poc_header_complete:
+		_stream_poc_pcm_bytes.append_array(chunk)
+		return
+
+	var pcm_start := -1
+	for index in range(chunk.size()):
+		var value := int(chunk[index])
+		if value == 10:
+			_stream_poc_header_complete = true
+			pcm_start = index + 1
+			break
+		_stream_poc_header_bytes.append(value)
+
+	if not _stream_poc_header_complete:
+		return
+
+	var metadata_text := _stream_poc_header_bytes.get_string_from_utf8().strip_edges()
+	var metadata = JSON.parse_string(metadata_text)
+	if typeof(metadata) != TYPE_DICTIONARY:
+		_stop_streaming_pcm_poc("invalid metadata: %s" % metadata_text)
+		return
+
+	_stream_poc_sample_rate = int(metadata.get("sampleRate", 24000))
+	_stream_poc_channels = int(metadata.get("channels", 1))
+	var format := str(metadata.get("format", ""))
+	if format != "s16le" or _stream_poc_sample_rate <= 0 or _stream_poc_channels < 1 or _stream_poc_channels > 2:
+		_stop_streaming_pcm_poc("unsupported metadata: %s" % metadata_text)
+		return
+
+	print("Voice stream POC: metadata received. SampleRate: %s. Channels: %s. Format: %s" % [_stream_poc_sample_rate, _stream_poc_channels, format])
+	_start_streaming_pcm_poc_playback()
+
+	if pcm_start >= 0 and pcm_start < chunk.size():
+		_stream_poc_pcm_bytes.append_array(chunk.slice(pcm_start))
+		_push_streaming_pcm_poc_frames()
+
+
+func _start_streaming_pcm_poc_playback() -> void:
+	var stream := AudioStreamGenerator.new()
+	stream.mix_rate = float(_stream_poc_sample_rate)
+	stream.buffer_length = 0.50
+	voice_playback.stream = stream
+	voice_playback.bus = "Master"
+	voice_playback.volume_db = 0.0
+	voice_playback.play()
+	_stream_poc_playback = voice_playback.get_stream_playback() as AudioStreamGeneratorPlayback
+
+
+func _push_streaming_pcm_poc_frames() -> void:
+	if _stream_poc_playback == null:
+		return
+
+	var frame_size := _stream_poc_channels * 2
+	var available_frames := _stream_poc_playback.get_frames_available()
+	if available_frames <= 0 or _stream_poc_pcm_bytes.size() < frame_size:
+		return
+
+	var frames := PackedVector2Array()
+	var offset := 0
+	while available_frames > 0 and offset + frame_size <= _stream_poc_pcm_bytes.size():
+		if _stream_poc_channels == 1:
+			var mono := _decode_streaming_pcm_poc_sample(_stream_poc_pcm_bytes, offset)
+			frames.append(Vector2(mono, mono))
+		else:
+			var left := _decode_streaming_pcm_poc_sample(_stream_poc_pcm_bytes, offset)
+			var right := _decode_streaming_pcm_poc_sample(_stream_poc_pcm_bytes, offset + 2)
+			frames.append(Vector2(left, right))
+		offset += frame_size
+		available_frames -= 1
+
+	if frames.is_empty():
+		return
+
+	_stream_poc_playback.push_buffer(frames)
+	if not _stream_poc_first_audio_logged:
+		_stream_poc_first_audio_logged = true
+		print("Voice stream POC: first audio playback. ElapsedMs: %.1f. Frames: %s" % [_elapsed_ms_since(_stream_poc_started_usec), frames.size()])
+
+	_stream_poc_pcm_bytes = _stream_poc_pcm_bytes.slice(offset)
+
+
+func _decode_streaming_pcm_poc_sample(bytes: PackedByteArray, offset: int) -> float:
+	var unsigned := int(bytes[offset]) | (int(bytes[offset + 1]) << 8)
+	if unsigned >= 32768:
+		unsigned -= 65536
+	return clampf(float(unsigned) / 32768.0, -1.0, 1.0)
+
+
+func _stop_streaming_pcm_poc(reason: String) -> void:
+	print("Voice stream POC: stopped. Reason: %s" % reason)
+	if _stream_poc_client != null:
+		_stream_poc_client.close()
+	_stream_poc_client = null
+	_stream_poc_active = false
 
 
 func _show_question_acknowledgement(transcript: String) -> void:
@@ -388,8 +628,6 @@ func _on_connection_state_changed(state: String, detail: String) -> void:
 			_clear_error()
 			_add_system_message("Connected to Merlin.Backend.")
 			_add_notification("Connected", "system")
-			if not _voice_warmup_complete:
-				_warmup_voice_worker()
 			if _pending_requests.is_empty():
 				_set_merlin_state(MerlinState.IDLE)
 			_focus_message_input()
@@ -414,6 +652,9 @@ func _on_connection_state_changed(state: String, detail: String) -> void:
 
 
 func _on_response_received(response: Dictionary) -> void:
+	_llm_response_received_usec = Time.get_ticks_usec()
+	print("Voice timing: LLM response received. ElapsedMs: %.1f" % _voice_elapsed_ms())
+	_set_voice_phase("llm_response")
 	var correlation_id := str(response.get("correlationId", ""))
 	if not correlation_id.is_empty():
 		_pending_requests.erase(correlation_id)
@@ -430,6 +671,7 @@ func _on_response_received(response: Dictionary) -> void:
 
 	_update_pending_state()
 	_update_send_button()
+	_set_voice_phase("display_response")
 	await _display_backend_response(
 		response,
 		success,
@@ -442,6 +684,8 @@ func _on_response_received(response: Dictionary) -> void:
 		application_candidates,
 		debug_text
 	)
+	if _speech_turn_active:
+		_set_voice_phase("playback_completion")
 	_focus_message_input()
 
 
@@ -701,8 +945,10 @@ func _speak_text(text: String) -> void:
 		await get_tree().create_timer(0.05).timeout
 
 	_speech_turn_active = true
+	_set_voice_phase("tts_streaming")
 	await _speak_text_unlocked(spoken_text)
 	_speech_turn_active = false
+	_set_voice_phase("playback_completion")
 	_settle_orb_after_response()
 
 
@@ -710,192 +956,451 @@ func _speak_text_unlocked(spoken_text: String) -> void:
 	if spoken_text.is_empty():
 		return
 
-	_set_merlin_state(MerlinState.SPEAKING)
-	var chunks := _split_spoken_text(spoken_text)
-	var current_request := _begin_speech_synthesis(chunks[0])
-	if current_request == null:
+	var streamed := await _stream_speech_text(spoken_text)
+	if streamed:
 		return
 
-	for index in range(chunks.size()):
-		var audio := await _finish_speech_synthesis(current_request)
-		if audio.is_empty():
-			return
-
-		var next_request: HTTPRequest = null
-		if index + 1 < chunks.size():
-			next_request = _begin_speech_synthesis(chunks[index + 1])
-
-		var played := await _play_speech_audio(audio)
-		if not played:
-			if next_request != null:
-				next_request.queue_free()
-			return
-
-		current_request = next_request
+	_show_error("Speech streaming failed.")
+	_add_notification("Speech playback failed", "error")
 
 
-func _begin_speech_synthesis(text: String) -> HTTPRequest:
-	var request := HTTPRequest.new()
-	add_child(request)
-	var payload := JSON.stringify({ "text": text })
-	var request_error := request.request(
-		VOICE_SYNTHESIS_URL,
-		PackedStringArray(["Content-Type: application/json"]),
-		HTTPClient.METHOD_POST,
-		payload
-	)
-	if request_error != OK:
-		request.queue_free()
-		_show_error("Could not request speech synthesis. Error code: %s" % request_error)
-		_add_notification("Speech synthesis failed", "error")
-		return null
-
-	return request
-
-
-func _finish_speech_synthesis(request: HTTPRequest) -> PackedByteArray:
-	if request == null:
-		return PackedByteArray()
-
-	var result = await request.request_completed
-	request.queue_free()
-	var response_code: int = int(result[1])
-	var body: PackedByteArray = result[3]
-	if response_code < 200 or response_code >= 300:
-		_show_error("Speech synthesis failed. HTTP %s" % response_code)
-		_add_notification("Speech synthesis failed", "error")
-		return PackedByteArray()
-	if body.size() < 44:
-		_show_error("Speech synthesis returned an empty audio response.")
-		_add_notification("Speech playback failed", "error")
-		return PackedByteArray()
-
-	return body
-
-
-func _play_speech_audio(body: PackedByteArray) -> bool:
-	var stream := _load_synthesized_wav(body)
-	if stream == null:
-		_show_error("Could not load synthesized speech.")
-		_add_notification("Speech playback failed", "error")
+func _stream_speech_text(spoken_text: String, stream_path: String = VOICE_SYNTHESIS_STREAM_PATH, timing_label: String = "streaming TTS") -> bool:
+	var client := HTTPClient.new()
+	var connect_started_usec := Time.get_ticks_usec()
+	var connect_error := client.connect_to_host(VOICE_SYNTHESIS_STREAM_HOST, VOICE_SYNTHESIS_STREAM_PORT)
+	_record_sync_work("tts_connect_to_host", connect_started_usec)
+	if connect_error != OK:
+		print("Voice timing: %s connect failed. Error: %s" % [timing_label, connect_error])
 		return false
 
-	voice_playback.stream = stream
-	voice_playback.bus = "Master"
-	voice_playback.volume_db = 0.0
-	voice_playback.play()
-	await voice_playback.finished
+	var started_usec := Time.get_ticks_usec()
+	var request_sent := false
+	var body_started := false
+	var header_complete := false
+	var header_bytes := PackedByteArray()
+	var pcm_bytes := PackedByteArray()
+	var playback: AudioStreamGeneratorPlayback = null
+	var channels := 1
+	var stream_sample_rate := 24000
+	var frames_pushed := 0
+	var first_byte_logged := false
+	var first_pcm_byte_logged := false
+	var first_pcm_buffered_logged := false
+	var first_audio_submitted_logged := false
+	var first_audible_logged := false
+	var completed := false
+	var payload := JSON.stringify({ "text": spoken_text })
+
+	_set_voice_phase("tts_streaming")
+	print("Voice timing: %s request start. Chars: %s. SinceLlmMs: %.1f" % [timing_label, spoken_text.length(), _elapsed_ms_since(_llm_response_received_usec)])
+
+	while true:
+		var poll_started_usec := Time.get_ticks_usec()
+		var poll_error := client.poll()
+		_record_http_poll(poll_started_usec)
+		if poll_error != OK:
+			if body_started:
+				completed = true
+				break
+			print("Voice timing: %s poll failed. Error: %s" % [timing_label, poll_error])
+			client.close()
+			return false
+
+		var status := client.get_status()
+		match status:
+			HTTPClient.STATUS_CONNECTED:
+				if not request_sent:
+					var tts_request_started_usec := Time.get_ticks_usec()
+					var request_error := client.request(
+						HTTPClient.METHOD_POST,
+						stream_path,
+						PackedStringArray([
+							"Accept: application/octet-stream",
+							"Content-Type: application/json",
+							"Connection: close"
+						]),
+						payload
+					)
+					_record_sync_work("tts_request", tts_request_started_usec)
+					if request_error != OK:
+						print("Voice timing: %s request failed. Error: %s" % [timing_label, request_error])
+						client.close()
+						return false
+					request_sent = true
+				elif body_started:
+					completed = true
+					break
+			HTTPClient.STATUS_BODY:
+				body_started = true
+				while client.get_status() == HTTPClient.STATUS_BODY:
+					var chunk := client.read_response_body_chunk()
+					if chunk.is_empty():
+						break
+					_record_bytes_processed(chunk.size())
+
+					if not first_byte_logged:
+						first_byte_logged = true
+						print("Voice timing: %s first byte received. SinceLlmMs: %.1f. RequestMs: %.1f" % [timing_label, _elapsed_ms_since(_llm_response_received_usec), _elapsed_ms_since(started_usec)])
+
+					if header_complete:
+						_record_large_copy(chunk.size())
+						pcm_bytes.append_array(chunk)
+						if not first_pcm_byte_logged:
+							first_pcm_byte_logged = true
+							print("Voice timing: %s first PCM byte received. SinceLlmMs: %.1f. RequestMs: %.1f. BufferedBytes: %s" % [timing_label, _elapsed_ms_since(_llm_response_received_usec), _elapsed_ms_since(started_usec), pcm_bytes.size()])
+					else:
+						var pcm_start := -1
+						for index in range(chunk.size()):
+							var value := int(chunk[index])
+							if value == 10:
+								header_complete = true
+								pcm_start = index + 1
+								break
+							header_bytes.append(value)
+
+						if header_complete:
+							var metadata_text := header_bytes.get_string_from_utf8().strip_edges()
+							var metadata_parse_started_usec := Time.get_ticks_usec()
+							var metadata = JSON.parse_string(metadata_text)
+							_record_json_parse(metadata_parse_started_usec)
+							if typeof(metadata) != TYPE_DICTIONARY:
+								print("Voice timing: %s metadata invalid: %s" % [timing_label, metadata_text])
+								client.close()
+								return false
+
+							var sample_rate := int(metadata.get("sampleRate", 24000))
+							channels = int(metadata.get("channels", 1))
+							var format := str(metadata.get("format", ""))
+							if format != "s16le" or sample_rate <= 0 or channels < 1 or channels > 2:
+								print("Voice timing: %s metadata unsupported: %s" % [timing_label, metadata_text])
+								client.close()
+								return false
+
+							stream_sample_rate = sample_rate
+							var stream := AudioStreamGenerator.new()
+							stream.mix_rate = float(sample_rate)
+							stream.buffer_length = VOICE_GENERATOR_BUFFER_SECONDS
+							voice_playback.stream = stream
+							voice_playback.bus = "Master"
+							voice_playback.volume_db = 0.0
+							voice_playback.play()
+							playback = voice_playback.get_stream_playback() as AudioStreamGeneratorPlayback
+							print("Voice timing: %s metadata received. SampleRate: %s. Channels: %s. Format: %s" % [timing_label, sample_rate, channels, format])
+
+							if pcm_start >= 0 and pcm_start < chunk.size():
+								var pcm_tail := chunk.slice(pcm_start)
+								_record_large_copy(pcm_tail.size())
+								pcm_bytes.append_array(pcm_tail)
+								if not first_pcm_byte_logged:
+									first_pcm_byte_logged = true
+									print("Voice timing: %s first PCM byte received. SinceLlmMs: %.1f. RequestMs: %.1f. BufferedBytes: %s" % [timing_label, _elapsed_ms_since(_llm_response_received_usec), _elapsed_ms_since(started_usec), pcm_bytes.size()])
+
+					if playback != null and not pcm_bytes.is_empty():
+						if not first_pcm_buffered_logged:
+							first_pcm_buffered_logged = true
+							print("Voice timing: %s first PCM chunk buffered. Bytes: %s. SinceLlmMs: %.1f. RequestMs: %.1f" % [timing_label, pcm_bytes.size(), _elapsed_ms_since(_llm_response_received_usec), _elapsed_ms_since(started_usec)])
+						var consumed := _push_pcm_frames(playback, pcm_bytes, channels)
+						if consumed > 0:
+							_record_large_copy(maxi(pcm_bytes.size() - consumed, 0))
+							pcm_bytes = pcm_bytes.slice(consumed)
+							frames_pushed += int(consumed / (channels * 2))
+							if not first_audio_submitted_logged:
+								first_audio_submitted_logged = true
+								print("Voice timing: first audio submitted to Godot playback. ConsumedBytes: %s. FramesPushed: %s. SinceLlmMs: %.1f. RequestMs: %.1f" % [consumed, frames_pushed, _elapsed_ms_since(_llm_response_received_usec), _elapsed_ms_since(started_usec)])
+			HTTPClient.STATUS_DISCONNECTED:
+				if request_sent:
+					completed = true
+					break
+				print("Voice timing: %s disconnected before request." % timing_label)
+				client.close()
+				return false
+			HTTPClient.STATUS_CANT_CONNECT, HTTPClient.STATUS_CANT_RESOLVE, HTTPClient.STATUS_CONNECTION_ERROR, HTTPClient.STATUS_TLS_HANDSHAKE_ERROR:
+				print("Voice timing: %s connection failed. Status: %s" % [timing_label, status])
+				client.close()
+				return false
+
+		if playback != null and not pcm_bytes.is_empty():
+			if not first_pcm_buffered_logged:
+				first_pcm_buffered_logged = true
+				print("Voice timing: %s first PCM chunk buffered. Bytes: %s. SinceLlmMs: %.1f. RequestMs: %.1f" % [timing_label, pcm_bytes.size(), _elapsed_ms_since(_llm_response_received_usec), _elapsed_ms_since(started_usec)])
+			var consumed_after_poll := _push_pcm_frames(playback, pcm_bytes, channels)
+			if consumed_after_poll > 0:
+				_record_large_copy(maxi(pcm_bytes.size() - consumed_after_poll, 0))
+				pcm_bytes = pcm_bytes.slice(consumed_after_poll)
+				frames_pushed += int(consumed_after_poll / (channels * 2))
+				if not first_audio_submitted_logged:
+					first_audio_submitted_logged = true
+					print("Voice timing: first audio submitted to Godot playback. ConsumedBytes: %s. FramesPushed: %s. SinceLlmMs: %.1f. RequestMs: %.1f" % [consumed_after_poll, frames_pushed, _elapsed_ms_since(_llm_response_received_usec), _elapsed_ms_since(started_usec)])
+
+		if first_audio_submitted_logged and not first_audible_logged and voice_playback.get_playback_position() > 0.0:
+			first_audible_logged = true
+			_set_merlin_state(MerlinState.SPEAKING)
+			print("Voice timing: playback first audio started. SinceLlmMs: %.1f. RequestMs: %.1f. TotalVoiceTurnMs: %.1f" % [_elapsed_ms_since(_llm_response_received_usec), _elapsed_ms_since(started_usec), _voice_elapsed_ms()])
+			print("Voice timing: first audible playback position advanced. PositionMs: %.1f. SinceLlmMs: %.1f. RequestMs: %.1f" % [voice_playback.get_playback_position() * 1000.0, _elapsed_ms_since(_llm_response_received_usec), _elapsed_ms_since(started_usec)])
+
+		await get_tree().process_frame
+
+	client.close()
+	if not first_audio_submitted_logged:
+		return false
+
+	while playback != null and not pcm_bytes.is_empty():
+		if not pcm_bytes.is_empty():
+			var consumed_tail := _push_pcm_frames(playback, pcm_bytes, channels)
+			if consumed_tail > 0:
+				_record_large_copy(maxi(pcm_bytes.size() - consumed_tail, 0))
+				pcm_bytes = pcm_bytes.slice(consumed_tail)
+				frames_pushed += int(consumed_tail / (channels * 2))
+		await get_tree().process_frame
+
+		if first_audio_submitted_logged and not first_audible_logged and voice_playback.get_playback_position() > 0.0:
+			first_audible_logged = true
+			_set_merlin_state(MerlinState.SPEAKING)
+			print("Voice timing: playback first audio started. SinceLlmMs: %.1f. RequestMs: %.1f. TotalVoiceTurnMs: %.1f" % [_elapsed_ms_since(_llm_response_received_usec), _elapsed_ms_since(started_usec), _voice_elapsed_ms()])
+			print("Voice timing: first audible playback position advanced. PositionMs: %.1f. SinceLlmMs: %.1f. RequestMs: %.1f" % [voice_playback.get_playback_position() * 1000.0, _elapsed_ms_since(_llm_response_received_usec), _elapsed_ms_since(started_usec)])
+
+	var generator_buffer_frames := int(float(stream_sample_rate) * VOICE_GENERATOR_BUFFER_SECONDS)
+	while voice_playback.playing:
+		var played_frames := int(voice_playback.get_playback_position() * float(stream_sample_rate))
+		var generator_drained := playback == null or playback.get_frames_available() >= generator_buffer_frames - 1
+		if played_frames >= frames_pushed and generator_drained:
+			break
+		await get_tree().process_frame
+
+	if voice_playback.playing:
+		await get_tree().create_timer(VOICE_OUTPUT_DRAIN_SECONDS).timeout
+
+	voice_playback.stop()
+
+	print("Voice timing: full playback complete. StreamComplete: %s. TotalVoiceTurnMs: %.1f" % [completed, _voice_elapsed_ms()])
+	_set_voice_phase("playback_complete")
 	return true
 
 
-func _split_spoken_text(text: String) -> PackedStringArray:
-	var chunks := PackedStringArray()
-	var current := ""
-	var normalized := text.replace("\r\n", "\n").replace("\r", "\n")
-	for index in range(normalized.length()):
-		var character := normalized.substr(index, 1)
-		current += " " if character == "\n" else character
-		if character in [".", "!", "?", "\n"]:
-			_append_spoken_chunk(chunks, current)
-			current = ""
+func _push_pcm_frames(playback: AudioStreamGeneratorPlayback, pcm_bytes: PackedByteArray, channels: int) -> int:
+	if playback == null:
+		return 0
 
-	_append_spoken_chunk(chunks, current)
+	var frame_size := channels * 2
+	var available_frames := playback.get_frames_available()
+	if available_frames <= 0 or pcm_bytes.size() < frame_size:
+		return 0
 
-	if chunks.is_empty():
-		chunks.append(text)
-	return chunks
+	var frames := PackedVector2Array()
+	var offset := 0
+	while available_frames > 0 and offset + frame_size <= pcm_bytes.size():
+		if channels == 1:
+			var mono := _decode_pcm_s16le_sample(pcm_bytes, offset)
+			frames.append(Vector2(mono, mono))
+		else:
+			var left := _decode_pcm_s16le_sample(pcm_bytes, offset)
+			var right := _decode_pcm_s16le_sample(pcm_bytes, offset + 2)
+			frames.append(Vector2(left, right))
+		offset += frame_size
+		available_frames -= 1
+
+	if not frames.is_empty():
+		var push_started_usec := Time.get_ticks_usec()
+		playback.push_buffer(frames)
+		_record_audio_push(frames.size(), push_started_usec)
+
+	return offset
 
 
-func _append_spoken_chunk(chunks: PackedStringArray, text: String) -> void:
-	var chunk := text.strip_edges()
-	if chunk.is_empty():
+func _decode_pcm_s16le_sample(bytes: PackedByteArray, offset: int) -> float:
+	var unsigned := int(bytes[offset]) | (int(bytes[offset + 1]) << 8)
+	if unsigned >= 32768:
+		unsigned -= 65536
+	return clampf(float(unsigned) / 32768.0, -1.0, 1.0)
+
+
+func _voice_elapsed_ms() -> float:
+	return _elapsed_ms_since(_voice_turn_started_usec)
+
+
+func _elapsed_ms_since(started_usec: int) -> float:
+	if started_usec <= 0:
+		return 0.0
+	return float(Time.get_ticks_usec() - started_usec) / 1000.0
+
+
+func _set_voice_phase(phase: String) -> void:
+	if _voice_phase == phase:
 		return
-	if chunk.length() <= SPEECH_CHUNK_TARGET_CHARS:
-		chunks.append(chunk)
+	_voice_phase = phase
+	print("Voice frame profile: phase=%s state=%s elapsedMs=%.1f" % [_voice_phase, _merlin_state_name(_merlin_state), _voice_elapsed_ms()])
+
+
+func _frame_profile_begin_frame() -> void:
+	if not FRAME_PROFILER_ENABLED:
+		return
+	if _frame_profile_window_started_usec <= 0:
+		_frame_profile_window_started_usec = Time.get_ticks_usec()
+		_frame_profile_last_report_usec = _frame_profile_window_started_usec
+
+
+func _frame_profile_end_frame(delta: float) -> void:
+	if not FRAME_PROFILER_ENABLED:
 		return
 
-	for hard_chunk in _split_long_spoken_part(chunk):
-		chunks.append(hard_chunk)
+	var now_usec := Time.get_ticks_usec()
+	if _frame_profile_window_started_usec <= 0:
+		_frame_profile_window_started_usec = now_usec
+		_frame_profile_last_report_usec = now_usec
+
+	var frame_ms := delta * 1000.0
+	_frame_profile_frame_count += 1
+	_frame_profile_total_ms += frame_ms
+	_frame_profile_max_ms = maxf(_frame_profile_max_ms, frame_ms)
+	if frame_ms > 16.0:
+		_frame_profile_over_16 += 1
+	if frame_ms > 33.0:
+		_frame_profile_over_33 += 1
+	if frame_ms > 50.0:
+		_frame_profile_over_50 += 1
+	if frame_ms > 100.0:
+		_frame_profile_over_100 += 1
+
+	var report_due := float(now_usec - _frame_profile_last_report_usec) / 1000000.0 >= FRAME_PROFILER_REPORT_SECONDS
+	var active_voice := _voice_phase != "idle" or _speech_turn_active or _is_recording or not _pending_requests.is_empty()
+	var saw_spike := _frame_profile_over_33 > 0
+	if report_due and (active_voice or saw_spike):
+		_print_frame_profile("window", frame_ms)
+		_reset_frame_profile_window(now_usec)
 
 
-func _split_long_spoken_part(text: String) -> PackedStringArray:
-	var chunks := PackedStringArray()
-	var words := text.split(" ", false)
-	var current := ""
-	for word in words:
-		if current.length() + word.length() + 1 > SPEECH_CHUNK_TARGET_CHARS and not current.is_empty():
-			chunks.append(current.strip_edges())
-			current = ""
-		current = word if current.is_empty() else "%s %s" % [current, word]
-	if not current.strip_edges().is_empty():
-		chunks.append(current.strip_edges())
-	return chunks
+func _print_frame_profile(reason: String, frame_ms: float) -> void:
+	var average_ms := 0.0
+	if _frame_profile_frame_count > 0:
+		average_ms = _frame_profile_total_ms / float(_frame_profile_frame_count)
+	var likely_gc_or_engine_work := frame_ms >= FRAME_PROFILER_SPIKE_MS
+	likely_gc_or_engine_work = likely_gc_or_engine_work and _frame_profile_bytes == 0
+	likely_gc_or_engine_work = likely_gc_or_engine_work and _frame_profile_pcm_frames == 0
+	likely_gc_or_engine_work = likely_gc_or_engine_work and _frame_profile_json_parse_count == 0
+	likely_gc_or_engine_work = likely_gc_or_engine_work and _frame_profile_sync_work_ms < 1.0
+	likely_gc_or_engine_work = likely_gc_or_engine_work and _frame_profile_audio_push_ms < 1.0
+	likely_gc_or_engine_work = likely_gc_or_engine_work and _frame_profile_websocket_work_ms < 1.0
+	print("Voice frame profile: reason=%s state=%s phase=%s frameMs=%.2f avgMs=%.2f maxMs=%.2f frames=%s over16=%s over33=%s over50=%s over100=%s httpPolled=%s bytes=%s pcmFrames=%s jsonParses=%s jsonMs=%.2f largeCopies=%s largeCopyBytes=%s syncWorkMs=%.2f syncLabel=%s audioPushMs=%.2f websocketPackets=%s websocketWorkMs=%.2f likelyGcOrEngineWork=%s" % [
+		reason,
+		_merlin_state_name(_merlin_state),
+		_voice_phase,
+		frame_ms,
+		average_ms,
+		_frame_profile_max_ms,
+		_frame_profile_frame_count,
+		_frame_profile_over_16,
+		_frame_profile_over_33,
+		_frame_profile_over_50,
+		_frame_profile_over_100,
+		str(_frame_profile_http_polled),
+		_frame_profile_bytes,
+		_frame_profile_pcm_frames,
+		_frame_profile_json_parse_count,
+		_frame_profile_json_parse_ms,
+		_frame_profile_large_copy_count,
+		_frame_profile_large_copy_bytes,
+		_frame_profile_sync_work_ms,
+		_frame_profile_sync_work_label,
+		_frame_profile_audio_push_ms,
+		_frame_profile_websocket_packets,
+		_frame_profile_websocket_work_ms,
+		str(likely_gc_or_engine_work)
+	])
 
 
-func _load_synthesized_wav(body: PackedByteArray) -> AudioStreamWAV:
-	var file := FileAccess.open(VOICE_RESPONSE_PATH, FileAccess.WRITE)
-	if file == null:
-		return _parse_pcm_wav(body)
+func _reset_frame_profile_window(now_usec: int) -> void:
+	_frame_profile_window_started_usec = now_usec
+	_frame_profile_last_report_usec = now_usec
+	_frame_profile_frame_count = 0
+	_frame_profile_total_ms = 0.0
+	_frame_profile_max_ms = 0.0
+	_frame_profile_over_16 = 0
+	_frame_profile_over_33 = 0
+	_frame_profile_over_50 = 0
+	_frame_profile_over_100 = 0
+	_frame_profile_http_polled = false
+	_frame_profile_bytes = 0
+	_frame_profile_pcm_frames = 0
+	_frame_profile_json_parse_count = 0
+	_frame_profile_json_parse_ms = 0.0
+	_frame_profile_large_copy_count = 0
+	_frame_profile_large_copy_bytes = 0
+	_frame_profile_sync_work_ms = 0.0
+	_frame_profile_sync_work_label = ""
+	_frame_profile_audio_push_ms = 0.0
+	_frame_profile_websocket_packets = 0
+	_frame_profile_websocket_work_ms = 0.0
 
-	file.store_buffer(body)
-	file.close()
 
-	var stream := AudioStreamWAV.load_from_file(VOICE_RESPONSE_PATH)
-	if stream != null and stream.get_length() > 0.0:
-		return stream
-
-	return _parse_pcm_wav(body)
+func _record_http_poll(started_usec: int) -> void:
+	_frame_profile_http_polled = true
+	_record_sync_work("http_poll", started_usec)
 
 
-func _parse_pcm_wav(body: PackedByteArray) -> AudioStreamWAV:
-	if body.size() < 44:
-		return null
-	if body.slice(0, 4).get_string_from_ascii() != "RIFF" or body.slice(8, 12).get_string_from_ascii() != "WAVE":
-		return null
+func _record_bytes_processed(bytes: int) -> void:
+	_frame_profile_bytes += maxi(bytes, 0)
 
-	var offset := 12
-	var audio_format := 0
-	var channels := 0
-	var sample_rate := 0
-	var bits_per_sample := 0
-	var data_offset := -1
-	var data_size := 0
 
-	while offset + 8 <= body.size():
-		var chunk_id := body.slice(offset, offset + 4).get_string_from_ascii()
-		var chunk_size := int(body.decode_u32(offset + 4))
-		var chunk_data_offset := offset + 8
-		if chunk_data_offset + chunk_size > body.size():
-			break
+func _record_pcm_frames_pushed(frames: int) -> void:
+	_frame_profile_pcm_frames += maxi(frames, 0)
 
-		match chunk_id:
-			"fmt ":
-				if chunk_size >= 16:
-					audio_format = int(body.decode_u16(chunk_data_offset))
-					channels = int(body.decode_u16(chunk_data_offset + 2))
-					sample_rate = int(body.decode_u32(chunk_data_offset + 4))
-					bits_per_sample = int(body.decode_u16(chunk_data_offset + 14))
-			"data":
-				data_offset = chunk_data_offset
-				data_size = chunk_size
 
-		offset = chunk_data_offset + chunk_size
-		if offset % 2 == 1:
-			offset += 1
+func _record_json_parse(started_usec: int) -> void:
+	_frame_profile_json_parse_count += 1
+	_frame_profile_json_parse_ms += _elapsed_ms_since(started_usec)
 
-	if audio_format != 1 or data_offset < 0 or data_size <= 0 or sample_rate <= 0:
-		return null
-	if channels < 1 or channels > 2:
-		return null
-	if bits_per_sample != 8 and bits_per_sample != 16:
-		return null
 
-	var stream := AudioStreamWAV.new()
-	stream.format = AudioStreamWAV.FORMAT_8_BITS if bits_per_sample == 8 else AudioStreamWAV.FORMAT_16_BITS
-	stream.mix_rate = sample_rate
-	stream.stereo = channels == 2
-	stream.data = body.slice(data_offset, data_offset + data_size)
-	return stream
+func _record_large_copy(bytes: int) -> void:
+	if bytes < 16384:
+		return
+	_frame_profile_large_copy_count += 1
+	_frame_profile_large_copy_bytes += bytes
+
+
+func _record_sync_work(label: String, started_usec: int) -> void:
+	var elapsed_ms := _elapsed_ms_since(started_usec)
+	_frame_profile_sync_work_ms += elapsed_ms
+	if elapsed_ms >= 1.0:
+		_frame_profile_sync_work_label = label if _frame_profile_sync_work_label.is_empty() else "%s,%s" % [_frame_profile_sync_work_label, label]
+
+
+func _record_audio_push(frames: int, started_usec: int) -> void:
+	_record_pcm_frames_pushed(frames)
+	_frame_profile_audio_push_ms += _elapsed_ms_since(started_usec)
+
+
+func _on_frontend_work_observed(metrics: Dictionary) -> void:
+	if bool(metrics.get("http_polled", false)):
+		_frame_profile_http_polled = true
+	_frame_profile_bytes += int(metrics.get("bytes", 0))
+	_frame_profile_json_parse_count += int(metrics.get("json_parse_count", 0))
+	_frame_profile_json_parse_ms += float(metrics.get("json_parse_ms", 0.0))
+	_frame_profile_websocket_packets += int(metrics.get("packets", 0))
+	_frame_profile_websocket_work_ms += float(metrics.get("work_ms", 0.0))
+
+
+func _merlin_state_name(state: int) -> String:
+	match state:
+		MerlinState.IDLE:
+			return "IDLE"
+		MerlinState.THINKING:
+			return "THINKING"
+		MerlinState.SPEAKING:
+			return "SPEAKING"
+		MerlinState.EXECUTING_TOOL:
+			return "EXECUTING_TOOL"
+		MerlinState.ERROR:
+			return "ERROR"
+		MerlinState.LISTENING:
+			return "LISTENING"
+		MerlinState.MEMORY_UPDATE:
+			return "MEMORY_UPDATE"
+		MerlinState.UPDATING:
+			return "UPDATING"
+		MerlinState.LOADING_MODEL:
+			return "LOADING_MODEL"
+		_:
+			return "UNKNOWN"
 
 
 func _prepare_orb_for_response(response: Dictionary, success: bool, response_type: String) -> void:
@@ -919,8 +1424,10 @@ func _prepare_orb_for_response(response: Dictionary, success: bool, response_typ
 func _settle_orb_after_response() -> void:
 	if _pending_requests.is_empty():
 		_set_merlin_state(MerlinState.IDLE)
+		_set_voice_phase("idle")
 	else:
 		_set_merlin_state(MerlinState.THINKING)
+		_set_voice_phase("waiting_llm")
 
 
 func _response_kind(response: Dictionary, success: bool, response_type: String) -> String:
