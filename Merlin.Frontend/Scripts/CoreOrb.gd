@@ -89,6 +89,10 @@ func set_thinking() -> void:
 	set_state(MerlinState.THINKING)
 
 
+func set_listening() -> void:
+	set_state(MerlinState.LISTENING)
+
+
 func set_speaking() -> void:
 	set_state(MerlinState.SPEAKING)
 
@@ -125,6 +129,10 @@ func _apply_state_profile(state: int) -> void:
 			_target_activity = 1.25
 			_target_intensity = 0.45
 			target_scale = Vector2(0.97, 0.97)
+		MerlinState.LISTENING:
+			_target_activity = 0.95
+			_target_intensity = 0.26
+			target_scale = Vector2(0.985, 0.985)
 		MerlinState.SPEAKING:
 			_target_activity = 1.65
 			_target_intensity = 0.72
@@ -217,7 +225,7 @@ func _draw_state_effects(center: Vector2, radius: float, color: Color) -> void:
 func _base_radius() -> float:
 	var base := minf(size.x, size.y) * 0.19
 	var breathing := sin(_breath * 1.15) * 2.4
-	var focused := -2.5 if current_state == MerlinState.THINKING else 0.0
+	var focused := -2.5 if current_state == MerlinState.THINKING else -1.25 if current_state == MerlinState.LISTENING else 0.0
 	var speaking := sin(_phase * TAU * 1.4) * (2.4 + _speech_energy * 5.5) if current_state == MerlinState.SPEAKING else 0.0
 
 	return base + breathing + focused + speaking + _tool_surge * 5.0
@@ -236,6 +244,8 @@ func _rotation_direction() -> float:
 	match current_state:
 		MerlinState.THINKING:
 			return 0.55
+		MerlinState.LISTENING:
+			return 0.38
 		MerlinState.SPEAKING:
 			return 0.72
 		MerlinState.EXECUTING_TOOL:
@@ -250,6 +260,8 @@ func _state_color() -> Color:
 	match current_state:
 		MerlinState.THINKING:
 			return THINKING_COLOR
+		MerlinState.LISTENING:
+			return THINKING_COLOR.lerp(BASE_COLOR, 0.35)
 		MerlinState.SPEAKING:
 			return SPEAKING_COLOR
 		MerlinState.EXECUTING_TOOL:

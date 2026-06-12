@@ -16,6 +16,12 @@ const TYPEWRITER_CHARS_PER_SECOND := 104.0
 const TYPEWRITER_PUNCTUATION_DELAY := 0.030
 const TYPEWRITER_PARAGRAPH_DELAY := 0.060
 const MAX_NOTIFICATIONS := 5
+const VOICE_TRANSCRIBE_URL := "http://localhost:5000/api/voice/transcribe?extension=.wav"
+const VOICE_WARMUP_URL := "http://localhost:5000/api/voice/warmup"
+const VOICE_SYNTHESIS_URL := "http://localhost:5000/api/voice/synthesize"
+const RECORD_BUS_NAME := "MerlinRecord"
+const VOICE_RESPONSE_PATH := "user://merlin-response.wav"
+const SPEECH_CHUNK_TARGET_CHARS := 260
 
 const COLOR_BACKGROUND := Color(0.000, 0.008, 0.026, 1.0)
 const COLOR_PANEL := Color(0.002, 0.024, 0.070, 0.40)
@@ -28,6 +34,10 @@ const COLOR_AMBER := Color(1.0, 0.68, 0.28, 1.0)
 const COLOR_RED := Color(1.0, 0.28, 0.34, 1.0)
 
 @onready var web_socket_client: MerlinWebSocketClient = $MerlinWebSocketClient
+@onready var voice_transcribe_request: HTTPRequest = $VoiceTranscribeRequest
+@onready var voice_synthesis_request: HTTPRequest = $VoiceSynthesisRequest
+@onready var voice_playback: AudioStreamPlayer = $VoicePlayback
+@onready var microphone_input: AudioStreamPlayer = $MicrophoneInput
 @onready var background: ColorRect = $Background
 @onready var core_orb = $CoreOrb
 @onready var status_panel: PanelContainer = $StatusPanel
@@ -47,14 +57,23 @@ const COLOR_RED := Color(1.0, 0.28, 0.34, 1.0)
 @onready var command_input_panel: PanelContainer = $CommandInput
 @onready var message_input: LineEdit = $CommandInput/InputRow/MessageInput
 @onready var send_button: Button = $CommandInput/InputRow/SendButton
+@onready var voice_control: PanelContainer = $VoiceControl
+@onready var voice_button: Button = $VoiceControl/VoiceButton
 
 var _pending_requests := {}
 var _merlin_state: int = MerlinState.IDLE
 var _focus_request_id := 0
+var _record_effect: AudioEffectRecord
+var _is_recording := false
+var _record_bus_index := -1
+var _voice_warmup_complete := false
+var _voice_warmup_in_progress := false
+var _speech_turn_active := false
 
 
 func _ready() -> void:
 	_apply_visual_theme()
+	_setup_voice_mode()
 	message_input.focus_mode = Control.FOCUS_ALL
 	message_input.keep_editing_on_text_submit = true
 	message_scroll.focus_mode = Control.FOCUS_NONE
@@ -62,6 +81,8 @@ func _ready() -> void:
 	thinking_label.focus_mode = Control.FOCUS_NONE
 	error_label.focus_mode = Control.FOCUS_NONE
 	send_button.pressed.connect(_on_send_pressed)
+	voice_button.button_down.connect(_on_voice_button_down)
+	voice_button.button_up.connect(_on_voice_button_up)
 	reconnect_button.pressed.connect(_on_reconnect_pressed)
 	show_debug_check_box.toggled.connect(_on_show_debug_check_box_toggled)
 	message_input.text_submitted.connect(_on_message_submitted)
@@ -75,6 +96,7 @@ func _ready() -> void:
 	_add_notification("Connecting to Merlin.Backend", "system")
 	_update_pending_state()
 	web_socket_client.connect_to_backend()
+	_warmup_voice_worker()
 	_focus_message_input()
 
 
@@ -133,8 +155,229 @@ func _send_backend_message(message: String, show_user_message: bool) -> void:
 		_add_notification("Message was not sent", "error")
 		_set_merlin_state(MerlinState.ERROR)
 		_update_pending_state()
+	elif not show_user_message:
+		_add_notification("Sent to Merlin.Backend", "system")
 
 	_focus_message_input()
+
+
+func _setup_voice_mode() -> void:
+	chat_panel.visible = false
+	command_input_panel.visible = false
+	voice_control.visible = true
+	voice_playback.bus = "Master"
+	voice_playback.volume_db = 0.0
+	voice_control.add_theme_stylebox_override("panel", _panel_style(Color(0.010, 0.052, 0.125, 0.64), COLOR_CYAN, 1.0, 10))
+	_style_button(voice_button)
+	_setup_microphone_recording()
+
+
+func _setup_microphone_recording() -> void:
+	_record_bus_index = AudioServer.get_bus_index(RECORD_BUS_NAME)
+	if _record_bus_index == -1:
+		AudioServer.add_bus()
+		_record_bus_index = AudioServer.get_bus_count() - 1
+		AudioServer.set_bus_name(_record_bus_index, RECORD_BUS_NAME)
+		AudioServer.set_bus_send(_record_bus_index, "Master")
+
+	_record_effect = AudioEffectRecord.new()
+	AudioServer.add_bus_effect(_record_bus_index, _record_effect)
+	AudioServer.set_bus_mute(_record_bus_index, false)
+	AudioServer.set_bus_volume_db(_record_bus_index, -80.0)
+
+	microphone_input.stream = AudioStreamMicrophone.new()
+	microphone_input.bus = RECORD_BUS_NAME
+	microphone_input.play()
+
+
+func _on_voice_button_down() -> void:
+	if not web_socket_client.is_backend_connected():
+		_show_error("Cannot listen: Merlin.Backend is not connected.")
+		_add_notification("Backend offline", "error")
+		return
+	if _is_recording or _record_effect == null:
+		return
+
+	_is_recording = true
+	voice_button.text = "Listening..."
+	_set_merlin_state(MerlinState.LISTENING)
+	_record_effect.set_recording_active(true)
+
+
+func _on_voice_button_up() -> void:
+	if not _is_recording or _record_effect == null:
+		return
+
+	_is_recording = false
+	voice_button.disabled = true
+	voice_button.text = "Transcribing..."
+	_record_effect.set_recording_active(false)
+	var recording := _record_effect.get_recording()
+	await _send_recording_for_transcription(recording)
+
+
+func _send_recording_for_transcription(recording: AudioStreamWAV) -> void:
+	if recording == null:
+		_add_notification("No audio captured", "error")
+		_reset_voice_button()
+		_set_merlin_state(MerlinState.IDLE)
+		return
+
+	var path := "user://merlin-recording.wav"
+	var save_error := recording.save_to_wav(path)
+	if save_error != OK:
+		_show_error("Could not save microphone recording. Error code: %s" % save_error)
+		_add_notification("Recording failed", "error")
+		_reset_voice_button()
+		_set_merlin_state(MerlinState.ERROR)
+		return
+
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		_show_error("Could not read microphone recording.")
+		_add_notification("Recording failed", "error")
+		_reset_voice_button()
+		_set_merlin_state(MerlinState.ERROR)
+		return
+
+	var audio_bytes := file.get_buffer(file.get_length())
+	file.close()
+	if audio_bytes.size() < 2048:
+		_show_error("Microphone recording was empty or too small. Check Godot microphone permission and input device.")
+		_add_notification("No microphone audio captured", "error")
+		_reset_voice_button()
+		_set_merlin_state(MerlinState.ERROR)
+		return
+
+	_add_notification("Captured %.1f KB of microphone audio" % (float(audio_bytes.size()) / 1024.0), "system")
+	var request_error := voice_transcribe_request.request_raw(
+		VOICE_TRANSCRIBE_URL,
+		PackedStringArray(["Content-Type: audio/wav"]),
+		HTTPClient.METHOD_POST,
+		audio_bytes
+	)
+	if request_error != OK:
+		_show_error("Could not send audio to Merlin.Backend. Error code: %s" % request_error)
+		_add_notification("Transcription failed", "error")
+		_reset_voice_button()
+		_set_merlin_state(MerlinState.ERROR)
+		return
+
+	var result = await voice_transcribe_request.request_completed
+	var request_result: int = int(result[0])
+	var response_code: int = int(result[1])
+	var body: PackedByteArray = result[3]
+	var response_text := body.get_string_from_utf8()
+	if request_result != HTTPRequest.RESULT_SUCCESS:
+		_show_error("Transcription request failed. Result: %s" % request_result)
+		_add_notification("Transcription failed", "error")
+		_reset_voice_button()
+		_set_merlin_state(MerlinState.ERROR)
+		return
+	if response_code < 200 or response_code >= 300:
+		_show_error("Transcription failed. HTTP %s %s" % [response_code, response_text])
+		_add_notification("Transcription failed", "error")
+		_reset_voice_button()
+		_set_merlin_state(MerlinState.ERROR)
+		return
+
+	var parsed = JSON.parse_string(response_text)
+	if typeof(parsed) != TYPE_DICTIONARY:
+		_show_error("Transcription response was not valid JSON.")
+		_add_notification("Transcription failed", "error")
+		_reset_voice_button()
+		_set_merlin_state(MerlinState.ERROR)
+		return
+
+	var transcript := str(parsed.get("text", "")).strip_edges()
+	if transcript.is_empty():
+		_add_notification("I did not catch that", "system")
+		_reset_voice_button()
+		_set_merlin_state(MerlinState.IDLE)
+		return
+
+	_add_notification("Heard: %s" % transcript, "system")
+	_send_backend_message(transcript, false)
+	_show_question_acknowledgement(transcript)
+	_reset_voice_button()
+
+
+func _reset_voice_button() -> void:
+	voice_button.disabled = false
+	voice_button.text = "Hold to talk"
+
+
+func _warmup_voice_worker() -> void:
+	if _voice_warmup_complete or _voice_warmup_in_progress:
+		return
+
+	_voice_warmup_in_progress = true
+	var request := HTTPRequest.new()
+	add_child(request)
+	var request_error := request.request(
+		VOICE_WARMUP_URL,
+		PackedStringArray(["Content-Type: application/json"]),
+		HTTPClient.METHOD_POST,
+		"{}"
+	)
+	if request_error != OK:
+		_voice_warmup_in_progress = false
+		request.queue_free()
+		_add_notification("Voice warmup request failed", "error")
+		return
+
+	var result = await request.request_completed
+	_voice_warmup_in_progress = false
+	request.queue_free()
+	var response_code: int = int(result[1])
+	if response_code >= 200 and response_code < 300:
+		_voice_warmup_complete = true
+		_add_notification("Voice warmed", "system")
+	else:
+		_add_notification("Voice warmup failed", "error")
+
+
+func _show_question_acknowledgement(transcript: String) -> void:
+	if chat_panel.visible:
+		return
+
+	var summary := _summarize_transcript_for_acknowledgement(transcript)
+	if summary.is_empty():
+		return
+
+	activity_label.text = "Thinking about: %s" % summary
+	_add_notification("Thinking about: %s" % summary, "system")
+
+
+func _summarize_transcript_for_acknowledgement(transcript: String) -> String:
+	var text := transcript.strip_edges()
+	if text.is_empty():
+		return ""
+
+	text = text.trim_suffix(".").trim_suffix("?").trim_suffix("!").trim_suffix(",").strip_edges()
+	var lower_text := text.to_lower()
+	for prefix in [
+		"hey merlin ",
+		"merlin ",
+		"can you ",
+		"could you ",
+		"would you ",
+		"please ",
+		"i want you to "
+	]:
+		if lower_text.begins_with(prefix):
+			text = text.substr(prefix.length()).strip_edges()
+			lower_text = text.to_lower()
+			break
+
+	var words := text.split(" ", false)
+	if words.size() <= 18:
+		return text
+
+	var summary_words := PackedStringArray()
+	for index in range(18):
+		summary_words.append(words[index])
+	return " ".join(summary_words)
 
 
 func _on_connection_state_changed(state: String, detail: String) -> void:
@@ -145,6 +388,8 @@ func _on_connection_state_changed(state: String, detail: String) -> void:
 			_clear_error()
 			_add_system_message("Connected to Merlin.Backend.")
 			_add_notification("Connected", "system")
+			if not _voice_warmup_complete:
+				_warmup_voice_worker()
 			if _pending_requests.is_empty():
 				_set_merlin_state(MerlinState.IDLE)
 			_focus_message_input()
@@ -401,12 +646,20 @@ func _display_backend_response(
 	_focus_message_input()
 
 	if success:
-		await _add_typed_chat_line("Merlin", _format_success_response(message, available_tools, diagnostics, confirmation), debug_text, _response_kind(response, success, response_type))
+		var spoken_message := _format_success_response(message, available_tools, diagnostics, confirmation)
+		if chat_panel.visible:
+			await _add_typed_chat_line("Merlin", spoken_message, debug_text, _response_kind(response, success, response_type))
+		else:
+			await _speak_text(spoken_message)
 		_clear_error()
 	else:
 		var formatted_error := _format_error_response(error_code, message)
 		if typeof(confirmation) == TYPE_DICTIONARY:
-			await _add_typed_chat_line("Merlin", _format_confirmation(message, confirmation, application_candidates), debug_text, "confirmation")
+			var confirmation_message := _format_confirmation(message, confirmation, application_candidates)
+			if chat_panel.visible:
+				await _add_typed_chat_line("Merlin", confirmation_message, debug_text, "confirmation")
+			else:
+				await _speak_text(confirmation_message)
 			_add_notification("Confirmation required", "confirmation")
 			_clear_error()
 			activity_label.text = "Waiting for confirmation"
@@ -415,20 +668,234 @@ func _display_backend_response(
 			return
 		elif response_type == "limitation" or response_type == "safety":
 			var kind := _response_kind(response, success, response_type)
-			await _add_typed_chat_line("Merlin", message, debug_text, kind)
+			if chat_panel.visible:
+				await _add_typed_chat_line("Merlin", message, debug_text, kind)
+			else:
+				await _speak_text(message)
 			_add_notification("Capability unavailable" if kind == "limitation" else "Safety boundary", kind)
 			_clear_error()
 		elif response_type == "system":
 			_add_system_message(message)
 			_add_notification(message, "system")
+			if not chat_panel.visible:
+				await _speak_text(message)
 			_clear_error()
 		else:
-			await _add_typed_chat_line("Error", formatted_error, debug_text, "error")
+			if chat_panel.visible:
+				await _add_typed_chat_line("Error", formatted_error, debug_text, "error")
+			else:
+				await _speak_text(formatted_error)
 			_add_notification("Error", "error")
 			_clear_error()
 
 	_settle_orb_after_response()
 	_focus_message_input()
+
+
+func _speak_text(text: String) -> void:
+	var spoken_text := text.strip_edges()
+	if spoken_text.is_empty():
+		return
+
+	while _speech_turn_active:
+		await get_tree().create_timer(0.05).timeout
+
+	_speech_turn_active = true
+	await _speak_text_unlocked(spoken_text)
+	_speech_turn_active = false
+	_settle_orb_after_response()
+
+
+func _speak_text_unlocked(spoken_text: String) -> void:
+	if spoken_text.is_empty():
+		return
+
+	_set_merlin_state(MerlinState.SPEAKING)
+	var chunks := _split_spoken_text(spoken_text)
+	var current_request := _begin_speech_synthesis(chunks[0])
+	if current_request == null:
+		return
+
+	for index in range(chunks.size()):
+		var audio := await _finish_speech_synthesis(current_request)
+		if audio.is_empty():
+			return
+
+		var next_request: HTTPRequest = null
+		if index + 1 < chunks.size():
+			next_request = _begin_speech_synthesis(chunks[index + 1])
+
+		var played := await _play_speech_audio(audio)
+		if not played:
+			if next_request != null:
+				next_request.queue_free()
+			return
+
+		current_request = next_request
+
+
+func _begin_speech_synthesis(text: String) -> HTTPRequest:
+	var request := HTTPRequest.new()
+	add_child(request)
+	var payload := JSON.stringify({ "text": text })
+	var request_error := request.request(
+		VOICE_SYNTHESIS_URL,
+		PackedStringArray(["Content-Type: application/json"]),
+		HTTPClient.METHOD_POST,
+		payload
+	)
+	if request_error != OK:
+		request.queue_free()
+		_show_error("Could not request speech synthesis. Error code: %s" % request_error)
+		_add_notification("Speech synthesis failed", "error")
+		return null
+
+	return request
+
+
+func _finish_speech_synthesis(request: HTTPRequest) -> PackedByteArray:
+	if request == null:
+		return PackedByteArray()
+
+	var result = await request.request_completed
+	request.queue_free()
+	var response_code: int = int(result[1])
+	var body: PackedByteArray = result[3]
+	if response_code < 200 or response_code >= 300:
+		_show_error("Speech synthesis failed. HTTP %s" % response_code)
+		_add_notification("Speech synthesis failed", "error")
+		return PackedByteArray()
+	if body.size() < 44:
+		_show_error("Speech synthesis returned an empty audio response.")
+		_add_notification("Speech playback failed", "error")
+		return PackedByteArray()
+
+	return body
+
+
+func _play_speech_audio(body: PackedByteArray) -> bool:
+	var stream := _load_synthesized_wav(body)
+	if stream == null:
+		_show_error("Could not load synthesized speech.")
+		_add_notification("Speech playback failed", "error")
+		return false
+
+	voice_playback.stream = stream
+	voice_playback.bus = "Master"
+	voice_playback.volume_db = 0.0
+	voice_playback.play()
+	await voice_playback.finished
+	return true
+
+
+func _split_spoken_text(text: String) -> PackedStringArray:
+	var chunks := PackedStringArray()
+	var current := ""
+	var normalized := text.replace("\r\n", "\n").replace("\r", "\n")
+	for index in range(normalized.length()):
+		var character := normalized.substr(index, 1)
+		current += " " if character == "\n" else character
+		if character in [".", "!", "?", "\n"]:
+			_append_spoken_chunk(chunks, current)
+			current = ""
+
+	_append_spoken_chunk(chunks, current)
+
+	if chunks.is_empty():
+		chunks.append(text)
+	return chunks
+
+
+func _append_spoken_chunk(chunks: PackedStringArray, text: String) -> void:
+	var chunk := text.strip_edges()
+	if chunk.is_empty():
+		return
+	if chunk.length() <= SPEECH_CHUNK_TARGET_CHARS:
+		chunks.append(chunk)
+		return
+
+	for hard_chunk in _split_long_spoken_part(chunk):
+		chunks.append(hard_chunk)
+
+
+func _split_long_spoken_part(text: String) -> PackedStringArray:
+	var chunks := PackedStringArray()
+	var words := text.split(" ", false)
+	var current := ""
+	for word in words:
+		if current.length() + word.length() + 1 > SPEECH_CHUNK_TARGET_CHARS and not current.is_empty():
+			chunks.append(current.strip_edges())
+			current = ""
+		current = word if current.is_empty() else "%s %s" % [current, word]
+	if not current.strip_edges().is_empty():
+		chunks.append(current.strip_edges())
+	return chunks
+
+
+func _load_synthesized_wav(body: PackedByteArray) -> AudioStreamWAV:
+	var file := FileAccess.open(VOICE_RESPONSE_PATH, FileAccess.WRITE)
+	if file == null:
+		return _parse_pcm_wav(body)
+
+	file.store_buffer(body)
+	file.close()
+
+	var stream := AudioStreamWAV.load_from_file(VOICE_RESPONSE_PATH)
+	if stream != null and stream.get_length() > 0.0:
+		return stream
+
+	return _parse_pcm_wav(body)
+
+
+func _parse_pcm_wav(body: PackedByteArray) -> AudioStreamWAV:
+	if body.size() < 44:
+		return null
+	if body.slice(0, 4).get_string_from_ascii() != "RIFF" or body.slice(8, 12).get_string_from_ascii() != "WAVE":
+		return null
+
+	var offset := 12
+	var audio_format := 0
+	var channels := 0
+	var sample_rate := 0
+	var bits_per_sample := 0
+	var data_offset := -1
+	var data_size := 0
+
+	while offset + 8 <= body.size():
+		var chunk_id := body.slice(offset, offset + 4).get_string_from_ascii()
+		var chunk_size := int(body.decode_u32(offset + 4))
+		var chunk_data_offset := offset + 8
+		if chunk_data_offset + chunk_size > body.size():
+			break
+
+		match chunk_id:
+			"fmt ":
+				if chunk_size >= 16:
+					audio_format = int(body.decode_u16(chunk_data_offset))
+					channels = int(body.decode_u16(chunk_data_offset + 2))
+					sample_rate = int(body.decode_u32(chunk_data_offset + 4))
+					bits_per_sample = int(body.decode_u16(chunk_data_offset + 14))
+			"data":
+				data_offset = chunk_data_offset
+				data_size = chunk_size
+
+		offset = chunk_data_offset + chunk_size
+		if offset % 2 == 1:
+			offset += 1
+
+	if audio_format != 1 or data_offset < 0 or data_size <= 0 or sample_rate <= 0:
+		return null
+	if channels < 1 or channels > 2:
+		return null
+	if bits_per_sample != 8 and bits_per_sample != 16:
+		return null
+
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_8_BITS if bits_per_sample == 8 else AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = sample_rate
+	stream.stereo = channels == 2
+	stream.data = body.slice(data_offset, data_offset + data_size)
+	return stream
 
 
 func _prepare_orb_for_response(response: Dictionary, success: bool, response_type: String) -> void:
@@ -635,6 +1102,7 @@ func _typewriter_reveal(label: RichTextLabel, author: String, message: String) -
 		await get_tree().process_frame
 
 	_scroll_messages_to_bottom()
+	_settle_orb_after_response()
 
 
 func _typewriter_delay_for_character(character: String) -> float:
@@ -706,6 +1174,8 @@ func _set_merlin_state(state: int) -> void:
 	match state:
 		MerlinState.THINKING:
 			core_orb.set_thinking()
+		MerlinState.LISTENING:
+			core_orb.set_listening()
 		MerlinState.SPEAKING:
 			core_orb.set_speaking()
 		MerlinState.EXECUTING_TOOL:
@@ -719,9 +1189,11 @@ func _set_merlin_state(state: int) -> void:
 func _activity_text_for_state(state: int) -> String:
 	match state:
 		MerlinState.THINKING:
-			return "Merlin is focusing"
+			return "Merlin is thinking"
+		MerlinState.LISTENING:
+			return "Merlin is listening"
 		MerlinState.SPEAKING:
-			return "Merlin is responding"
+			return "Merlin is speaking"
 		MerlinState.EXECUTING_TOOL:
 			return "Executing verified tool action"
 		MerlinState.ERROR:
@@ -733,10 +1205,13 @@ func _activity_text_for_state(state: int) -> String:
 func _update_send_button() -> void:
 	var connected := web_socket_client.is_backend_connected()
 	send_button.disabled = not connected
+	voice_button.disabled = not connected or _is_recording
 	reconnect_button.disabled = web_socket_client.get_connection_state() == "connecting"
 
 
 func _focus_message_input() -> void:
+	if not is_instance_valid(message_input) or not message_input.visible:
+		return
 	_focus_request_id += 1
 	call_deferred("_apply_message_input_focus", _focus_request_id)
 

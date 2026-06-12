@@ -30,6 +30,12 @@ func set_thinking() -> void:
 	state_changed.emit("thinking")
 
 
+func set_listening() -> void:
+	if _organism != null:
+		_organism.call("set_listening")
+	state_changed.emit("listening")
+
+
 func set_speaking() -> void:
 	if _organism != null:
 		_organism.call("set_speaking")

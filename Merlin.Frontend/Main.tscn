@@ -26,6 +26,14 @@ color = Color(0, 0.008, 0.026, 1)
 [node name="MerlinWebSocketClient" type="Node" parent="."]
 script = ExtResource("2_ws")
 
+[node name="VoiceTranscribeRequest" type="HTTPRequest" parent="."]
+
+[node name="VoiceSynthesisRequest" type="HTTPRequest" parent="."]
+
+[node name="VoicePlayback" type="AudioStreamPlayer" parent="."]
+
+[node name="MicrophoneInput" type="AudioStreamPlayer" parent="."]
+
 [node name="StatusPanel" type="PanelContainer" parent="."]
 layout_mode = 1
 anchors_preset = 10
@@ -76,17 +84,17 @@ grow_vertical = 2
 
 [node name="ActivityPanel" type="PanelContainer" parent="."]
 layout_mode = 1
-anchors_preset = 8
+anchors_preset = 12
 anchor_left = 0.5
-anchor_top = 0.5
+anchor_top = 1.0
 anchor_right = 0.5
-anchor_bottom = 0.5
+anchor_bottom = 1.0
 offset_left = -220.0
-offset_top = 172.0
+offset_top = -142.0
 offset_right = 220.0
-offset_bottom = 232.0
+offset_bottom = -82.0
 grow_horizontal = 2
-grow_vertical = 2
+grow_vertical = 0
 
 [node name="ActivityMargin" type="MarginContainer" parent="ActivityPanel"]
 layout_mode = 2
@@ -126,6 +134,7 @@ layout_mode = 2
 theme_override_constants/separation = 8
 
 [node name="ChatPanel" type="PanelContainer" parent="."]
+visible = false
 layout_mode = 1
 anchors_preset = 12
 anchor_top = 1.0
@@ -175,6 +184,7 @@ layout_mode = 2
 text = "Merlin is processing..."
 
 [node name="CommandInput" type="PanelContainer" parent="."]
+visible = false
 layout_mode = 1
 anchors_preset = 12
 anchor_top = 1.0
@@ -199,6 +209,24 @@ placeholder_text = "Issue a command to Merlin..."
 [node name="SendButton" type="Button" parent="CommandInput/InputRow"]
 layout_mode = 2
 text = "Send"
+
+[node name="VoiceControl" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 12
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -140.0
+offset_top = -74.0
+offset_right = 140.0
+offset_bottom = -16.0
+grow_horizontal = 2
+grow_vertical = 0
+
+[node name="VoiceButton" type="Button" parent="VoiceControl"]
+layout_mode = 2
+text = "Hold to talk"
 
 [node name="OverlayContainer" type="Control" parent="."]
 layout_mode = 1

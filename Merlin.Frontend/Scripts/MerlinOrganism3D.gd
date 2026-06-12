@@ -1,7 +1,7 @@
 extends Node3D
 class_name MerlinOrganism3D
 
-enum OrganismState { IDLE, THINKING, SPEAKING, EXECUTING, ERROR, CONFIRMATION }
+enum OrganismState { IDLE, LISTENING, THINKING, SPEAKING, EXECUTING, ERROR, CONFIRMATION }
 
 class OrganismNode:
 	var base_position := Vector3.ZERO
@@ -126,6 +126,7 @@ var _speech_ripple_timer := 0.0
 var _speech_region_axes: Array[Vector3] = []
 var _speech_region_targets: Array[Vector3] = []
 var _speech_region_weights: Array[float] = []
+var _speech_region_directions: Array[float] = []
 var _speech_ripples: Array[SpeechRipple] = []
 
 var _graph_root: Node3D
@@ -163,6 +164,10 @@ func set_idle() -> void:
 
 func set_thinking() -> void:
 	_set_state(OrganismState.THINKING, CYAN, 0.42, 1.12)
+
+
+func set_listening() -> void:
+	_set_state(OrganismState.LISTENING, CYAN, 0.30, 1.06)
 
 
 func set_speaking() -> void:
@@ -614,6 +619,8 @@ func _state_activity_floor() -> float:
 	match current_state:
 		OrganismState.THINKING:
 			return 0.42
+		OrganismState.LISTENING:
+			return 0.30
 		OrganismState.SPEAKING:
 			return 0.58
 		OrganismState.EXECUTING:
@@ -632,6 +639,8 @@ func _state_brightness_floor() -> float:
 			return 1.00
 		OrganismState.THINKING:
 			return 1.12
+		OrganismState.LISTENING:
+			return 1.06
 		OrganismState.EXECUTING:
 			return 1.18
 		OrganismState.ERROR:
@@ -675,9 +684,11 @@ func _reset_speech_regions() -> void:
 	_speech_region_axes.clear()
 	_speech_region_targets.clear()
 	_speech_region_weights.clear()
+	_speech_region_directions.clear()
 	_speech_region_axes.append(default_axis)
 	_speech_region_targets.append(default_axis)
 	_speech_region_weights.append(1.0)
+	_speech_region_directions.append(1.0)
 
 
 func _spawn_speech_ripple() -> void:
@@ -733,9 +744,16 @@ func _pick_speech_region(progress: float = -1.0) -> void:
 
 	_speech_region_targets.clear()
 	_speech_region_weights.clear()
+	_speech_region_directions.clear()
 	for index in range(region_count):
 		_speech_region_targets.append(_speech_region_vector(progress, index, region_count))
 		_speech_region_weights.append(_rng.randf_range(0.72, 1.0))
+		var direction: float = 1.0 if _rng.randf() > 0.5 else -1.0
+		if index == 0 and region_count > 1:
+			direction = 1.0
+		elif index == 1 and region_count > 1:
+			direction = -1.0
+		_speech_region_directions.append(direction)
 
 	while _speech_region_axes.size() < region_count:
 		_speech_region_axes.append(_speech_region_targets[_speech_region_axes.size()])
@@ -799,17 +817,35 @@ func _speech_morph_offset(position: Vector3, phase: float, amount_scale: float) 
 	var radial := fallback_axis
 	if position.length_squared() > 0.001:
 		radial = position.normalized()
+	var signed_influence := _speech_signed_influence(radial)
+	if absf(signed_influence) <= 0.001:
+		return Vector3.ZERO
 	var tangent := _speech_tangent_axis(radial)
 	if tangent.length_squared() < 0.001:
 		tangent = radial.cross(Vector3.UP)
 	if tangent.length_squared() < 0.001:
 		tangent = Vector3.RIGHT
 	tangent = tangent.normalized()
-	var wave := sin(_time * 4.2 + phase * 1.7)
-	var smooth_wave := signf(wave) * pow(absf(wave), 0.72)
-	var regional_push := radial * influence * smooth_wave * 0.145
+	var wave := sin(_time * 4.2 + phase * 1.7) * 0.5 + 0.5
+	var smooth_wave := pow(wave, 0.72)
+	var regional_push := radial * signed_influence * smooth_wave * 0.145
 	var lateral_pull := tangent * influence * sin(_time * 4.8 + phase) * 0.018
 	return (regional_push + lateral_pull) * amount_scale
+
+
+func _speech_signed_influence(radial: Vector3) -> float:
+	var signed_regional := 0.0
+	for index in range(_speech_region_axes.size()):
+		var weight := 1.0
+		if index < _speech_region_weights.size():
+			weight = _speech_region_weights[index]
+		var direction: float = 1.0
+		if index < _speech_region_directions.size():
+			direction = _speech_region_directions[index]
+		var axis: Vector3 = _speech_region_axes[index]
+		var local: float = pow(clampf(radial.dot(axis) * 0.5 + 0.5, 0.0, 1.0), 12.0) * weight
+		signed_regional += local * direction
+	return clampf(signed_regional, -1.05, 1.05) * _speech_energy
 
 
 func _speech_tangent_axis(radial: Vector3) -> Vector3:
@@ -1034,6 +1070,9 @@ func _update_pulses(delta: float) -> void:
 		if current_state == OrganismState.THINKING:
 			_pulse_timer = _rng.randf_range(0.34, 0.68)
 			_spawn_energy_burst(_rng.randi_range(4, 6))
+		elif current_state == OrganismState.LISTENING:
+			_pulse_timer = _rng.randf_range(0.58, 1.05)
+			_spawn_energy_burst(_rng.randi_range(2, 3))
 		else:
 			_pulse_timer = _rng.randf_range(0.18, 0.48)
 
@@ -1070,12 +1109,13 @@ func _rebuild_speech_light_maps() -> void:
 	_node_speech_light.clear()
 	_dust_speech_light.clear()
 	_connection_speech_light.clear()
-	if current_state != OrganismState.THINKING:
+	if current_state != OrganismState.THINKING and current_state != OrganismState.LISTENING:
 		return
+	var state_scale := 0.50 if current_state == OrganismState.LISTENING else 1.0
 	for index in range(_destination_flashes.size()):
 		var flash: DestinationFlash = _destination_flashes[index]
 		var life := clampf(flash.age / maxf(flash.duration, 0.001), 0.0, 1.0)
-		var amount := pow(1.0 - life, 1.8) * flash.brightness
+		var amount := pow(1.0 - life, 1.8) * flash.brightness * state_scale
 		_add_node_region_light(flash.node_index, amount * 2.10)
 		_add_neighbor_region_light(flash.node_index, -1, amount * 0.42, 4)
 	for index in range(_pulses.size()):
