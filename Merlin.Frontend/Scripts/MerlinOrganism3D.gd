@@ -70,6 +70,8 @@ const ORGANISM_DISPLAY_SCALE := 0.76
 const ORB_FRAME_PROFILER_ENABLED := true
 const ORB_FRAME_PROFILER_REPORT_SECONDS := 1.0
 const ORB_FRAME_PROFILER_SPIKE_MS := 20.0
+const DUST_UPDATE_STRIDE := 2
+const PRESENTATION_ROTATION_LIMIT := Vector3(0.34, 100000.0, 0.26)
 
 const CYAN := {
 	"hot": Color("#F4FBFF"),
@@ -118,7 +120,10 @@ var _activity := 0.18
 var _target_activity := 0.18
 var _brightness := 1.0
 var _target_brightness := 1.0
-var _rotation_y := 0.0
+var _rotation := Vector3.ZERO
+var _rotation_velocity := Vector3.ZERO
+var _rotation_target_velocity := Vector3(0.006, 0.040, 0.004)
+var _rotation_target_timer := 0.0
 var _pulse_timer := 0.0
 var _speech_energy := 0.0
 var _speech_global_morph := 0.0
@@ -140,14 +145,19 @@ var _pulse_multimesh: MultiMeshInstance3D
 var _core_multimesh: MultiMeshInstance3D
 var _line_mesh_instance: MeshInstance3D
 var _glow_line_mesh_instance: MeshInstance3D
+var _pulse_line_mesh_instance: MeshInstance3D
+var _pulse_glow_line_mesh_instance: MeshInstance3D
 var _camera: Camera3D
 var _line_material: StandardMaterial3D
 var _glow_line_material: StandardMaterial3D
+var _pulse_line_material: StandardMaterial3D
+var _pulse_glow_line_material: StandardMaterial3D
 var _node_material: StandardMaterial3D
 var _hub_material: StandardMaterial3D
 var _dust_material: StandardMaterial3D
 var _pulse_material: StandardMaterial3D
 var _core_material: StandardMaterial3D
+var _orb_frame_index := 0
 var _orb_profile_last_report_usec := 0
 var _orb_profile_frames := 0
 var _orb_profile_total_ms := 0.0
@@ -185,7 +195,8 @@ func set_listening() -> void:
 
 func set_speaking() -> void:
 	_set_state(OrganismState.SPEAKING, CYAN, 0.58, 1.00)
-	_speech_energy = maxf(_speech_energy, 0.48)
+	_speech_energy = maxf(_speech_energy, 0.62)
+	_speech_global_morph = maxf(_speech_global_morph, 0.18)
 	_speech_region_timer = 0.0
 	_speech_global_timer = 0.0
 	_speech_ripple_timer = 0.0
@@ -205,14 +216,16 @@ func play_confirmation() -> void:
 
 
 func notify_speech_tick(_character: String = "", delay: float = 0.0, progress: float = 0.0) -> void:
-	_target_activity = maxf(_target_activity, 0.64)
+	_target_activity = maxf(_target_activity, 0.72)
 	_speech_tick_count += 1
-	_speech_energy = clampf(_speech_energy + 0.018 + clampf(delay, 0.0, 0.08) * 0.12, 0.0, 0.82)
-	if _speech_tick_count % 12 == 0:
+	_speech_energy = clampf(_speech_energy + 0.040 + clampf(delay, 0.0, 0.08) * 0.16, 0.0, 0.96)
+	if _speech_tick_count % 4 == 0:
+		_spawn_speech_ripple()
+	if _speech_tick_count % 6 == 0:
 		_pick_speech_region(progress)
-	if _speech_tick_count % 72 == 0:
-		_speech_global_morph = clampf(_speech_global_morph + 0.08, 0.0, 0.34)
-	if _speech_tick_count % 18 == 0:
+	if _speech_tick_count % 28 == 0:
+		_speech_global_morph = clampf(_speech_global_morph + 0.10, 0.0, 0.46)
+	if _speech_tick_count % 10 == 0:
 		_pick_speech_region(progress)
 
 
@@ -258,6 +271,18 @@ func _build_scene() -> void:
 	_line_material = _material(CYAN["line"], 1.0, true, true)
 	_line_mesh_instance.material_override = _line_material
 	_graph_root.add_child(_line_mesh_instance)
+
+	_pulse_glow_line_mesh_instance = MeshInstance3D.new()
+	_pulse_glow_line_mesh_instance.name = "PulseLineGlowMesh"
+	_pulse_glow_line_material = _material(CYAN["hot"], 0.36, true, true)
+	_pulse_glow_line_mesh_instance.material_override = _pulse_glow_line_material
+	_graph_root.add_child(_pulse_glow_line_mesh_instance)
+
+	_pulse_line_mesh_instance = MeshInstance3D.new()
+	_pulse_line_mesh_instance.name = "PulseLineMesh"
+	_pulse_line_material = _material(CYAN["hot"], 1.0, true, true)
+	_pulse_line_mesh_instance.material_override = _pulse_line_material
+	_graph_root.add_child(_pulse_line_mesh_instance)
 
 	_node_multimesh = MultiMeshInstance3D.new()
 	_node_multimesh.name = "Nodes"
@@ -582,6 +607,11 @@ func _setup_multimeshes() -> void:
 	_dust_multimesh.multimesh = _new_multimesh(_node_mesh(1.0), DUST_NODE_COUNT)
 	_pulse_multimesh.multimesh = _new_multimesh(_node_mesh(1.0), MAX_PULSES)
 	_core_multimesh.multimesh = _new_multimesh(_node_mesh(1.0), 1)
+	_rebuild_static_connection_meshes()
+	_update_nodes(0.0)
+	_update_dust(0.0, 0, 1)
+	_update_core_glow()
+	_update_materials()
 
 
 func _node_mesh(radius: float) -> SphereMesh:
@@ -604,6 +634,7 @@ func _new_multimesh(mesh: Mesh, count: int) -> MultiMesh:
 
 func _process(delta: float) -> void:
 	var profile_started_usec := Time.get_ticks_usec()
+	_orb_frame_index += 1
 	_time += delta
 	_activity = lerpf(_activity, _target_activity, minf(delta * 2.6, 1.0))
 	_brightness = lerpf(_brightness, _target_brightness, minf(delta * 2.6, 1.0))
@@ -611,15 +642,13 @@ func _process(delta: float) -> void:
 	_target_activity = lerpf(_target_activity, _state_activity_floor(), minf(delta * 0.9, 1.0))
 	_target_brightness = lerpf(_target_brightness, _state_brightness_floor(), minf(delta * 0.9, 1.0))
 	_update_autonomous_speech_motion(delta)
+	_update_speech_ripples(delta)
 	_speech_global_morph = move_toward(_speech_global_morph, 0.0, delta * 2.4)
 	_update_speech_region_axes(delta)
 
 	var breath := 1.0 + sin(_time * 0.82) * (0.020 + _activity * 0.012)
 	_graph_root.scale = Vector3.ONE * ORGANISM_DISPLAY_SCALE * breath
-	_rotation_y += delta * 0.054
-	_graph_root.rotation.y = _rotation_y
-	_graph_root.rotation.x = sin(_time * 0.21) * 0.055
-	_graph_root.rotation.z = sin(_time * 0.13) * 0.020
+	_update_organic_rotation(delta)
 
 	var section_started_usec := Time.get_ticks_usec()
 	_update_pulses(delta)
@@ -628,16 +657,42 @@ func _process(delta: float) -> void:
 	_update_nodes(delta)
 	_orb_profile_nodes_ms += _elapsed_ms_since_usec(section_started_usec)
 	section_started_usec = Time.get_ticks_usec()
-	_update_dust(delta)
+	_update_dust(delta, _orb_frame_index % DUST_UPDATE_STRIDE, DUST_UPDATE_STRIDE)
 	_orb_profile_dust_ms += _elapsed_ms_since_usec(section_started_usec)
 	section_started_usec = Time.get_ticks_usec()
-	_update_connections()
+	_update_pulse_connections()
 	_orb_profile_connections_ms += _elapsed_ms_since_usec(section_started_usec)
 	section_started_usec = Time.get_ticks_usec()
 	_update_core_glow()
 	_update_materials()
 	_orb_profile_materials_ms += _elapsed_ms_since_usec(section_started_usec)
 	_record_orb_frame(profile_started_usec)
+
+
+func _update_organic_rotation(delta: float) -> void:
+	_rotation_target_timer -= delta
+	if _rotation_target_timer <= 0.0:
+		_rotation_target_timer = _rng.randf_range(1.6, 3.8)
+		var state_energy := 1.0 + _activity * 0.55
+		_rotation_target_velocity = Vector3(
+			_rng.randf_range(-0.014, 0.014),
+			_rng.randf_range(-0.052, 0.058),
+			_rng.randf_range(-0.010, 0.010)
+		) * state_energy
+
+	_rotation_velocity = _rotation_velocity.lerp(_rotation_target_velocity, minf(delta * 0.85, 1.0))
+	_rotation += _rotation_velocity * delta
+	_rotation.x = clampf(_rotation.x, -PRESENTATION_ROTATION_LIMIT.x, PRESENTATION_ROTATION_LIMIT.x)
+	_rotation.z = clampf(_rotation.z, -PRESENTATION_ROTATION_LIMIT.z, PRESENTATION_ROTATION_LIMIT.z)
+	if absf(_rotation.x) >= PRESENTATION_ROTATION_LIMIT.x:
+		_rotation_velocity.x *= -0.35
+	if absf(_rotation.z) >= PRESENTATION_ROTATION_LIMIT.z:
+		_rotation_velocity.z *= -0.35
+	_graph_root.rotation = _rotation + Vector3(
+		sin(_time * 0.31) * 0.018,
+		sin(_time * 0.17) * 0.018,
+		sin(_time * 0.23) * 0.014
+	)
 
 
 func _elapsed_ms_since_usec(started_usec: int) -> float:
@@ -662,7 +717,7 @@ func _record_orb_frame(started_usec: int) -> void:
 	var report_due := float(now_usec - _orb_profile_last_report_usec) / 1000000.0 >= ORB_FRAME_PROFILER_REPORT_SECONDS
 	if report_due and (_orb_profile_spikes > 0 or _orb_profile_max_ms >= ORB_FRAME_PROFILER_SPIKE_MS):
 		var average_ms := _orb_profile_total_ms / maxf(float(_orb_profile_frames), 1.0)
-		print("Orb frame profile: state=%s frames=%s avgMs=%.2f maxMs=%.2f spikes=%s nodesMs=%.2f dustMs=%.2f connectionsMs=%.2f pulsesMs=%.2f materialsMs=%.2f nodes=%s dust=%s connections=%s" % [
+		print("Orb frame profile: state=%s frames=%s avgMs=%.2f maxMs=%.2f spikes=%s nodesMs=%.2f dustMs=%.2f pulseLinesMs=%.2f pulsesMs=%.2f materialsMs=%.2f nodes=%s dust=%s dustStride=%s connections=%s" % [
 			_organism_state_name(current_state),
 			_orb_profile_frames,
 			average_ms,
@@ -675,6 +730,7 @@ func _record_orb_frame(started_usec: int) -> void:
 			_orb_profile_materials_ms,
 			_nodes.size(),
 			_dust.size(),
+			DUST_UPDATE_STRIDE,
 			_connections.size()
 		])
 		_orb_profile_last_report_usec = now_usec
@@ -764,13 +820,18 @@ func _update_autonomous_speech_motion(delta: float) -> void:
 
 	_speech_region_timer -= delta
 	if _speech_region_timer <= 0.0:
-		_speech_region_timer = _rng.randf_range(0.85, 1.45)
+		_speech_region_timer = _rng.randf_range(0.22, 0.55)
 		_pick_speech_region(_rng.randf())
 
 	_speech_global_timer -= delta
 	if _speech_global_timer <= 0.0:
-		_speech_global_timer = _rng.randf_range(2.4, 4.2)
-		_speech_global_morph = clampf(_speech_global_morph + _rng.randf_range(0.06, 0.16), 0.0, 0.34)
+		_speech_global_timer = _rng.randf_range(0.70, 1.35)
+		_speech_global_morph = clampf(_speech_global_morph + _rng.randf_range(0.07, 0.18), 0.0, 0.52)
+
+	_speech_ripple_timer -= delta
+	if _speech_ripple_timer <= 0.0:
+		_speech_ripple_timer = _rng.randf_range(0.12, 0.28)
+		_spawn_speech_ripple()
 
 
 func _reset_speech_regions() -> void:
@@ -825,15 +886,15 @@ func _update_speech_region_axes(delta: float) -> void:
 
 func _pick_speech_region(progress: float = -1.0) -> void:
 	var roll := _rng.randf()
-	var region_count := 2
-	if roll > 0.95:
+	var region_count := 3
+	if roll > 0.90:
 		region_count = 5
-		_speech_global_morph = clampf(_speech_global_morph + _rng.randf_range(0.10, 0.20), 0.0, 0.68)
-	elif roll > 0.82:
+		_speech_global_morph = clampf(_speech_global_morph + _rng.randf_range(0.10, 0.20), 0.0, 0.72)
+	elif roll > 0.66:
 		region_count = 4
-	elif roll > 0.58:
+	elif roll > 0.28:
 		region_count = 3
-	elif roll > 0.30:
+	else:
 		region_count = 2
 
 	_speech_region_targets.clear()
@@ -882,8 +943,9 @@ func _speech_influence(position: Vector3) -> float:
 		var axis: Vector3 = _speech_region_axes[index]
 		regional += pow(clampf(radial.dot(axis) * 0.5 + 0.5, 0.0, 1.0), 12.0) * weight
 	regional = clampf(regional, 0.0, 1.05) * _speech_energy
+	var ripple := _speech_ripple_influence(radial)
 	var center_t := 1.0 - clampf(position.length() / ORB_RADIUS, 0.0, 1.0)
-	return clampf(regional * 0.92 + _speech_global_morph * (0.10 + center_t * 0.18), 0.0, 1.0)
+	return clampf(regional * 0.98 + ripple * 0.78 + _speech_global_morph * (0.12 + center_t * 0.22), 0.0, 1.0)
 
 
 func _speech_ripple_influence(radial: Vector3) -> float:
@@ -912,7 +974,10 @@ func _speech_morph_offset(position: Vector3, phase: float, amount_scale: float) 
 	if position.length_squared() > 0.001:
 		radial = position.normalized()
 	var signed_influence := _speech_signed_influence(radial)
-	if absf(signed_influence) <= 0.001:
+	var ripple_influence := _speech_ripple_influence(radial)
+	if ripple_influence > 0.001:
+		signed_influence += ripple_influence * sin(_time * 7.8 + phase) * 0.75
+	if absf(signed_influence) <= 0.001 and influence <= 0.001:
 		return Vector3.ZERO
 	var tangent := _speech_tangent_axis(radial)
 	if tangent.length_squared() < 0.001:
@@ -922,8 +987,8 @@ func _speech_morph_offset(position: Vector3, phase: float, amount_scale: float) 
 	tangent = tangent.normalized()
 	var wave := sin(_time * 4.2 + phase * 1.7) * 0.5 + 0.5
 	var smooth_wave := pow(wave, 0.72)
-	var regional_push := radial * signed_influence * smooth_wave * 0.145
-	var lateral_pull := tangent * influence * sin(_time * 4.8 + phase) * 0.018
+	var regional_push := radial * signed_influence * smooth_wave * 0.235
+	var lateral_pull := tangent * influence * sin(_time * 5.8 + phase) * 0.045
 	return (regional_push + lateral_pull) * amount_scale
 
 
@@ -1006,8 +1071,8 @@ func _update_nodes(_delta: float) -> void:
 			node_index += 1
 
 
-func _update_dust(_delta: float) -> void:
-	for index in range(_dust.size()):
+func _update_dust(_delta: float, start_index: int = 0, stride: int = 1) -> void:
+	for index in range(start_index, _dust.size(), stride):
 		var dust := _dust[index]
 		var orbit := Vector3(
 			cos(_time * 0.055 + dust.phase),
@@ -1030,7 +1095,7 @@ func _update_dust(_delta: float) -> void:
 		_dust_multimesh.multimesh.set_instance_color(index, color)
 
 
-func _update_connections() -> void:
+func _rebuild_static_connection_meshes() -> void:
 	var core_vertices := PackedVector3Array()
 	var core_colors := PackedColorArray()
 	var core_indices := PackedInt32Array()
@@ -1046,28 +1111,41 @@ func _update_connections() -> void:
 		var connection: OrganismConnection = _connections[connection_index]
 		var a := _nodes[connection.a]
 		var b := _nodes[connection.b]
-		var midpoint := (a.current_position + b.current_position) * 0.5
+		var midpoint := (a.base_position + b.base_position) * 0.5
 		var center_t := 1.0 - clampf(midpoint.length() / ORB_RADIUS, 0.0, 1.0)
 		var depth_t := _balanced_depth_light(midpoint, 0.90, 1.14)
 		var route_t := 1.0 if connection.route else 0.0
 		var shell_t := clampf(midpoint.length() / ORB_RADIUS, 0.0, 1.0)
 		var shell_band := pow(clampf((shell_t - 0.52) / 0.48, 0.0, 1.0), 0.72)
-		var flicker := 0.84 + pow(maxf(0.0, sin(_time * 1.2 + connection.phase)), 3.2) * 0.18
-		var speech_light := _connection_light(connection_index)
 		var route_boost := 1.08 + route_t * 0.18
-		var alpha := clampf(connection.base_alpha * flicker * depth_t * route_boost * _brightness * (1.0 + _activity * 0.08 + speech_light * 1.15), 0.075, 0.88)
-		var color := Color(_palette["dim"]).lerp(Color(_palette["line"]), clampf(0.36 + center_t * 0.20 + shell_band * 0.26 + route_t * 0.14, 0.0, 1.0))
-		color = color.lerp(Color(_palette["hot"]), clampf(center_t * 0.13 + shell_band * 0.10 + route_t * 0.14 + speech_light * 0.68, 0.0, 0.72))
+		var alpha := clampf(connection.base_alpha * depth_t * route_boost, 0.075, 0.88)
+		var color := Color.WHITE
 		color.a = alpha
-		var glow_color := color
-		glow_color.a = alpha * (0.040 + center_t * 0.018 + shell_band * 0.028 + route_t * 0.030 + speech_light * 0.090)
-		_add_line_quad_3d(glow_vertices, glow_colors, glow_indices, a.current_position, b.current_position, connection.width * (1.75 + route_t * 0.40 + speech_light * 1.35), glow_color, local_camera_forward, local_camera_up)
-		_add_line_quad_3d(core_vertices, core_colors, core_indices, a.current_position, b.current_position, connection.width * (1.08 + route_t * 0.12 + speech_light * 0.74), color, local_camera_forward, local_camera_up)
-
-	_add_traveling_light_segments(core_vertices, core_colors, core_indices, glow_vertices, glow_colors, glow_indices, local_camera_forward, local_camera_up)
+		var glow_color := Color.WHITE
+		glow_color.a = alpha * (0.040 + center_t * 0.018 + shell_band * 0.028 + route_t * 0.030)
+		_add_line_quad_3d(glow_vertices, glow_colors, glow_indices, a.base_position, b.base_position, connection.width * (1.75 + route_t * 0.40), glow_color, local_camera_forward, local_camera_up)
+		_add_line_quad_3d(core_vertices, core_colors, core_indices, a.base_position, b.base_position, connection.width * (1.08 + route_t * 0.12), color, local_camera_forward, local_camera_up)
 
 	_line_mesh_instance.mesh = _mesh_from_arrays(core_vertices, core_colors, core_indices)
 	_glow_line_mesh_instance.mesh = _mesh_from_arrays(glow_vertices, glow_colors, glow_indices)
+
+
+func _update_pulse_connections() -> void:
+	var core_vertices := PackedVector3Array()
+	var core_colors := PackedColorArray()
+	var core_indices := PackedInt32Array()
+	var glow_vertices := PackedVector3Array()
+	var glow_colors := PackedColorArray()
+	var glow_indices := PackedInt32Array()
+	var local_camera_forward := _graph_root.global_transform.basis.inverse() * _camera.global_transform.basis.z
+	var local_camera_up := _graph_root.global_transform.basis.inverse() * _camera.global_transform.basis.y
+	local_camera_forward = local_camera_forward.normalized()
+	local_camera_up = local_camera_up.normalized()
+
+	_add_traveling_light_segments(core_vertices, core_colors, core_indices, glow_vertices, glow_colors, glow_indices, local_camera_forward, local_camera_up)
+
+	_pulse_line_mesh_instance.mesh = _mesh_from_arrays(core_vertices, core_colors, core_indices)
+	_pulse_glow_line_mesh_instance.mesh = _mesh_from_arrays(glow_vertices, glow_colors, glow_indices)
 
 
 func _add_traveling_light_segments(
@@ -1393,6 +1471,8 @@ func _update_core_glow() -> void:
 func _update_materials() -> void:
 	_update_material_color(_line_material, _palette["line"], 1.0)
 	_update_material_color(_glow_line_material, _palette["line"], 0.10)
+	_update_material_color(_pulse_line_material, _palette["hot"], 1.0)
+	_update_material_color(_pulse_glow_line_material, _palette["hot"], 0.36)
 	_update_material_color(_node_material, _palette["node"], 1.0)
 	_update_material_color(_hub_material, _palette["hot"], 1.0)
 	_update_material_color(_dust_material, _palette["dust"], 0.24)

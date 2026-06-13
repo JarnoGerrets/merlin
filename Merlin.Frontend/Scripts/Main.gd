@@ -25,6 +25,7 @@ const VOICE_STREAM_POC_PORT := 5000
 const VOICE_STREAM_POC_PATH := "/api/voice/stream-pcm-test"
 const VOICE_GENERATOR_BUFFER_SECONDS := 0.50
 const VOICE_OUTPUT_DRAIN_SECONDS := 0.12
+const VOICE_SPEECH_TICK_FRAMES := 2048
 const RECORD_BUS_NAME := "MerlinRecord"
 const FRAME_PROFILER_ENABLED := true
 const FRAME_PROFILER_REPORT_SECONDS := 1.0
@@ -983,6 +984,7 @@ func _stream_speech_text(spoken_text: String, stream_path: String = VOICE_SYNTHE
 	var channels := 1
 	var stream_sample_rate := 24000
 	var frames_pushed := 0
+	var next_speech_tick_frame := VOICE_SPEECH_TICK_FRAMES
 	var first_byte_logged := false
 	var first_pcm_byte_logged := false
 	var first_pcm_buffered_logged := false
@@ -1104,6 +1106,9 @@ func _stream_speech_text(spoken_text: String, stream_path: String = VOICE_SYNTHE
 							_record_large_copy(maxi(pcm_bytes.size() - consumed, 0))
 							pcm_bytes = pcm_bytes.slice(consumed)
 							frames_pushed += int(consumed / (channels * 2))
+							while frames_pushed >= next_speech_tick_frame:
+								core_orb.notify_speech_tick("", 0.0, fmod(float(next_speech_tick_frame) / float(maxi(stream_sample_rate, 1)), 1.0))
+								next_speech_tick_frame += VOICE_SPEECH_TICK_FRAMES
 							if not first_audio_submitted_logged:
 								first_audio_submitted_logged = true
 								print("Voice timing: first audio submitted to Godot playback. ConsumedBytes: %s. FramesPushed: %s. SinceLlmMs: %.1f. RequestMs: %.1f" % [consumed, frames_pushed, _elapsed_ms_since(_llm_response_received_usec), _elapsed_ms_since(started_usec)])
@@ -1128,6 +1133,9 @@ func _stream_speech_text(spoken_text: String, stream_path: String = VOICE_SYNTHE
 				_record_large_copy(maxi(pcm_bytes.size() - consumed_after_poll, 0))
 				pcm_bytes = pcm_bytes.slice(consumed_after_poll)
 				frames_pushed += int(consumed_after_poll / (channels * 2))
+				while frames_pushed >= next_speech_tick_frame:
+					core_orb.notify_speech_tick("", 0.0, fmod(float(next_speech_tick_frame) / float(maxi(stream_sample_rate, 1)), 1.0))
+					next_speech_tick_frame += VOICE_SPEECH_TICK_FRAMES
 				if not first_audio_submitted_logged:
 					first_audio_submitted_logged = true
 					print("Voice timing: first audio submitted to Godot playback. ConsumedBytes: %s. FramesPushed: %s. SinceLlmMs: %.1f. RequestMs: %.1f" % [consumed_after_poll, frames_pushed, _elapsed_ms_since(_llm_response_received_usec), _elapsed_ms_since(started_usec)])
@@ -1151,6 +1159,9 @@ func _stream_speech_text(spoken_text: String, stream_path: String = VOICE_SYNTHE
 				_record_large_copy(maxi(pcm_bytes.size() - consumed_tail, 0))
 				pcm_bytes = pcm_bytes.slice(consumed_tail)
 				frames_pushed += int(consumed_tail / (channels * 2))
+				while frames_pushed >= next_speech_tick_frame:
+					core_orb.notify_speech_tick("", 0.0, fmod(float(next_speech_tick_frame) / float(maxi(stream_sample_rate, 1)), 1.0))
+					next_speech_tick_frame += VOICE_SPEECH_TICK_FRAMES
 		await get_tree().process_frame
 
 		if first_audio_submitted_logged and not first_audible_logged and voice_playback.get_playback_position() > 0.0:
