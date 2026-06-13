@@ -10,15 +10,21 @@ public sealed class WebSocketHandler
 {
     private static readonly JsonSerializerOptions JsonSerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly CommandRouter _commandRouter;
+    private readonly IAssistantSpeechPlaybackService _speechPlaybackService;
+    private readonly ISpeechPolicyService _speechPolicyService;
     private readonly ILogger<WebSocketHandler> _logger;
     private readonly IRuntimeStateService _runtimeStateService;
 
     public WebSocketHandler(
         CommandRouter commandRouter,
+        IAssistantSpeechPlaybackService speechPlaybackService,
+        ISpeechPolicyService speechPolicyService,
         ILogger<WebSocketHandler> logger,
         IRuntimeStateService runtimeStateService)
     {
         _commandRouter = commandRouter;
+        _speechPlaybackService = speechPlaybackService;
+        _speechPolicyService = speechPolicyService;
         _logger = logger;
         _runtimeStateService = runtimeStateService;
     }
@@ -33,6 +39,7 @@ public sealed class WebSocketHandler
         }
 
         using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
+        using var sendGate = new SemaphoreSlim(1, 1);
         _runtimeStateService.IncrementActiveWebSocketConnections();
         _logger.LogInformation(
             "WebSocket connection opened. ActiveConnections: {ActiveConnections}",
@@ -40,7 +47,7 @@ public sealed class WebSocketHandler
 
         try
         {
-            await ReceiveLoopAsync(webSocket, context.RequestAborted);
+            await ReceiveLoopAsync(webSocket, sendGate, context.RequestAborted);
         }
         finally
         {
@@ -51,7 +58,10 @@ public sealed class WebSocketHandler
         }
     }
 
-    private async Task ReceiveLoopAsync(System.Net.WebSockets.WebSocket webSocket, CancellationToken cancellationToken)
+    private async Task ReceiveLoopAsync(
+        System.Net.WebSockets.WebSocket webSocket,
+        SemaphoreSlim sendGate,
+        CancellationToken cancellationToken)
     {
         var buffer = new byte[4096];
 
@@ -66,8 +76,27 @@ public sealed class WebSocketHandler
 
             _logger.LogInformation("Incoming WebSocket message: {Message}", message);
 
+            var request = DeserializeRequest(message);
             var response = await ProcessMessageAsync(message, cancellationToken);
-            await SendResponseAsync(webSocket, response, cancellationToken);
+            await SendResponseAsync(webSocket, sendGate, response, cancellationToken);
+
+            var speechDecision = _speechPolicyService.Decide(request, response);
+            if (speechDecision.UsedLegacySpeakResponseFallback)
+            {
+                _logger.LogInformation(
+                    "Legacy speakResponse fallback used. CorrelationId: {CorrelationId}. SpeakResponse: {SpeakResponse}",
+                    response.CorrelationId,
+                    request?.SpeakResponse);
+            }
+
+            if (speechDecision.ShouldSpeak && speechDecision.ShouldQueue)
+            {
+                await _speechPlaybackService.EnqueueAsync(
+                    speechDecision.SpeechTextOverride ?? ResponseSpeechText(response),
+                    response.CorrelationId,
+                    (visualEvent, token) => SendVisualEventAsync(webSocket, sendGate, visualEvent, token),
+                    cancellationToken);
+            }
         }
     }
 
@@ -151,18 +180,86 @@ public sealed class WebSocketHandler
         }
     }
 
+    private AssistantRequest? DeserializeRequest(string rawMessage)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<AssistantRequest>(rawMessage, JsonSerializerOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     private static async Task SendResponseAsync(
         System.Net.WebSockets.WebSocket webSocket,
+        SemaphoreSlim sendGate,
         AssistantResponse response,
         CancellationToken cancellationToken)
     {
         var json = JsonSerializer.Serialize(response, JsonSerializerOptions);
+        await SendJsonAsync(webSocket, sendGate, json, cancellationToken);
+    }
+
+    private static async Task SendVisualEventAsync(
+        System.Net.WebSockets.WebSocket webSocket,
+        SemaphoreSlim sendGate,
+        AssistantVisualEvent visualEvent,
+        CancellationToken cancellationToken)
+    {
+        var json = JsonSerializer.Serialize(visualEvent, JsonSerializerOptions);
+        await SendJsonAsync(webSocket, sendGate, json, cancellationToken);
+    }
+
+    private static async Task SendJsonAsync(
+        System.Net.WebSockets.WebSocket webSocket,
+        SemaphoreSlim sendGate,
+        string json,
+        CancellationToken cancellationToken)
+    {
+        if (webSocket.State != WebSocketState.Open)
+        {
+            return;
+        }
+
         var bytes = Encoding.UTF8.GetBytes(json);
 
-        await webSocket.SendAsync(
-            bytes,
-            WebSocketMessageType.Text,
-            endOfMessage: true,
-            cancellationToken);
+        await sendGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (webSocket.State != WebSocketState.Open)
+            {
+                return;
+            }
+
+            await webSocket.SendAsync(
+                bytes,
+                WebSocketMessageType.Text,
+                endOfMessage: true,
+                cancellationToken);
+        }
+        finally
+        {
+            sendGate.Release();
+        }
+    }
+
+    private static string ResponseSpeechText(AssistantResponse response)
+    {
+        if (response.Success)
+        {
+            return response.Message;
+        }
+
+        if (!string.IsNullOrWhiteSpace(response.ErrorCode)
+            && response.ErrorCode != "UNKNOWN_INPUT"
+            && response.ErrorCode != "MISSING_CAPABILITY"
+            && response.ErrorCode != "UNSUPPORTED_ACTION")
+        {
+            return $"{response.ErrorCode} - {response.Message}";
+        }
+
+        return response.Message;
     }
 }

@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Update="Configuration\merlin-constitution.md">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

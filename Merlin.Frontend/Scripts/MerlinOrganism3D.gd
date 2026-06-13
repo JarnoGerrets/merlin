@@ -66,11 +66,17 @@ const MAX_CONNECTION_DISTANCE := 0.92
 const HUB_CONNECTION_DISTANCE := 1.20
 const MAX_PULSES := 36
 const MAX_DESTINATION_FLASHES := 24
+const SPEECH_MORPH_REGION_COUNT := 48
 const ORGANISM_DISPLAY_SCALE := 0.76
-const ORB_FRAME_PROFILER_ENABLED := true
+const ORB_FRAME_PROFILER_ENABLED := false
 const ORB_FRAME_PROFILER_REPORT_SECONDS := 1.0
 const ORB_FRAME_PROFILER_SPIKE_MS := 20.0
-const DUST_UPDATE_STRIDE := 2
+const SPEAKING_STARTUP_PROFILER_ENABLED := false
+const SPEAKING_STARTUP_PROFILE_BUCKETS_MS := [0, 100, 250, 500, 1000, 2000, 3000, 4000, 5000, 6000, 7000]
+const ORB_QUALITY_HIGH := 0
+const ORB_QUALITY_SAFE := 1
+const ORB_QUALITY_EMERGENCY := 2
+const ORB_QUALITY_MODE := ORB_QUALITY_SAFE
 const PRESENTATION_ROTATION_LIMIT := Vector3(0.34, 100000.0, 0.26)
 
 const CYAN := {
@@ -136,6 +142,16 @@ var _speech_region_targets: Array[Vector3] = []
 var _speech_region_weights: Array[float] = []
 var _speech_region_directions: Array[float] = []
 var _speech_ripples: Array[SpeechRipple] = []
+var _speech_morph_region_axes: Array[Vector3] = []
+var _speech_morph_region_offsets: Array[Vector3] = []
+var _node_speech_primary_regions: Array[int] = []
+var _node_speech_secondary_regions: Array[int] = []
+var _node_speech_secondary_weights: Array[float] = []
+var _node_speech_local_weights: Array[float] = []
+var _dust_speech_primary_regions: Array[int] = []
+var _dust_speech_secondary_regions: Array[int] = []
+var _dust_speech_secondary_weights: Array[float] = []
+var _dust_speech_local_weights: Array[float] = []
 
 var _graph_root: Node3D
 var _node_multimesh: MultiMeshInstance3D
@@ -158,6 +174,7 @@ var _dust_material: StandardMaterial3D
 var _pulse_material: StandardMaterial3D
 var _core_material: StandardMaterial3D
 var _orb_frame_index := 0
+var _pulse_connection_mesh_active := false
 var _orb_profile_last_report_usec := 0
 var _orb_profile_frames := 0
 var _orb_profile_total_ms := 0.0
@@ -167,7 +184,84 @@ var _orb_profile_dust_ms := 0.0
 var _orb_profile_connections_ms := 0.0
 var _orb_profile_pulses_ms := 0.0
 var _orb_profile_materials_ms := 0.0
+var _orb_profile_palette_ms := 0.0
+var _orb_profile_speech_maps_ms := 0.0
+var _orb_profile_pulse_mesh_ms := 0.0
+var _orb_profile_node_transform_sets := 0
+var _orb_profile_node_color_sets := 0
+var _orb_profile_dust_transform_sets := 0
+var _orb_profile_dust_color_sets := 0
+var _orb_profile_pulse_mesh_builds := 0
 var _orb_profile_spikes := 0
+var _speaking_profile_active := false
+var _speaking_profile_started_usec := 0
+var _speaking_profile_next_bucket_index := 0
+var _speaking_profile_frame_index := 0
+var _speaking_profile_energy_events := 0
+var _speaking_profile_first_energy_usec := 0
+var _speaking_profile_peak_frame_ms := 0.0
+var _speaking_profile_peak_frame_index := 0
+var _speaking_profile_region_pick_count := 0
+var _speaking_profile_ripple_spawn_count := 0
+var _speaking_profile_speech_map_rebuild_count := 0
+var _speaking_profile_pulse_mesh_build_count := 0
+var _speaking_profile_array_mesh_resource_count := 0
+var _speaking_profile_packed_array_count := 0
+var _speaking_profile_speech_map_clear_count := 0
+var _speaking_profile_region_array_reset_count := 0
+var _speaking_profile_frame_node_transform_sets := 0
+var _speaking_profile_frame_node_color_sets := 0
+var _speaking_profile_frame_dust_transform_sets := 0
+var _speaking_profile_frame_dust_color_sets := 0
+var _speaking_profile_frame_pulse_transform_sets := 0
+var _speaking_profile_frame_pulse_color_sets := 0
+var _speaking_profile_frame_pulse_mesh_builds := 0
+var _speaking_profile_frame_array_mesh_resources := 0
+var _speaking_profile_frame_packed_arrays := 0
+var _speaking_profile_frame_speech_map_rebuilds := 0
+var _speaking_profile_frame_region_picks := 0
+var _speaking_profile_frame_region_array_resets := 0
+var _speaking_profile_frame_ripple_spawns := 0
+var _speaking_profile_frame_node_morph_ms := 0.0
+var _speaking_profile_frame_node_position_ms := 0.0
+var _speaking_profile_frame_node_speech_lookup_ms := 0.0
+var _speaking_profile_frame_node_color_calc_ms := 0.0
+var _speaking_profile_frame_node_transform_upload_ms := 0.0
+var _speaking_profile_frame_node_color_upload_ms := 0.0
+var _speaking_profile_frame_dust_morph_ms := 0.0
+var _speaking_profile_frame_dust_position_ms := 0.0
+var _speaking_profile_frame_dust_speech_lookup_ms := 0.0
+var _speaking_profile_frame_dust_color_calc_ms := 0.0
+var _speaking_profile_frame_dust_transform_upload_ms := 0.0
+var _speaking_profile_frame_dust_color_upload_ms := 0.0
+var _speaking_profile_frame_node_displacement_total := 0.0
+var _speaking_profile_frame_node_displacement_max := 0.0
+var _speaking_profile_frame_node_displacement_count := 0
+var _speaking_profile_frame_dust_displacement_total := 0.0
+var _speaking_profile_frame_dust_displacement_max := 0.0
+var _speaking_profile_frame_dust_displacement_count := 0
+var _speaking_profile_frame_node_color_delta_total := 0.0
+var _speaking_profile_frame_node_color_delta_max := 0.0
+var _speaking_profile_frame_node_color_delta_count := 0
+var _speaking_profile_frame_dust_color_delta_total := 0.0
+var _speaking_profile_frame_dust_color_delta_max := 0.0
+var _speaking_profile_frame_dust_color_delta_count := 0
+var _speaking_profile_energy_first_values: Array[float] = []
+var _speaking_profile_max_energy_first_second := 0.0
+var _speaking_profile_segment_frame_counts := [0, 0, 0]
+var _speaking_profile_segment_frame_ms := [0.0, 0.0, 0.0]
+var _speaking_profile_segment_nodes_ms := [0.0, 0.0, 0.0]
+var _speaking_profile_segment_dust_ms := [0.0, 0.0, 0.0]
+var _speaking_profile_segment_node_morph_ms := [0.0, 0.0, 0.0]
+var _speaking_profile_segment_dust_morph_ms := [0.0, 0.0, 0.0]
+var _speaking_profile_segment_node_transform_upload_ms := [0.0, 0.0, 0.0]
+var _speaking_profile_segment_dust_transform_upload_ms := [0.0, 0.0, 0.0]
+var _speaking_profile_segment_node_color_upload_ms := [0.0, 0.0, 0.0]
+var _speaking_profile_segment_dust_color_upload_ms := [0.0, 0.0, 0.0]
+var _speaking_profile_segment_energy_total := [0.0, 0.0, 0.0]
+var _speaking_profile_segment_energy_max := [0.0, 0.0, 0.0]
+var _speaking_profile_previous_node_colors: Array[Color] = []
+var _speaking_profile_previous_dust_colors: Array[Color] = []
 
 
 func _ready() -> void:
@@ -175,6 +269,7 @@ func _ready() -> void:
 	_reset_speech_regions()
 	_build_scene()
 	_generate_nodes()
+	_build_speech_morph_regions()
 	_build_node_dust_indices()
 	_generate_connections()
 	_setup_multimeshes()
@@ -193,14 +288,93 @@ func set_listening() -> void:
 	_set_state(OrganismState.LISTENING, CYAN, 0.30, 1.06)
 
 
+func start_speaking_startup_profile() -> void:
+	if not SPEAKING_STARTUP_PROFILER_ENABLED:
+		return
+	_speaking_profile_active = true
+	_speaking_profile_started_usec = Time.get_ticks_usec()
+	_speaking_profile_next_bucket_index = 0
+	_speaking_profile_frame_index = 0
+	_speaking_profile_energy_events = 0
+	_speaking_profile_first_energy_usec = 0
+	_speaking_profile_peak_frame_ms = 0.0
+	_speaking_profile_peak_frame_index = 0
+	_speaking_profile_region_pick_count = 0
+	_speaking_profile_ripple_spawn_count = 0
+	_speaking_profile_speech_map_rebuild_count = 0
+	_speaking_profile_pulse_mesh_build_count = 0
+	_speaking_profile_array_mesh_resource_count = 0
+	_speaking_profile_packed_array_count = 0
+	_speaking_profile_speech_map_clear_count = 0
+	_speaking_profile_region_array_reset_count = 0
+	_speaking_profile_energy_first_values.clear()
+	_speaking_profile_max_energy_first_second = 0.0
+	for index in range(3):
+		_speaking_profile_segment_frame_counts[index] = 0
+		_speaking_profile_segment_frame_ms[index] = 0.0
+		_speaking_profile_segment_nodes_ms[index] = 0.0
+		_speaking_profile_segment_dust_ms[index] = 0.0
+		_speaking_profile_segment_node_morph_ms[index] = 0.0
+		_speaking_profile_segment_dust_morph_ms[index] = 0.0
+		_speaking_profile_segment_node_transform_upload_ms[index] = 0.0
+		_speaking_profile_segment_dust_transform_upload_ms[index] = 0.0
+		_speaking_profile_segment_node_color_upload_ms[index] = 0.0
+		_speaking_profile_segment_dust_color_upload_ms[index] = 0.0
+		_speaking_profile_segment_energy_total[index] = 0.0
+		_speaking_profile_segment_energy_max[index] = 0.0
+	var snapshot_started_usec := Time.get_ticks_usec()
+	_snapshot_speaking_profile_colors()
+	var snapshot_ms := _elapsed_ms_since_usec(snapshot_started_usec)
+	var node_instance_count := 0
+	if _node_multimesh != null and _node_multimesh.multimesh != null:
+		node_instance_count += _node_multimesh.multimesh.instance_count
+	if _hub_multimesh != null and _hub_multimesh.multimesh != null:
+		node_instance_count += _hub_multimesh.multimesh.instance_count
+	var dust_instance_count := 0
+	if _dust_multimesh != null and _dust_multimesh.multimesh != null:
+		dust_instance_count = _dust_multimesh.multimesh.instance_count
+	var pulse_instance_count := 0
+	if _pulse_multimesh != null and _pulse_multimesh.multimesh != null:
+		pulse_instance_count = _pulse_multimesh.multimesh.instance_count
+	print("Speaking startup profile: begin. StateBefore: %s. Quality: %s. Nodes: %s. Dust: %s. Connections: %s. Pulses: %s. Ripples: %s. NodeInstances: %s. DustInstances: %s. PulseInstances: %s. ColorSnapshotMs: %.3f" % [
+		_organism_state_name(current_state),
+		_orb_quality_name(),
+		_nodes.size(),
+		_dust.size(),
+		_connections.size(),
+		_pulses.size(),
+		_speech_ripples.size(),
+		node_instance_count,
+		dust_instance_count,
+		pulse_instance_count,
+		snapshot_ms
+	])
+
+
 func set_speaking() -> void:
+	var started_usec := Time.get_ticks_usec()
+	var state_started_usec := started_usec
 	_set_state(OrganismState.SPEAKING, CYAN, 0.58, 1.00)
+	var state_ms := _elapsed_ms_since_usec(state_started_usec)
+	var activation_started_usec := Time.get_ticks_usec()
 	_speech_energy = maxf(_speech_energy, 0.62)
 	_speech_global_morph = maxf(_speech_global_morph, 0.18)
 	_speech_region_timer = 0.0
 	_speech_global_timer = 0.0
 	_speech_ripple_timer = 0.0
+	var activation_ms := _elapsed_ms_since_usec(activation_started_usec)
+	var region_started_usec := Time.get_ticks_usec()
 	_pick_speech_region()
+	var region_ms := _elapsed_ms_since_usec(region_started_usec)
+	if _speaking_profile_active:
+		print("Speaking startup profile: set_speaking. StateMs: %.3f. ActivationMs: %.3f. InitialRegionPickMs: %.3f. TotalMs: %.3f. SpeechEnergy: %.3f. RegionCount: %s" % [
+			state_ms,
+			activation_ms,
+			region_ms,
+			_elapsed_ms_since_usec(started_usec),
+			_speech_energy,
+			_speech_region_axes.size()
+		])
 
 
 func play_tool_execution(_duration: float = 2.5) -> void:
@@ -216,8 +390,18 @@ func play_confirmation() -> void:
 
 
 func notify_speech_tick(_character: String = "", delay: float = 0.0, progress: float = 0.0) -> void:
+	var tick_started_usec := Time.get_ticks_usec()
 	_target_activity = maxf(_target_activity, 0.72)
 	_speech_tick_count += 1
+	if _speaking_profile_active:
+		_speaking_profile_energy_events += 1
+		if _speaking_profile_first_energy_usec <= 0:
+			_speaking_profile_first_energy_usec = tick_started_usec
+		if _speaking_profile_energy_first_values.size() < 3:
+			_speaking_profile_energy_first_values.append(progress)
+		var energy_elapsed_ms := float(tick_started_usec - _speaking_profile_started_usec) / 1000.0
+		if energy_elapsed_ms <= 1000.0:
+			_speaking_profile_max_energy_first_second = maxf(_speaking_profile_max_energy_first_second, progress)
 	_speech_energy = clampf(_speech_energy + 0.040 + clampf(delay, 0.0, 0.08) * 0.16, 0.0, 0.96)
 	if _speech_tick_count % 4 == 0:
 		_spawn_speech_ripple()
@@ -227,6 +411,14 @@ func notify_speech_tick(_character: String = "", delay: float = 0.0, progress: f
 		_speech_global_morph = clampf(_speech_global_morph + 0.10, 0.0, 0.46)
 	if _speech_tick_count % 10 == 0:
 		_pick_speech_region(progress)
+	if _speaking_profile_active and _speaking_profile_energy_events == 1:
+		var since_start_ms := float(tick_started_usec - _speaking_profile_started_usec) / 1000.0
+		print("Speaking startup profile: first speech energy applied. SinceStartMs: %.3f. TickMs: %.3f. Energy: %.3f. Progress: %.3f" % [
+			since_start_ms,
+			_elapsed_ms_since_usec(tick_started_usec),
+			_speech_energy,
+			progress
+		])
 
 
 func _set_state(state: int, palette: Dictionary, activity: float, brightness: float) -> void:
@@ -418,6 +610,63 @@ func _generate_nodes() -> void:
 		dust.radius = _rng.randf_range(0.0018, 0.0042)
 		dust.brightness = _rng.randf_range(0.08, 0.26)
 		_dust.append(dust)
+
+
+func _build_speech_morph_regions() -> void:
+	_speech_morph_region_axes.clear()
+	_speech_morph_region_offsets.clear()
+	for index in range(SPEECH_MORPH_REGION_COUNT):
+		var t := (float(index) + 0.5) / float(SPEECH_MORPH_REGION_COUNT)
+		var z := 1.0 - 2.0 * t
+		var radius := sqrt(maxf(0.0, 1.0 - z * z))
+		var angle := float(index) * 2.399963229728653
+		var axis := Vector3(cos(angle) * radius, sin(angle) * radius, z).normalized()
+		_speech_morph_region_axes.append(axis)
+		_speech_morph_region_offsets.append(Vector3.ZERO)
+	_precompute_speech_membership(_nodes, _node_speech_primary_regions, _node_speech_secondary_regions, _node_speech_secondary_weights, _node_speech_local_weights, false)
+	_precompute_speech_membership(_dust, _dust_speech_primary_regions, _dust_speech_secondary_regions, _dust_speech_secondary_weights, _dust_speech_local_weights, true)
+
+
+func _precompute_speech_membership(
+	items: Array[OrganismNode],
+	primary_regions: Array[int],
+	secondary_regions: Array[int],
+	secondary_weights: Array[float],
+	local_weights: Array[float],
+	dust_items: bool
+) -> void:
+	primary_regions.clear()
+	secondary_regions.clear()
+	secondary_weights.clear()
+	local_weights.clear()
+	for item in items:
+		var radial := item.base_position.normalized() if item.base_position.length_squared() > 0.001 else Vector3.UP
+		var best_index := 0
+		var second_index := 0
+		var best_dot := -2.0
+		var second_dot := -2.0
+		for region_index in range(_speech_morph_region_axes.size()):
+			var dot_value := radial.dot(_speech_morph_region_axes[region_index])
+			if dot_value > best_dot:
+				second_dot = best_dot
+				second_index = best_index
+				best_dot = dot_value
+				best_index = region_index
+			elif dot_value > second_dot:
+				second_dot = dot_value
+				second_index = region_index
+		var blend := clampf((second_dot + 1.0) / maxf(best_dot + second_dot + 2.0, 0.001), 0.12, 0.42)
+		var radius_t := clampf(item.base_position.length() / ORB_RADIUS, 0.0, 1.22)
+		var local_weight := 0.86 + sin(item.phase * 1.71) * 0.14
+		if dust_items:
+			local_weight = 0.0 if not item.hub and item.source_node < 0 else 0.42 + sin(item.phase * 1.37) * 0.10
+			local_weight *= lerpf(1.05, 0.74, clampf(radius_t, 0.0, 1.0))
+		else:
+			local_weight *= lerpf(1.12, 0.84, clampf(radius_t, 0.0, 1.0))
+		primary_regions.append(best_index)
+		secondary_regions.append(second_index)
+		secondary_weights.append(blend)
+		local_weights.append(maxf(0.0, local_weight))
 
 
 func _network_position(index: int) -> Vector3:
@@ -634,38 +883,66 @@ func _new_multimesh(mesh: Mesh, count: int) -> MultiMesh:
 
 func _process(delta: float) -> void:
 	var profile_started_usec := Time.get_ticks_usec()
+	_reset_speaking_profile_frame_counters()
 	_orb_frame_index += 1
 	_time += delta
 	_activity = lerpf(_activity, _target_activity, minf(delta * 2.6, 1.0))
 	_brightness = lerpf(_brightness, _target_brightness, minf(delta * 2.6, 1.0))
-	_palette = _lerp_palette(_palette, _target_palette, minf(delta * 3.2, 1.0))
+	var palette_started_usec := Time.get_ticks_usec()
+	_update_palette(minf(delta * 3.2, 1.0))
+	var palette_ms := _elapsed_ms_since_usec(palette_started_usec)
+	_orb_profile_palette_ms += palette_ms
 	_target_activity = lerpf(_target_activity, _state_activity_floor(), minf(delta * 0.9, 1.0))
 	_target_brightness = lerpf(_target_brightness, _state_brightness_floor(), minf(delta * 0.9, 1.0))
+	var speech_motion_started_usec := Time.get_ticks_usec()
 	_update_autonomous_speech_motion(delta)
 	_update_speech_ripples(delta)
 	_speech_global_morph = move_toward(_speech_global_morph, 0.0, delta * 2.4)
 	_update_speech_region_axes(delta)
+	_update_cached_speech_morph_regions()
+	var speech_motion_ms := _elapsed_ms_since_usec(speech_motion_started_usec)
 
 	var breath := 1.0 + sin(_time * 0.82) * (0.020 + _activity * 0.012)
 	_graph_root.scale = Vector3.ONE * ORGANISM_DISPLAY_SCALE * breath
+	var rotation_started_usec := Time.get_ticks_usec()
 	_update_organic_rotation(delta)
+	var rotation_ms := _elapsed_ms_since_usec(rotation_started_usec)
 
 	var section_started_usec := Time.get_ticks_usec()
 	_update_pulses(delta)
-	_orb_profile_pulses_ms += _elapsed_ms_since_usec(section_started_usec)
+	var pulses_ms := _elapsed_ms_since_usec(section_started_usec)
+	_orb_profile_pulses_ms += pulses_ms
 	section_started_usec = Time.get_ticks_usec()
 	_update_nodes(delta)
-	_orb_profile_nodes_ms += _elapsed_ms_since_usec(section_started_usec)
+	var nodes_ms := _elapsed_ms_since_usec(section_started_usec)
+	_orb_profile_nodes_ms += nodes_ms
 	section_started_usec = Time.get_ticks_usec()
-	_update_dust(delta, _orb_frame_index % DUST_UPDATE_STRIDE, DUST_UPDATE_STRIDE)
-	_orb_profile_dust_ms += _elapsed_ms_since_usec(section_started_usec)
+	var dust_stride := _dust_update_stride()
+	_update_dust(delta, _orb_frame_index % dust_stride, dust_stride)
+	var dust_ms := _elapsed_ms_since_usec(section_started_usec)
+	_orb_profile_dust_ms += dust_ms
 	section_started_usec = Time.get_ticks_usec()
-	_update_pulse_connections()
-	_orb_profile_connections_ms += _elapsed_ms_since_usec(section_started_usec)
+	if _orb_frame_index % _pulse_connection_update_stride() == 0 or (_pulse_connection_mesh_active and _pulses.is_empty()):
+		_update_pulse_connections()
+	var connections_ms := _elapsed_ms_since_usec(section_started_usec)
+	_orb_profile_connections_ms += connections_ms
 	section_started_usec = Time.get_ticks_usec()
 	_update_core_glow()
 	_update_materials()
-	_orb_profile_materials_ms += _elapsed_ms_since_usec(section_started_usec)
+	var materials_ms := _elapsed_ms_since_usec(section_started_usec)
+	_orb_profile_materials_ms += materials_ms
+	_record_speaking_startup_frame(
+		profile_started_usec,
+		delta,
+		palette_ms,
+		speech_motion_ms,
+		rotation_ms,
+		pulses_ms,
+		nodes_ms,
+		dust_ms,
+		connections_ms,
+		materials_ms
+	)
 	_record_orb_frame(profile_started_usec)
 
 
@@ -699,6 +976,274 @@ func _elapsed_ms_since_usec(started_usec: int) -> float:
 	return float(Time.get_ticks_usec() - started_usec) / 1000.0
 
 
+func _reset_speaking_profile_frame_counters() -> void:
+	if not _speaking_profile_active:
+		return
+	_speaking_profile_frame_node_transform_sets = 0
+	_speaking_profile_frame_node_color_sets = 0
+	_speaking_profile_frame_dust_transform_sets = 0
+	_speaking_profile_frame_dust_color_sets = 0
+	_speaking_profile_frame_pulse_transform_sets = 0
+	_speaking_profile_frame_pulse_color_sets = 0
+	_speaking_profile_frame_pulse_mesh_builds = 0
+	_speaking_profile_frame_array_mesh_resources = 0
+	_speaking_profile_frame_packed_arrays = 0
+	_speaking_profile_frame_speech_map_rebuilds = 0
+	_speaking_profile_frame_region_picks = 0
+	_speaking_profile_frame_region_array_resets = 0
+	_speaking_profile_frame_ripple_spawns = 0
+	_speaking_profile_frame_node_morph_ms = 0.0
+	_speaking_profile_frame_node_position_ms = 0.0
+	_speaking_profile_frame_node_speech_lookup_ms = 0.0
+	_speaking_profile_frame_node_color_calc_ms = 0.0
+	_speaking_profile_frame_node_transform_upload_ms = 0.0
+	_speaking_profile_frame_node_color_upload_ms = 0.0
+	_speaking_profile_frame_dust_morph_ms = 0.0
+	_speaking_profile_frame_dust_position_ms = 0.0
+	_speaking_profile_frame_dust_speech_lookup_ms = 0.0
+	_speaking_profile_frame_dust_color_calc_ms = 0.0
+	_speaking_profile_frame_dust_transform_upload_ms = 0.0
+	_speaking_profile_frame_dust_color_upload_ms = 0.0
+	_speaking_profile_frame_node_displacement_total = 0.0
+	_speaking_profile_frame_node_displacement_max = 0.0
+	_speaking_profile_frame_node_displacement_count = 0
+	_speaking_profile_frame_dust_displacement_total = 0.0
+	_speaking_profile_frame_dust_displacement_max = 0.0
+	_speaking_profile_frame_dust_displacement_count = 0
+	_speaking_profile_frame_node_color_delta_total = 0.0
+	_speaking_profile_frame_node_color_delta_max = 0.0
+	_speaking_profile_frame_node_color_delta_count = 0
+	_speaking_profile_frame_dust_color_delta_total = 0.0
+	_speaking_profile_frame_dust_color_delta_max = 0.0
+	_speaking_profile_frame_dust_color_delta_count = 0
+
+
+func _snapshot_speaking_profile_colors() -> void:
+	_speaking_profile_previous_node_colors.clear()
+	_speaking_profile_previous_dust_colors.clear()
+	if _node_multimesh != null and _node_multimesh.multimesh != null:
+		for index in range(_node_multimesh.multimesh.instance_count):
+			_speaking_profile_previous_node_colors.append(_node_multimesh.multimesh.get_instance_color(index))
+	if _hub_multimesh != null and _hub_multimesh.multimesh != null:
+		for index in range(_hub_multimesh.multimesh.instance_count):
+			_speaking_profile_previous_node_colors.append(_hub_multimesh.multimesh.get_instance_color(index))
+	if _dust_multimesh != null and _dust_multimesh.multimesh != null:
+		for index in range(_dust_multimesh.multimesh.instance_count):
+			_speaking_profile_previous_dust_colors.append(_dust_multimesh.multimesh.get_instance_color(index))
+
+
+func _profile_color_delta(a: Color, b: Color) -> float:
+	return absf(a.r - b.r) + absf(a.g - b.g) + absf(a.b - b.b) + absf(a.a - b.a)
+
+
+func _speaking_profile_segment_index(elapsed_ms: float) -> int:
+	if elapsed_ms < 1000.0:
+		return 0
+	if elapsed_ms < 3000.0:
+		return 1
+	return 2
+
+
+func _record_speaking_startup_frame(
+	started_usec: int,
+	delta: float,
+	palette_ms: float,
+	speech_motion_ms: float,
+	rotation_ms: float,
+	pulses_ms: float,
+	nodes_ms: float,
+	dust_ms: float,
+	connections_ms: float,
+	materials_ms: float
+) -> void:
+	if not _speaking_profile_active:
+		return
+
+	var now_usec := Time.get_ticks_usec()
+	var frame_ms := float(now_usec - started_usec) / 1000.0
+	_speaking_profile_frame_index += 1
+	if frame_ms > _speaking_profile_peak_frame_ms:
+		_speaking_profile_peak_frame_ms = frame_ms
+		_speaking_profile_peak_frame_index = _speaking_profile_frame_index
+
+	var elapsed_ms := float(now_usec - _speaking_profile_started_usec) / 1000.0
+	var segment_index := _speaking_profile_segment_index(elapsed_ms)
+	_speaking_profile_segment_frame_counts[segment_index] += 1
+	_speaking_profile_segment_frame_ms[segment_index] += frame_ms
+	_speaking_profile_segment_nodes_ms[segment_index] += nodes_ms
+	_speaking_profile_segment_dust_ms[segment_index] += dust_ms
+	_speaking_profile_segment_node_morph_ms[segment_index] += _speaking_profile_frame_node_morph_ms
+	_speaking_profile_segment_dust_morph_ms[segment_index] += _speaking_profile_frame_dust_morph_ms
+	_speaking_profile_segment_node_transform_upload_ms[segment_index] += _speaking_profile_frame_node_transform_upload_ms
+	_speaking_profile_segment_dust_transform_upload_ms[segment_index] += _speaking_profile_frame_dust_transform_upload_ms
+	_speaking_profile_segment_node_color_upload_ms[segment_index] += _speaking_profile_frame_node_color_upload_ms
+	_speaking_profile_segment_dust_color_upload_ms[segment_index] += _speaking_profile_frame_dust_color_upload_ms
+	_speaking_profile_segment_energy_total[segment_index] += _speech_energy
+	_speaking_profile_segment_energy_max[segment_index] = maxf(float(_speaking_profile_segment_energy_max[segment_index]), _speech_energy)
+	while _speaking_profile_next_bucket_index < SPEAKING_STARTUP_PROFILE_BUCKETS_MS.size() and elapsed_ms >= float(SPEAKING_STARTUP_PROFILE_BUCKETS_MS[_speaking_profile_next_bucket_index]):
+		var bucket_ms: int = SPEAKING_STARTUP_PROFILE_BUCKETS_MS[_speaking_profile_next_bucket_index]
+		var first_energy_ms := -1.0
+		if _speaking_profile_first_energy_usec > 0:
+			first_energy_ms = float(_speaking_profile_first_energy_usec - _speaking_profile_started_usec) / 1000.0
+		var node_displacement_avg := _speaking_profile_frame_node_displacement_total / maxf(float(_speaking_profile_frame_node_displacement_count), 1.0)
+		var dust_displacement_avg := _speaking_profile_frame_dust_displacement_total / maxf(float(_speaking_profile_frame_dust_displacement_count), 1.0)
+		var node_color_delta_avg := _speaking_profile_frame_node_color_delta_total / maxf(float(_speaking_profile_frame_node_color_delta_count), 1.0)
+		var dust_color_delta_avg := _speaking_profile_frame_dust_color_delta_total / maxf(float(_speaking_profile_frame_dust_color_delta_count), 1.0)
+		print("Speaking startup timeline: bucketMs=%s elapsedMs=%.3f frame=%s frameMs=%.3f deltaMs=%.3f paletteMs=%.3f speechMotionMs=%.3f rotationMs=%.3f pulsesMs=%.3f nodesMs=%.3f dustMs=%.3f connectionMs=%.3f materialMs=%.3f nodeTransformSets=%s nodeColorSets=%s dustTransformSets=%s dustColorSets=%s pulseTransformSets=%s pulseColorSets=%s pulseMeshBuildsFrame=%s arrayMeshResourcesFrame=%s packedArraysFrame=%s speechMapRebuildsFrame=%s regionPicksFrame=%s regionArrayResetsFrame=%s rippleSpawnsFrame=%s energyEvents=%s firstEnergyMs=%.3f totalRegionPicks=%s totalRipples=%s totalSpeechMapRebuilds=%s totalPulseMeshBuilds=%s totalArrayMeshResources=%s totalPackedArrays=%s speechMapClears=%s regionArrayResets=%s pulses=%s ripples=%s pulseMeshActive=%s state=%s gcIndicator=not_exposed" % [
+			bucket_ms,
+			elapsed_ms,
+			_speaking_profile_frame_index,
+			frame_ms,
+			delta * 1000.0,
+			palette_ms,
+			speech_motion_ms,
+			rotation_ms,
+			pulses_ms,
+			nodes_ms,
+			dust_ms,
+			connections_ms,
+			materials_ms,
+			_speaking_profile_frame_node_transform_sets,
+			_speaking_profile_frame_node_color_sets,
+			_speaking_profile_frame_dust_transform_sets,
+			_speaking_profile_frame_dust_color_sets,
+			_speaking_profile_frame_pulse_transform_sets,
+			_speaking_profile_frame_pulse_color_sets,
+			_speaking_profile_frame_pulse_mesh_builds,
+			_speaking_profile_frame_array_mesh_resources,
+			_speaking_profile_frame_packed_arrays,
+			_speaking_profile_frame_speech_map_rebuilds,
+			_speaking_profile_frame_region_picks,
+			_speaking_profile_frame_region_array_resets,
+			_speaking_profile_frame_ripple_spawns,
+			_speaking_profile_energy_events,
+			first_energy_ms,
+			_speaking_profile_region_pick_count,
+			_speaking_profile_ripple_spawn_count,
+			_speaking_profile_speech_map_rebuild_count,
+			_speaking_profile_pulse_mesh_build_count,
+			_speaking_profile_array_mesh_resource_count,
+			_speaking_profile_packed_array_count,
+			_speaking_profile_speech_map_clear_count,
+			_speaking_profile_region_array_reset_count,
+			_pulses.size(),
+			_speech_ripples.size(),
+			_pulse_connection_mesh_active,
+			_organism_state_name(current_state)
+		])
+		print("Speaking startup deep: bucketMs=%s nodesMorphMs=%.3f nodesPositionMs=%.3f nodesSpeechLookupMs=%.3f nodesColorCalcMs=%.3f nodesTransformUploadMs=%.3f nodesColorUploadMs=%.3f dustMorphMs=%.3f dustPositionMs=%.3f dustSpeechLookupMs=%.3f dustColorCalcMs=%.3f dustTransformUploadMs=%.3f dustColorUploadMs=%.3f incomingEnergyFirst3=%s incomingEnergyMaxFirstSecond=%.3f appliedSpeechEnergy=%.3f nodeDisplacementAvg=%.5f nodeDisplacementMax=%.5f dustDisplacementAvg=%.5f dustDisplacementMax=%.5f nodeColorDeltaAvg=%.5f nodeColorDeltaMax=%.5f dustColorDeltaAvg=%.5f dustColorDeltaMax=%.5f colorDeltaSamplesNodes=%s colorDeltaSamplesDust=%s" % [
+			bucket_ms,
+			_speaking_profile_frame_node_morph_ms,
+			_speaking_profile_frame_node_position_ms,
+			_speaking_profile_frame_node_speech_lookup_ms,
+			_speaking_profile_frame_node_color_calc_ms,
+			_speaking_profile_frame_node_transform_upload_ms,
+			_speaking_profile_frame_node_color_upload_ms,
+			_speaking_profile_frame_dust_morph_ms,
+			_speaking_profile_frame_dust_position_ms,
+			_speaking_profile_frame_dust_speech_lookup_ms,
+			_speaking_profile_frame_dust_color_calc_ms,
+			_speaking_profile_frame_dust_transform_upload_ms,
+			_speaking_profile_frame_dust_color_upload_ms,
+			str(_speaking_profile_energy_first_values),
+			_speaking_profile_max_energy_first_second,
+			_speech_energy,
+			node_displacement_avg,
+			_speaking_profile_frame_node_displacement_max,
+			dust_displacement_avg,
+			_speaking_profile_frame_dust_displacement_max,
+			node_color_delta_avg,
+			_speaking_profile_frame_node_color_delta_max,
+			dust_color_delta_avg,
+			_speaking_profile_frame_dust_color_delta_max,
+			_speaking_profile_frame_node_color_delta_count,
+			_speaking_profile_frame_dust_color_delta_count
+		])
+		_speaking_profile_next_bucket_index += 1
+
+	if elapsed_ms >= 7000.0:
+		var summary_first_energy_ms := -1.0
+		if _speaking_profile_first_energy_usec > 0:
+			summary_first_energy_ms = float(_speaking_profile_first_energy_usec - _speaking_profile_started_usec) / 1000.0
+		print("Speaking startup profile: complete. DurationMs=%.3f frames=%s peakFrameMs=%.3f peakFrame=%s energyEvents=%s firstEnergyMs=%.3f totalRegionPicks=%s totalRipples=%s totalSpeechMapRebuilds=%s totalPulseMeshBuilds=%s totalArrayMeshResources=%s totalPackedArrays=%s speechMapClears=%s regionArrayResets=%s finalPulses=%s finalRipples=%s" % [
+			elapsed_ms,
+			_speaking_profile_frame_index,
+			_speaking_profile_peak_frame_ms,
+			_speaking_profile_peak_frame_index,
+			_speaking_profile_energy_events,
+			summary_first_energy_ms,
+			_speaking_profile_region_pick_count,
+			_speaking_profile_ripple_spawn_count,
+			_speaking_profile_speech_map_rebuild_count,
+			_speaking_profile_pulse_mesh_build_count,
+			_speaking_profile_array_mesh_resource_count,
+			_speaking_profile_packed_array_count,
+			_speaking_profile_speech_map_clear_count,
+			_speaking_profile_region_array_reset_count,
+			_pulses.size(),
+			_speech_ripples.size()
+		])
+		var segment_labels := ["0-1s", "1-3s", "3-7s"]
+		for index in range(3):
+			var frame_count := maxf(float(_speaking_profile_segment_frame_counts[index]), 1.0)
+			print("Speaking startup segment: range=%s frames=%s avgFrameMs=%.3f avgNodesMs=%.3f avgDustMs=%.3f avgNodeMorphMs=%.3f avgDustMorphMs=%.3f avgNodeTransformUploadMs=%.3f avgDustTransformUploadMs=%.3f avgNodeColorUploadMs=%.3f avgDustColorUploadMs=%.3f avgAppliedEnergy=%.3f maxAppliedEnergy=%.3f" % [
+				segment_labels[index],
+				_speaking_profile_segment_frame_counts[index],
+				float(_speaking_profile_segment_frame_ms[index]) / frame_count,
+				float(_speaking_profile_segment_nodes_ms[index]) / frame_count,
+				float(_speaking_profile_segment_dust_ms[index]) / frame_count,
+				float(_speaking_profile_segment_node_morph_ms[index]) / frame_count,
+				float(_speaking_profile_segment_dust_morph_ms[index]) / frame_count,
+				float(_speaking_profile_segment_node_transform_upload_ms[index]) / frame_count,
+				float(_speaking_profile_segment_dust_transform_upload_ms[index]) / frame_count,
+				float(_speaking_profile_segment_node_color_upload_ms[index]) / frame_count,
+				float(_speaking_profile_segment_dust_color_upload_ms[index]) / frame_count,
+				float(_speaking_profile_segment_energy_total[index]) / frame_count,
+				float(_speaking_profile_segment_energy_max[index])
+			])
+		_speaking_profile_active = false
+
+
+func _dust_update_stride() -> int:
+	match ORB_QUALITY_MODE:
+		ORB_QUALITY_HIGH:
+			return 2
+		ORB_QUALITY_EMERGENCY:
+			return 5
+		_:
+			return 3
+
+
+func _pulse_connection_update_stride() -> int:
+	match ORB_QUALITY_MODE:
+		ORB_QUALITY_HIGH:
+			return 1
+		ORB_QUALITY_EMERGENCY:
+			return 4
+		_:
+			return 2
+
+
+func _node_color_update_stride() -> int:
+	match ORB_QUALITY_MODE:
+		ORB_QUALITY_HIGH:
+			return 1
+		ORB_QUALITY_EMERGENCY:
+			return 4
+		_:
+			return 2
+
+
+func _dust_color_update_stride() -> int:
+	match ORB_QUALITY_MODE:
+		ORB_QUALITY_HIGH:
+			return 1
+		ORB_QUALITY_EMERGENCY:
+			return 4
+		_:
+			return 2
+
+
 func _record_orb_frame(started_usec: int) -> void:
 	if not ORB_FRAME_PROFILER_ENABLED:
 		return
@@ -717,8 +1262,9 @@ func _record_orb_frame(started_usec: int) -> void:
 	var report_due := float(now_usec - _orb_profile_last_report_usec) / 1000000.0 >= ORB_FRAME_PROFILER_REPORT_SECONDS
 	if report_due and (_orb_profile_spikes > 0 or _orb_profile_max_ms >= ORB_FRAME_PROFILER_SPIKE_MS):
 		var average_ms := _orb_profile_total_ms / maxf(float(_orb_profile_frames), 1.0)
-		print("Orb frame profile: state=%s frames=%s avgMs=%.2f maxMs=%.2f spikes=%s nodesMs=%.2f dustMs=%.2f pulseLinesMs=%.2f pulsesMs=%.2f materialsMs=%.2f nodes=%s dust=%s dustStride=%s connections=%s" % [
+		print("Orb frame profile: state=%s quality=%s frames=%s avgMs=%.2f maxMs=%.2f spikes=%s nodesMs=%.2f dustMs=%.2f pulseLinesMs=%.2f pulsesMs=%.2f materialsMs=%.2f paletteMs=%.2f speechMapsMs=%.2f pulseMeshMs=%.2f nodeTransformSets=%s nodeColorSets=%s dustTransformSets=%s dustColorSets=%s pulseMeshBuilds=%s nodes=%s dust=%s dustStride=%s pulseStride=%s connections=%s" % [
 			_organism_state_name(current_state),
+			_orb_quality_name(),
 			_orb_profile_frames,
 			average_ms,
 			_orb_profile_max_ms,
@@ -728,9 +1274,18 @@ func _record_orb_frame(started_usec: int) -> void:
 			_orb_profile_connections_ms,
 			_orb_profile_pulses_ms,
 			_orb_profile_materials_ms,
+			_orb_profile_palette_ms,
+			_orb_profile_speech_maps_ms,
+			_orb_profile_pulse_mesh_ms,
+			_orb_profile_node_transform_sets,
+			_orb_profile_node_color_sets,
+			_orb_profile_dust_transform_sets,
+			_orb_profile_dust_color_sets,
+			_orb_profile_pulse_mesh_builds,
 			_nodes.size(),
 			_dust.size(),
-			DUST_UPDATE_STRIDE,
+			_dust_update_stride(),
+			_pulse_connection_update_stride(),
 			_connections.size()
 		])
 		_orb_profile_last_report_usec = now_usec
@@ -742,7 +1297,25 @@ func _record_orb_frame(started_usec: int) -> void:
 		_orb_profile_connections_ms = 0.0
 		_orb_profile_pulses_ms = 0.0
 		_orb_profile_materials_ms = 0.0
+		_orb_profile_palette_ms = 0.0
+		_orb_profile_speech_maps_ms = 0.0
+		_orb_profile_pulse_mesh_ms = 0.0
+		_orb_profile_node_transform_sets = 0
+		_orb_profile_node_color_sets = 0
+		_orb_profile_dust_transform_sets = 0
+		_orb_profile_dust_color_sets = 0
+		_orb_profile_pulse_mesh_builds = 0
 		_orb_profile_spikes = 0
+
+
+func _orb_quality_name() -> String:
+	match ORB_QUALITY_MODE:
+		ORB_QUALITY_HIGH:
+			return "HIGH"
+		ORB_QUALITY_EMERGENCY:
+			return "EMERGENCY"
+		_:
+			return "SAFE"
 
 
 func _organism_state_name(state: int) -> String:
@@ -799,14 +1372,12 @@ func _state_brightness_floor() -> float:
 			return 1.0
 
 
-func _lerp_palette(from_palette: Dictionary, to_palette: Dictionary, amount: float) -> Dictionary:
-	return {
-		"hot": Color(from_palette["hot"]).lerp(Color(to_palette["hot"]), amount),
-		"node": Color(from_palette["node"]).lerp(Color(to_palette["node"]), amount),
-		"line": Color(from_palette["line"]).lerp(Color(to_palette["line"]), amount),
-		"dim": Color(from_palette["dim"]).lerp(Color(to_palette["dim"]), amount),
-		"dust": Color(from_palette["dust"]).lerp(Color(to_palette["dust"]), amount),
-	}
+func _update_palette(amount: float) -> void:
+	_palette["hot"] = Color(_palette["hot"]).lerp(Color(_target_palette["hot"]), amount)
+	_palette["node"] = Color(_palette["node"]).lerp(Color(_target_palette["node"]), amount)
+	_palette["line"] = Color(_palette["line"]).lerp(Color(_target_palette["line"]), amount)
+	_palette["dim"] = Color(_palette["dim"]).lerp(Color(_target_palette["dim"]), amount)
+	_palette["dust"] = Color(_palette["dust"]).lerp(Color(_target_palette["dust"]), amount)
 
 
 func _update_autonomous_speech_motion(delta: float) -> void:
@@ -847,6 +1418,9 @@ func _reset_speech_regions() -> void:
 
 
 func _spawn_speech_ripple() -> void:
+	if _speaking_profile_active:
+		_speaking_profile_ripple_spawn_count += 1
+		_speaking_profile_frame_ripple_spawns += 1
 	if _speech_ripples.size() >= 18:
 		_speech_ripples.remove_at(0)
 	var ripple: SpeechRipple = SpeechRipple.new()
@@ -885,6 +1459,9 @@ func _update_speech_region_axes(delta: float) -> void:
 
 
 func _pick_speech_region(progress: float = -1.0) -> void:
+	if _speaking_profile_active:
+		_speaking_profile_region_pick_count += 1
+		_speaking_profile_frame_region_picks += 1
 	var roll := _rng.randf()
 	var region_count := 3
 	if roll > 0.90:
@@ -900,6 +1477,9 @@ func _pick_speech_region(progress: float = -1.0) -> void:
 	_speech_region_targets.clear()
 	_speech_region_weights.clear()
 	_speech_region_directions.clear()
+	if _speaking_profile_active:
+		_speaking_profile_region_array_reset_count += 3
+		_speaking_profile_frame_region_array_resets += 3
 	for index in range(region_count):
 		_speech_region_targets.append(_speech_region_vector(progress, index, region_count))
 		_speech_region_weights.append(_rng.randf_range(0.72, 1.0))
@@ -992,6 +1572,55 @@ func _speech_morph_offset(position: Vector3, phase: float, amount_scale: float) 
 	return (regional_push + lateral_pull) * amount_scale
 
 
+func _update_cached_speech_morph_regions() -> void:
+	if _speech_morph_region_offsets.is_empty():
+		return
+	if current_state != OrganismState.SPEAKING:
+		for index in range(_speech_morph_region_offsets.size()):
+			_speech_morph_region_offsets[index] = Vector3.ZERO
+		return
+	for index in range(_speech_morph_region_axes.size()):
+		var axis := _speech_morph_region_axes[index]
+		var phase := float(index) * 1.137 + _time * 0.11
+		_speech_morph_region_offsets[index] = _speech_morph_offset(axis * ORB_RADIUS, phase, 1.0)
+
+
+func _cached_node_speech_morph(index: int, phase: float) -> Vector3:
+	if index < 0 or index >= _node_speech_primary_regions.size():
+		return Vector3.ZERO
+	var primary_index := _node_speech_primary_regions[index]
+	var secondary_index := _node_speech_secondary_regions[index]
+	if primary_index < 0 or primary_index >= _speech_morph_region_offsets.size():
+		return Vector3.ZERO
+	var primary := _speech_morph_region_offsets[primary_index]
+	var secondary := primary
+	if secondary_index >= 0 and secondary_index < _speech_morph_region_offsets.size():
+		secondary = _speech_morph_region_offsets[secondary_index]
+	var blend := _node_speech_secondary_weights[index]
+	var local_weight := _node_speech_local_weights[index]
+	var chatter := 0.78 + sin(_time * 4.2 + phase * 1.7) * 0.22
+	return primary.lerp(secondary, blend) * local_weight * chatter
+
+
+func _cached_dust_speech_morph(index: int, phase: float) -> Vector3:
+	if index < 0 or index >= _dust_speech_primary_regions.size():
+		return Vector3.ZERO
+	var local_weight := _dust_speech_local_weights[index]
+	if local_weight <= 0.001:
+		return Vector3.ZERO
+	var primary_index := _dust_speech_primary_regions[index]
+	var secondary_index := _dust_speech_secondary_regions[index]
+	if primary_index < 0 or primary_index >= _speech_morph_region_offsets.size():
+		return Vector3.ZERO
+	var primary := _speech_morph_region_offsets[primary_index]
+	var secondary := primary
+	if secondary_index >= 0 and secondary_index < _speech_morph_region_offsets.size():
+		secondary = _speech_morph_region_offsets[secondary_index]
+	var blend := _dust_speech_secondary_weights[index]
+	var chatter := 0.68 + sin(_time * 3.1 + phase * 1.23) * 0.14
+	return primary.lerp(secondary, blend) * local_weight * chatter
+
+
 func _speech_signed_influence(radial: Vector3) -> float:
 	var signed_regional := 0.0
 	for index in range(_speech_region_axes.size()):
@@ -1035,8 +1664,11 @@ func _connection_light(index: int) -> float:
 func _update_nodes(_delta: float) -> void:
 	var node_index := 0
 	var hub_index := 0
+	var update_color := _orb_frame_index == 0 or _orb_frame_index % _node_color_update_stride() == 0
+	var profile_active := _speaking_profile_active
 	for index in range(_nodes.size()):
 		var node := _nodes[index]
+		var position_started_usec := Time.get_ticks_usec() if profile_active else 0
 		var drift_scale := 0.030 + _activity * 0.045
 		var drift := Vector3(
 			sin(_time * 0.37 + node.phase),
@@ -1045,54 +1677,167 @@ func _update_nodes(_delta: float) -> void:
 		) * drift_scale
 		var radial := node.base_position.normalized() if node.base_position.length_squared() > 0.001 else Vector3.UP
 		var local_breath := radial * sin(_time * 0.56 + node.phase) * (0.012 + _activity * 0.018)
-		var speech_morph: Vector3 = _speech_morph_offset(node.base_position, node.phase, 1.0) if current_state == OrganismState.SPEAKING else Vector3.ZERO
+		if profile_active:
+			_speaking_profile_frame_node_position_ms += _elapsed_ms_since_usec(position_started_usec)
+		var morph_started_usec := Time.get_ticks_usec() if profile_active else 0
+		var speech_morph: Vector3 = _cached_node_speech_morph(index, node.phase) if current_state == OrganismState.SPEAKING else Vector3.ZERO
+		if profile_active:
+			_speaking_profile_frame_node_morph_ms += _elapsed_ms_since_usec(morph_started_usec)
+		var previous_position := node.current_position
+		position_started_usec = Time.get_ticks_usec() if profile_active else 0
 		node.current_position = node.base_position + drift + local_breath + speech_morph
+		if profile_active:
+			var displacement := previous_position.distance_to(node.current_position)
+			_speaking_profile_frame_node_displacement_total += displacement
+			_speaking_profile_frame_node_displacement_max = maxf(_speaking_profile_frame_node_displacement_max, displacement)
+			_speaking_profile_frame_node_displacement_count += 1
 
 		var center_t := 1.0 - clampf(node.current_position.length() / ORB_RADIUS, 0.0, 1.0)
 		var depth_t := _balanced_depth_light(node.current_position, 0.94, 1.16)
 		var pulse := 0.0
 		if node.hub:
 			pulse = pow(maxf(0.0, sin(_time * (0.95 + node.phase * 0.02) + node.phase)), 8.0) * 0.75
+		if profile_active:
+			_speaking_profile_frame_node_position_ms += _elapsed_ms_since_usec(position_started_usec)
+		var speech_lookup_started_usec := Time.get_ticks_usec() if profile_active else 0
 		var speech_light := _node_light(index)
+		if profile_active:
+			_speaking_profile_frame_node_speech_lookup_ms += _elapsed_ms_since_usec(speech_lookup_started_usec)
+		position_started_usec = Time.get_ticks_usec() if profile_active else 0
 		var shell_t := clampf(node.current_position.length() / ORB_RADIUS, 0.0, 1.0)
 		var shell_light := pow(clampf((shell_t - 0.58) / 0.42, 0.0, 1.0), 0.9) * 0.28
-		var alpha := clampf((0.38 + center_t * 0.34 + shell_light + pulse * 0.18 + speech_light * 0.62) * depth_t * _brightness, 0.16, 1.0)
-		var color := Color(_palette["node"]).lerp(Color(_palette["hot"]), clampf(center_t * 0.48 + shell_light * 0.9 + pulse + speech_light * 0.72, 0.0, 1.0))
-		color.a = alpha
 		var scale := node.radius * (1.0 + pulse * 0.14 + speech_light * 0.42)
 		var transform := Transform3D(Basis().scaled(Vector3.ONE * scale), node.current_position)
+		if profile_active:
+			_speaking_profile_frame_node_position_ms += _elapsed_ms_since_usec(position_started_usec)
 		if node.hub:
+			var upload_started_usec := Time.get_ticks_usec() if profile_active else 0
 			_hub_multimesh.multimesh.set_instance_transform(hub_index, transform)
-			_hub_multimesh.multimesh.set_instance_color(hub_index, color)
+			if profile_active:
+				_speaking_profile_frame_node_transform_upload_ms += _elapsed_ms_since_usec(upload_started_usec)
+			_orb_profile_node_transform_sets += 1
+			if _speaking_profile_active:
+				_speaking_profile_frame_node_transform_sets += 1
+			if update_color:
+				var color_started_usec := Time.get_ticks_usec() if profile_active else 0
+				var alpha := clampf((0.38 + center_t * 0.34 + shell_light + pulse * 0.18 + speech_light * 0.62) * depth_t * _brightness, 0.16, 1.0)
+				var color := Color(_palette["node"]).lerp(Color(_palette["hot"]), clampf(center_t * 0.48 + shell_light * 0.9 + pulse + speech_light * 0.72, 0.0, 1.0))
+				color.a = alpha
+				if profile_active:
+					_speaking_profile_frame_node_color_calc_ms += _elapsed_ms_since_usec(color_started_usec)
+					var previous_color_index := _node_multimesh.multimesh.instance_count + hub_index
+					if previous_color_index < _speaking_profile_previous_node_colors.size():
+						var color_delta := _profile_color_delta(_speaking_profile_previous_node_colors[previous_color_index], color)
+						_speaking_profile_frame_node_color_delta_total += color_delta
+						_speaking_profile_frame_node_color_delta_max = maxf(_speaking_profile_frame_node_color_delta_max, color_delta)
+						_speaking_profile_frame_node_color_delta_count += 1
+						_speaking_profile_previous_node_colors[previous_color_index] = color
+				upload_started_usec = Time.get_ticks_usec() if profile_active else 0
+				_hub_multimesh.multimesh.set_instance_color(hub_index, color)
+				if profile_active:
+					_speaking_profile_frame_node_color_upload_ms += _elapsed_ms_since_usec(upload_started_usec)
+				_orb_profile_node_color_sets += 1
+				if _speaking_profile_active:
+					_speaking_profile_frame_node_color_sets += 1
 			hub_index += 1
 		else:
+			var upload_started_usec := Time.get_ticks_usec() if profile_active else 0
 			_node_multimesh.multimesh.set_instance_transform(node_index, transform)
-			_node_multimesh.multimesh.set_instance_color(node_index, color)
+			if profile_active:
+				_speaking_profile_frame_node_transform_upload_ms += _elapsed_ms_since_usec(upload_started_usec)
+			_orb_profile_node_transform_sets += 1
+			if _speaking_profile_active:
+				_speaking_profile_frame_node_transform_sets += 1
+			if update_color:
+				var color_started_usec := Time.get_ticks_usec() if profile_active else 0
+				var alpha := clampf((0.38 + center_t * 0.34 + shell_light + pulse * 0.18 + speech_light * 0.62) * depth_t * _brightness, 0.16, 1.0)
+				var color := Color(_palette["node"]).lerp(Color(_palette["hot"]), clampf(center_t * 0.48 + shell_light * 0.9 + pulse + speech_light * 0.72, 0.0, 1.0))
+				color.a = alpha
+				if profile_active:
+					_speaking_profile_frame_node_color_calc_ms += _elapsed_ms_since_usec(color_started_usec)
+					if node_index < _speaking_profile_previous_node_colors.size():
+						var color_delta := _profile_color_delta(_speaking_profile_previous_node_colors[node_index], color)
+						_speaking_profile_frame_node_color_delta_total += color_delta
+						_speaking_profile_frame_node_color_delta_max = maxf(_speaking_profile_frame_node_color_delta_max, color_delta)
+						_speaking_profile_frame_node_color_delta_count += 1
+						_speaking_profile_previous_node_colors[node_index] = color
+				upload_started_usec = Time.get_ticks_usec() if profile_active else 0
+				_node_multimesh.multimesh.set_instance_color(node_index, color)
+				if profile_active:
+					_speaking_profile_frame_node_color_upload_ms += _elapsed_ms_since_usec(upload_started_usec)
+				_orb_profile_node_color_sets += 1
+				if _speaking_profile_active:
+					_speaking_profile_frame_node_color_sets += 1
 			node_index += 1
 
 
 func _update_dust(_delta: float, start_index: int = 0, stride: int = 1) -> void:
+	var update_color := _orb_frame_index == 0 or _orb_frame_index % _dust_color_update_stride() == 0
+	var profile_active := _speaking_profile_active
 	for index in range(start_index, _dust.size(), stride):
 		var dust := _dust[index]
+		var position_started_usec := Time.get_ticks_usec() if profile_active else 0
 		var orbit := Vector3(
 			cos(_time * 0.055 + dust.phase),
 			sin(_time * 0.071 + dust.phase * 1.2),
 			cos(_time * 0.043 + dust.phase * 0.7)
 		) * 0.045
 		var can_morph: bool = dust.hub or dust.source_node >= 0
-		var speech_morph: Vector3 = _speech_morph_offset(dust.base_position, dust.phase, 0.52) if current_state == OrganismState.SPEAKING and can_morph else Vector3.ZERO
+		if profile_active:
+			_speaking_profile_frame_dust_position_ms += _elapsed_ms_since_usec(position_started_usec)
+		var morph_started_usec := Time.get_ticks_usec() if profile_active else 0
+		var speech_morph: Vector3 = _cached_dust_speech_morph(index, dust.phase) if current_state == OrganismState.SPEAKING and can_morph else Vector3.ZERO
+		if profile_active:
+			_speaking_profile_frame_dust_morph_ms += _elapsed_ms_since_usec(morph_started_usec)
+		var previous_position := dust.current_position
+		position_started_usec = Time.get_ticks_usec() if profile_active else 0
 		dust.current_position = dust.base_position + orbit + speech_morph
 		var depth_t := _balanced_depth_light(dust.current_position, 0.82, 1.06)
 		var cluster_pulse := 0.0
 		if dust.hub:
 			cluster_pulse = pow(maxf(0.0, sin(_time * 1.05 + dust.phase)), 5.0) * 0.45
+		if profile_active:
+			var displacement := previous_position.distance_to(dust.current_position)
+			_speaking_profile_frame_dust_displacement_total += displacement
+			_speaking_profile_frame_dust_displacement_max = maxf(_speaking_profile_frame_dust_displacement_max, displacement)
+			_speaking_profile_frame_dust_displacement_count += 1
+			_speaking_profile_frame_dust_position_ms += _elapsed_ms_since_usec(position_started_usec)
+		var speech_lookup_started_usec := Time.get_ticks_usec() if profile_active else 0
 		var speech_light := _dust_light(index)
-		var color := Color(_palette["dust"]).lerp(Color(_palette["hot"]), 0.78 if dust.hub else 0.0)
-		color = color.lerp(Color(_palette["hot"]), clampf(speech_light * 0.85, 0.0, 0.75))
-		color.a = dust.brightness * depth_t * (0.76 + cluster_pulse * 0.30 + speech_light * 0.72 if dust.hub else 0.24 + speech_light * 0.18)
+		if profile_active:
+			_speaking_profile_frame_dust_speech_lookup_ms += _elapsed_ms_since_usec(speech_lookup_started_usec)
+		position_started_usec = Time.get_ticks_usec() if profile_active else 0
 		var radius := dust.radius * (1.0 + cluster_pulse * 0.38 + speech_light * 0.55)
-		_dust_multimesh.multimesh.set_instance_transform(index, Transform3D(Basis().scaled(Vector3.ONE * radius), dust.current_position))
-		_dust_multimesh.multimesh.set_instance_color(index, color)
+		var transform := Transform3D(Basis().scaled(Vector3.ONE * radius), dust.current_position)
+		if profile_active:
+			_speaking_profile_frame_dust_position_ms += _elapsed_ms_since_usec(position_started_usec)
+		var upload_started_usec := Time.get_ticks_usec() if profile_active else 0
+		_dust_multimesh.multimesh.set_instance_transform(index, transform)
+		if profile_active:
+			_speaking_profile_frame_dust_transform_upload_ms += _elapsed_ms_since_usec(upload_started_usec)
+		_orb_profile_dust_transform_sets += 1
+		if _speaking_profile_active:
+			_speaking_profile_frame_dust_transform_sets += 1
+		if update_color:
+			var color_started_usec := Time.get_ticks_usec() if profile_active else 0
+			var color := Color(_palette["dust"]).lerp(Color(_palette["hot"]), 0.78 if dust.hub else 0.0)
+			color = color.lerp(Color(_palette["hot"]), clampf(speech_light * 0.85, 0.0, 0.75))
+			color.a = dust.brightness * depth_t * (0.76 + cluster_pulse * 0.30 + speech_light * 0.72 if dust.hub else 0.24 + speech_light * 0.18)
+			if profile_active:
+				_speaking_profile_frame_dust_color_calc_ms += _elapsed_ms_since_usec(color_started_usec)
+				if index < _speaking_profile_previous_dust_colors.size():
+					var color_delta := _profile_color_delta(_speaking_profile_previous_dust_colors[index], color)
+					_speaking_profile_frame_dust_color_delta_total += color_delta
+					_speaking_profile_frame_dust_color_delta_max = maxf(_speaking_profile_frame_dust_color_delta_max, color_delta)
+					_speaking_profile_frame_dust_color_delta_count += 1
+					_speaking_profile_previous_dust_colors[index] = color
+			upload_started_usec = Time.get_ticks_usec() if profile_active else 0
+			_dust_multimesh.multimesh.set_instance_color(index, color)
+			if profile_active:
+				_speaking_profile_frame_dust_color_upload_ms += _elapsed_ms_since_usec(upload_started_usec)
+			_orb_profile_dust_color_sets += 1
+			if _speaking_profile_active:
+				_speaking_profile_frame_dust_color_sets += 1
 
 
 func _rebuild_static_connection_meshes() -> void:
@@ -1131,12 +1876,28 @@ func _rebuild_static_connection_meshes() -> void:
 
 
 func _update_pulse_connections() -> void:
+	if _pulses.is_empty():
+		if _pulse_connection_mesh_active:
+			_pulse_line_mesh_instance.mesh = ArrayMesh.new()
+			_pulse_glow_line_mesh_instance.mesh = ArrayMesh.new()
+			_pulse_connection_mesh_active = false
+			_orb_profile_pulse_mesh_builds += 1
+			if _speaking_profile_active:
+				_speaking_profile_pulse_mesh_build_count += 1
+				_speaking_profile_array_mesh_resource_count += 2
+				_speaking_profile_frame_pulse_mesh_builds += 1
+				_speaking_profile_frame_array_mesh_resources += 2
+		return
+
 	var core_vertices := PackedVector3Array()
 	var core_colors := PackedColorArray()
 	var core_indices := PackedInt32Array()
 	var glow_vertices := PackedVector3Array()
 	var glow_colors := PackedColorArray()
 	var glow_indices := PackedInt32Array()
+	if _speaking_profile_active:
+		_speaking_profile_packed_array_count += 6
+		_speaking_profile_frame_packed_arrays += 6
 	var local_camera_forward := _graph_root.global_transform.basis.inverse() * _camera.global_transform.basis.z
 	var local_camera_up := _graph_root.global_transform.basis.inverse() * _camera.global_transform.basis.y
 	local_camera_forward = local_camera_forward.normalized()
@@ -1144,8 +1905,17 @@ func _update_pulse_connections() -> void:
 
 	_add_traveling_light_segments(core_vertices, core_colors, core_indices, glow_vertices, glow_colors, glow_indices, local_camera_forward, local_camera_up)
 
+	var mesh_started_usec := Time.get_ticks_usec()
 	_pulse_line_mesh_instance.mesh = _mesh_from_arrays(core_vertices, core_colors, core_indices)
 	_pulse_glow_line_mesh_instance.mesh = _mesh_from_arrays(glow_vertices, glow_colors, glow_indices)
+	_orb_profile_pulse_mesh_ms += _elapsed_ms_since_usec(mesh_started_usec)
+	_orb_profile_pulse_mesh_builds += 1
+	if _speaking_profile_active:
+		_speaking_profile_pulse_mesh_build_count += 1
+		_speaking_profile_array_mesh_resource_count += 2
+		_speaking_profile_frame_pulse_mesh_builds += 1
+		_speaking_profile_frame_array_mesh_resources += 2
+	_pulse_connection_mesh_active = not core_vertices.is_empty() or not glow_vertices.is_empty()
 
 
 func _add_traveling_light_segments(
@@ -1265,6 +2035,9 @@ func _update_pulses(delta: float) -> void:
 		if index >= _pulses.size():
 			_pulse_multimesh.multimesh.set_instance_transform(index, Transform3D(Basis().scaled(Vector3.ZERO), Vector3.ZERO))
 			_pulse_multimesh.multimesh.set_instance_color(index, Color(0, 0, 0, 0))
+			if _speaking_profile_active:
+				_speaking_profile_frame_pulse_transform_sets += 1
+				_speaking_profile_frame_pulse_color_sets += 1
 			continue
 		var pulse: EnergyPulse = _pulses[index]
 		var position := _pulse_position(pulse)
@@ -1274,13 +2047,22 @@ func _update_pulses(delta: float) -> void:
 		color.a = clampf(fade * pulse.brightness * 0.86, 0.0, 1.0)
 		_pulse_multimesh.multimesh.set_instance_transform(index, Transform3D(Basis().scaled(Vector3.ONE * radius), position))
 		_pulse_multimesh.multimesh.set_instance_color(index, color)
+		if _speaking_profile_active:
+			_speaking_profile_frame_pulse_transform_sets += 1
+			_speaking_profile_frame_pulse_color_sets += 1
+	var speech_maps_started_usec := Time.get_ticks_usec()
 	_rebuild_speech_light_maps()
+	_orb_profile_speech_maps_ms += _elapsed_ms_since_usec(speech_maps_started_usec)
 
 
 func _rebuild_speech_light_maps() -> void:
 	_node_speech_light.clear()
 	_dust_speech_light.clear()
 	_connection_speech_light.clear()
+	if _speaking_profile_active:
+		_speaking_profile_speech_map_rebuild_count += 1
+		_speaking_profile_speech_map_clear_count += 3
+		_speaking_profile_frame_speech_map_rebuilds += 1
 	if current_state != OrganismState.THINKING and current_state != OrganismState.LISTENING:
 		return
 	var state_scale := 0.50 if current_state == OrganismState.LISTENING else 1.0

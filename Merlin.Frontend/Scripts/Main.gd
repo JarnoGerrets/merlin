@@ -27,7 +27,7 @@ const VOICE_GENERATOR_BUFFER_SECONDS := 0.50
 const VOICE_OUTPUT_DRAIN_SECONDS := 0.12
 const VOICE_SPEECH_TICK_FRAMES := 2048
 const RECORD_BUS_NAME := "MerlinRecord"
-const FRAME_PROFILER_ENABLED := true
+const FRAME_PROFILER_ENABLED := false
 const FRAME_PROFILER_REPORT_SECONDS := 1.0
 const FRAME_PROFILER_SPIKE_MS := 33.0
 
@@ -75,6 +75,9 @@ var _record_effect: AudioEffectRecord
 var _is_recording := false
 var _record_bus_index := -1
 var _speech_turn_active := false
+var _speaking_startup_profile_started_usec := 0
+var _speaking_startup_profile_energy_count := 0
+var _speaking_startup_profile_first_energy_logged := false
 var _voice_turn_started_usec := 0
 var _llm_response_received_usec := 0
 var _stream_poc_client: HTTPClient
@@ -110,6 +113,7 @@ var _frame_profile_large_copy_count := 0
 var _frame_profile_large_copy_bytes := 0
 var _frame_profile_sync_work_ms := 0.0
 var _frame_profile_sync_work_label := ""
+var _frame_profile_pcm_convert_ms := 0.0
 var _frame_profile_audio_push_ms := 0.0
 var _frame_profile_websocket_packets := 0
 var _frame_profile_websocket_work_ms := 0.0
@@ -133,6 +137,7 @@ func _ready() -> void:
 
 	web_socket_client.connection_state_changed.connect(_on_connection_state_changed)
 	web_socket_client.response_received.connect(_on_response_received)
+	web_socket_client.visual_event_received.connect(_on_visual_event_received)
 	web_socket_client.malformed_response.connect(_on_malformed_response)
 	web_socket_client.socket_closed.connect(_on_socket_closed)
 	web_socket_client.frontend_work_observed.connect(_on_frontend_work_observed)
@@ -204,7 +209,9 @@ func _send_backend_message(message: String, show_user_message: bool) -> void:
 	_set_merlin_state(MerlinState.THINKING)
 	_clear_error()
 
-	var sent := web_socket_client.send_message(message, correlation_id)
+	var interaction_source := "text" if show_user_message else "voice"
+	var client_mode := "chat" if chat_panel.visible else "orb"
+	var sent := web_socket_client.send_message(message, correlation_id, interaction_source, client_mode)
 	if not sent:
 		_pending_requests.erase(correlation_id)
 		_add_system_message("Message was not sent.")
@@ -685,8 +692,6 @@ func _on_response_received(response: Dictionary) -> void:
 		application_candidates,
 		debug_text
 	)
-	if _speech_turn_active:
-		_set_voice_phase("playback_completion")
 	_focus_message_input()
 
 
@@ -699,6 +704,74 @@ func _on_malformed_response(raw_message: String, detail: String) -> void:
 	_add_notification("Malformed backend response", "error")
 	_set_merlin_state(MerlinState.ERROR)
 	_focus_message_input()
+
+
+func _on_visual_event_received(event: Dictionary) -> void:
+	var event_name := str(event.get("event", "")).to_upper()
+	var event_started_usec := Time.get_ticks_usec()
+	match event_name:
+		"SPEAKING_START":
+			_speaking_startup_profile_started_usec = event_started_usec
+			_speaking_startup_profile_energy_count = 0
+			_speaking_startup_profile_first_energy_logged = false
+			if core_orb != null and core_orb.has_method("start_speaking_startup_profile"):
+				core_orb.start_speaking_startup_profile()
+			_speech_turn_active = true
+			_set_voice_phase("backend_playback_started")
+			var state_started_usec := Time.get_ticks_usec()
+			_set_merlin_state(MerlinState.SPEAKING)
+			var state_ms := float(Time.get_ticks_usec() - state_started_usec) / 1000.0
+			var total_event_ms := float(Time.get_ticks_usec() - event_started_usec) / 1000.0
+			print("Speaking startup event: SPEAKING_START received. StateTransitionMs: %.3f. EventHandlingMs: %.3f. TotalVoiceTurnMs: %.1f" % [
+				state_ms,
+				total_event_ms,
+				_voice_elapsed_ms()
+			])
+			print("Voice timing: backend playback started. TotalVoiceTurnMs: %.1f" % _voice_elapsed_ms())
+		"SPEECH_ENERGY":
+			var energy := clampf(float(event.get("value", 0.0)), 0.0, 1.0)
+			_speaking_startup_profile_energy_count += 1
+			if not _speaking_startup_profile_first_energy_logged:
+				_speaking_startup_profile_first_energy_logged = true
+				var first_energy_ms := 0.0
+				if _speaking_startup_profile_started_usec > 0:
+					first_energy_ms = float(event_started_usec - _speaking_startup_profile_started_usec) / 1000.0
+				print("Speaking startup event: first SPEECH_ENERGY received. SinceSpeakingStartMs: %.3f. Energy: %.3f" % [
+					first_energy_ms,
+					energy
+				])
+			if _merlin_state != MerlinState.SPEAKING:
+				_speech_turn_active = true
+				var late_state_started_usec := Time.get_ticks_usec()
+				_set_merlin_state(MerlinState.SPEAKING)
+				print("Speaking startup event: SPEECH_ENERGY forced SPEAKING state. StateTransitionMs: %.3f. EnergyEventCount: %s" % [
+					float(Time.get_ticks_usec() - late_state_started_usec) / 1000.0,
+					_speaking_startup_profile_energy_count
+				])
+			core_orb.notify_speech_tick("", 0.0, energy)
+		"SPEAKING_END":
+			var speaking_total_ms := 0.0
+			if _speaking_startup_profile_started_usec > 0:
+				speaking_total_ms = float(event_started_usec - _speaking_startup_profile_started_usec) / 1000.0
+			print("Speaking startup event: SPEAKING_END received. SinceSpeakingStartMs: %.3f. EnergyEvents: %s" % [
+				speaking_total_ms,
+				_speaking_startup_profile_energy_count
+			])
+			_speech_turn_active = false
+			_set_voice_phase("backend_playback_complete")
+			print("Voice timing: backend playback complete. TotalVoiceTurnMs: %.1f" % _voice_elapsed_ms())
+			_settle_orb_after_response()
+		"SPEAKING_CANCELLED":
+			var speaking_cancel_ms := 0.0
+			if _speaking_startup_profile_started_usec > 0:
+				speaking_cancel_ms = float(event_started_usec - _speaking_startup_profile_started_usec) / 1000.0
+			print("Speaking startup event: SPEAKING_CANCELLED received. SinceSpeakingStartMs: %.3f. EnergyEvents: %s" % [
+				speaking_cancel_ms,
+				_speaking_startup_profile_energy_count
+			])
+			_speech_turn_active = false
+			_set_voice_phase("backend_playback_cancelled")
+			_settle_orb_after_response()
 
 
 func _on_socket_closed(code: int, reason: String) -> void:
@@ -933,7 +1006,8 @@ func _display_backend_response(
 			_add_notification("Error", "error")
 			_clear_error()
 
-	_settle_orb_after_response()
+	if not _speech_turn_active:
+		_settle_orb_after_response()
 	_focus_message_input()
 
 
@@ -942,15 +1016,8 @@ func _speak_text(text: String) -> void:
 	if spoken_text.is_empty():
 		return
 
-	while _speech_turn_active:
-		await get_tree().create_timer(0.05).timeout
-
-	_speech_turn_active = true
-	_set_voice_phase("tts_streaming")
-	await _speak_text_unlocked(spoken_text)
-	_speech_turn_active = false
-	_set_voice_phase("playback_completion")
-	_settle_orb_after_response()
+	_set_voice_phase("backend_tts_queued")
+	await get_tree().process_frame
 
 
 func _speak_text_unlocked(spoken_text: String) -> void:
@@ -1199,6 +1266,7 @@ func _push_pcm_frames(playback: AudioStreamGeneratorPlayback, pcm_bytes: PackedB
 
 	var frames := PackedVector2Array()
 	var offset := 0
+	var convert_started_usec := Time.get_ticks_usec()
 	while available_frames > 0 and offset + frame_size <= pcm_bytes.size():
 		if channels == 1:
 			var mono := _decode_pcm_s16le_sample(pcm_bytes, offset)
@@ -1209,6 +1277,7 @@ func _push_pcm_frames(playback: AudioStreamGeneratorPlayback, pcm_bytes: PackedB
 			frames.append(Vector2(left, right))
 		offset += frame_size
 		available_frames -= 1
+	_frame_profile_pcm_convert_ms += _elapsed_ms_since(convert_started_usec)
 
 	if not frames.is_empty():
 		var push_started_usec := Time.get_ticks_usec()
@@ -1239,7 +1308,6 @@ func _set_voice_phase(phase: String) -> void:
 	if _voice_phase == phase:
 		return
 	_voice_phase = phase
-	print("Voice frame profile: phase=%s state=%s elapsedMs=%.1f" % [_voice_phase, _merlin_state_name(_merlin_state), _voice_elapsed_ms()])
 
 
 func _frame_profile_begin_frame() -> void:
@@ -1289,9 +1357,10 @@ func _print_frame_profile(reason: String, frame_ms: float) -> void:
 	likely_gc_or_engine_work = likely_gc_or_engine_work and _frame_profile_pcm_frames == 0
 	likely_gc_or_engine_work = likely_gc_or_engine_work and _frame_profile_json_parse_count == 0
 	likely_gc_or_engine_work = likely_gc_or_engine_work and _frame_profile_sync_work_ms < 1.0
+	likely_gc_or_engine_work = likely_gc_or_engine_work and _frame_profile_pcm_convert_ms < 1.0
 	likely_gc_or_engine_work = likely_gc_or_engine_work and _frame_profile_audio_push_ms < 1.0
 	likely_gc_or_engine_work = likely_gc_or_engine_work and _frame_profile_websocket_work_ms < 1.0
-	print("Voice frame profile: reason=%s state=%s phase=%s frameMs=%.2f avgMs=%.2f maxMs=%.2f frames=%s over16=%s over33=%s over50=%s over100=%s httpPolled=%s bytes=%s pcmFrames=%s jsonParses=%s jsonMs=%.2f largeCopies=%s largeCopyBytes=%s syncWorkMs=%.2f syncLabel=%s audioPushMs=%.2f websocketPackets=%s websocketWorkMs=%.2f likelyGcOrEngineWork=%s" % [
+	print("Voice frame profile: reason=%s state=%s phase=%s frameMs=%.2f avgMs=%.2f maxMs=%.2f frames=%s over16=%s over33=%s over50=%s over100=%s httpPolled=%s bytes=%s pcmFrames=%s jsonParses=%s jsonMs=%.2f largeCopies=%s largeCopyBytes=%s syncWorkMs=%.2f syncLabel=%s pcmConvertMs=%.2f audioPushMs=%.2f websocketPackets=%s websocketWorkMs=%.2f likelyGcOrEngineWork=%s" % [
 		reason,
 		_merlin_state_name(_merlin_state),
 		_voice_phase,
@@ -1312,6 +1381,7 @@ func _print_frame_profile(reason: String, frame_ms: float) -> void:
 		_frame_profile_large_copy_bytes,
 		_frame_profile_sync_work_ms,
 		_frame_profile_sync_work_label,
+		_frame_profile_pcm_convert_ms,
 		_frame_profile_audio_push_ms,
 		_frame_profile_websocket_packets,
 		_frame_profile_websocket_work_ms,
@@ -1338,6 +1408,7 @@ func _reset_frame_profile_window(now_usec: int) -> void:
 	_frame_profile_large_copy_bytes = 0
 	_frame_profile_sync_work_ms = 0.0
 	_frame_profile_sync_work_label = ""
+	_frame_profile_pcm_convert_ms = 0.0
 	_frame_profile_audio_push_ms = 0.0
 	_frame_profile_websocket_packets = 0
 	_frame_profile_websocket_work_ms = 0.0

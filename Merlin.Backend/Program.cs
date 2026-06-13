@@ -30,6 +30,8 @@ builder.Services.AddSingleton<IAIService, DummyAIService>();
 builder.Services.AddSingleton<PythonVoiceService>();
 builder.Services.AddSingleton<IVoiceTranscriptionService>(provider => provider.GetRequiredService<PythonVoiceService>());
 builder.Services.AddSingleton<IVoiceSynthesisService, PiperVoiceService>();
+builder.Services.AddSingleton<IAssistantSpeechPlaybackService, AssistantSpeechPlaybackService>();
+builder.Services.AddSingleton<ISpeechPolicyService, SpeechPolicyService>();
 builder.Services.AddSingleton<IAssistantPolicyProvider, AssistantPolicyProvider>();
 builder.Services.AddSingleton<ICapabilityClassifier, CapabilityClassifier>();
 builder.Services.AddSingleton<IResponsePolisher, ResponsePolisher>();

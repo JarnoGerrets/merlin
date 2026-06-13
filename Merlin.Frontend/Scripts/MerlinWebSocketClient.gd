@@ -3,6 +3,7 @@ class_name MerlinWebSocketClient
 
 signal connection_state_changed(state: String, detail: String)
 signal response_received(response: Dictionary)
+signal visual_event_received(event: Dictionary)
 signal malformed_response(raw_message: String, detail: String)
 signal socket_closed(code: int, reason: String)
 signal frontend_work_observed(metrics: Dictionary)
@@ -42,14 +43,21 @@ func disconnect_from_backend() -> void:
 	set_process(false)
 
 
-func send_message(message: String, correlation_id: String) -> bool:
+func send_message(
+	message: String,
+	correlation_id: String,
+	interaction_source: String = "unknown",
+	client_mode: String = "api"
+) -> bool:
 	if _socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
 		_set_state("error", "Cannot send message because Merlin.Backend is not connected.")
 		return false
 
 	var payload := {
 		"message": message,
-		"correlationId": correlation_id
+		"correlationId": correlation_id,
+		"interactionSource": interaction_source,
+		"clientMode": client_mode
 	}
 
 	var json := JSON.stringify(payload)
@@ -131,6 +139,10 @@ func _handle_raw_message(raw_message: String) -> void:
 	var parsed = JSON.parse_string(raw_message)
 	if typeof(parsed) != TYPE_DICTIONARY:
 		malformed_response.emit(raw_message, "Response was not valid JSON object.")
+		return
+
+	if parsed.has("event"):
+		visual_event_received.emit(parsed)
 		return
 
 	response_received.emit(parsed)

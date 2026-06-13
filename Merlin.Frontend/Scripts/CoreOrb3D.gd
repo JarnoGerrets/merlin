@@ -42,6 +42,11 @@ func set_speaking() -> void:
 	state_changed.emit("speaking")
 
 
+func start_speaking_startup_profile() -> void:
+	if _organism != null:
+		_organism.call("start_speaking_startup_profile")
+
+
 func play_tool_execution(duration: float = 2.5) -> void:
 	_temporary_state_token += 1
 	var token := _temporary_state_token
