@@ -1,0 +1,147 @@
+[gd_scene load_steps=3 format=3 uid="uid://orb_lab_main"]
+
+[ext_resource type="Script" path="res://Scripts/OrbLabMain.gd" id="1_orb_lab"]
+[ext_resource type="PackedScene" path="res://LiveScenes/CoreOrb3D.tscn" id="2_core_orb"]
+
+[node name="OrbLabMain" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_orb_lab")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0, 0.008, 0.026, 1)
+
+[node name="CoreOrb" parent="." instance=ExtResource("2_core_orb")]
+layout_mode = 1
+anchors_preset = 8
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+anchor_left = 0.5
+offset_left = -280.0
+offset_top = -310.0
+offset_right = 280.0
+offset_bottom = 310.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Controls" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 12
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -560.0
+offset_top = -122.0
+offset_right = 560.0
+offset_bottom = -24.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 1
+
+[node name="ControlMargin" type="MarginContainer" parent="Controls"]
+layout_mode = 2
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 10
+
+[node name="ControlRows" type="VBoxContainer" parent="Controls/ControlMargin"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="StateRow" type="HBoxContainer" parent="Controls/ControlMargin/ControlRows"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="SpeechRow" type="HBoxContainer" parent="Controls/ControlMargin/ControlRows"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="RotationControls" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 6
+anchor_left = 1.0
+anchor_top = 0.5
+anchor_right = 1.0
+anchor_bottom = 0.5
+offset_left = -300.0
+offset_top = -130.0
+offset_right = -24.0
+offset_bottom = 130.0
+grow_horizontal = 0
+grow_vertical = 2
+mouse_filter = 1
+
+[node name="RotationMargin" type="MarginContainer" parent="RotationControls"]
+layout_mode = 2
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 12
+
+[node name="RotationRows" type="VBoxContainer" parent="RotationControls/RotationMargin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="ParameterControls" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 4
+anchor_top = 0.5
+anchor_bottom = 0.5
+offset_left = 24.0
+offset_top = -250.0
+offset_right = 366.0
+offset_bottom = 250.0
+grow_horizontal = 1
+grow_vertical = 2
+mouse_filter = 1
+
+[node name="ParameterMargin" type="MarginContainer" parent="ParameterControls"]
+layout_mode = 2
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 12
+
+[node name="ParameterRows" type="VBoxContainer" parent="ParameterControls/ParameterMargin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="Title" type="Label" parent="ParameterControls/ParameterMargin/ParameterRows"]
+layout_mode = 2
+text = "Parameters"
+horizontal_alignment = 1
+
+[node name="ExportButton" type="Button" parent="ParameterControls/ParameterMargin/ParameterRows"]
+layout_mode = 2
+text = "Export Settings"
+
+[node name="Tabs" type="TabContainer" parent="ParameterControls/ParameterMargin/ParameterRows"]
+custom_minimum_size = Vector2(0, 430)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="Status" type="Label" parent="."]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 26.0
+offset_top = 20.0
+offset_right = -26.0
+offset_bottom = 58.0
+grow_horizontal = 2
+text = "OrbLab"
+horizontal_alignment = 1
