@@ -56,6 +56,8 @@ var _builder_slot_rows: VBoxContainer
 var _builder_slot_name_inputs: Array[LineEdit] = []
 var _builder_tool := "cluster"
 var _builder_add_mode := true
+var _builder_depth := 0.35
+var _builder_depth_value_label: Label
 var _cluster_edit_enabled := false
 var _selected_cluster_id := -1
 var _cluster_edit_left_panel: PanelContainer
@@ -117,10 +119,10 @@ func _input(event: InputEvent) -> void:
 		if not _mouse_over_orb(mouse_button.position):
 			return
 		if mouse_button.button_index == MOUSE_BUTTON_WHEEL_UP and mouse_button.pressed:
-			_apply_mouse_zoom(_mouse_zoom * 1.08)
+			_apply_mouse_zoom(_mouse_zoom * 1.18)
 			get_viewport().set_input_as_handled()
 		elif mouse_button.button_index == MOUSE_BUTTON_WHEEL_DOWN and mouse_button.pressed:
-			_apply_mouse_zoom(_mouse_zoom / 1.08)
+			_apply_mouse_zoom(_mouse_zoom / 1.18)
 			get_viewport().set_input_as_handled()
 		elif mouse_button.button_index == MOUSE_BUTTON_LEFT:
 			if mouse_button.pressed:
@@ -303,6 +305,7 @@ func _build_parameter_controls() -> void:
 	_parameter_categories.clear()
 	_parameter_rebuild_flags.clear()
 	for child in parameter_tabs.get_children():
+		parameter_tabs.remove_child(child)
 		child.queue_free()
 	var parameters: Array = core_orb.get_orb_lab_parameters()
 	var category_rows := {}
@@ -320,6 +323,9 @@ func _add_parameter_tab(category: String) -> VBoxContainer:
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	parameter_tabs.add_child(scroll)
+	var tab_index := parameter_tabs.get_tab_count() - 1
+	if tab_index >= 0:
+		parameter_tabs.set_tab_title(tab_index, category)
 
 	var rows := VBoxContainer.new()
 	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -615,6 +621,32 @@ func _build_builder_panels() -> void:
 		_set_status("Builder mode: %s" % ("remove" if enabled else "add"))
 	)
 	left_rows.add_child(mode_toggle)
+
+	var depth_row := HBoxContainer.new()
+	depth_row.add_theme_constant_override("separation", 8)
+	left_rows.add_child(depth_row)
+	var depth_label := Label.new()
+	depth_label.text = "Depth"
+	depth_label.custom_minimum_size = Vector2(62.0, 0.0)
+	depth_row.add_child(depth_label)
+	var depth_slider := HSlider.new()
+	depth_slider.min_value = 0.0
+	depth_slider.max_value = 1.0
+	depth_slider.step = 0.01
+	depth_slider.value = _builder_depth
+	depth_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	depth_slider.value_changed.connect(func(value: float) -> void:
+		_builder_depth = value
+		if _builder_depth_value_label != null:
+			_builder_depth_value_label.text = "%.2f" % _builder_depth
+		_set_status("Builder depth %.2f" % _builder_depth)
+	)
+	depth_row.add_child(depth_slider)
+	_builder_depth_value_label = Label.new()
+	_builder_depth_value_label.text = "%.2f" % _builder_depth
+	_builder_depth_value_label.custom_minimum_size = Vector2(42.0, 0.0)
+	_builder_depth_value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	depth_row.add_child(_builder_depth_value_label)
 
 	var step_separator := HSeparator.new()
 	left_rows.add_child(step_separator)
@@ -1272,7 +1304,7 @@ func _pick_orb_item(global_mouse_position: Vector2) -> void:
 	var local: Vector2 = core_orb.get_global_transform().affine_inverse() * global_mouse_position
 	if _builder_enabled:
 		var tool_name := _builder_tool if _builder_add_mode else "%s_remove" % _builder_tool
-		var result: Dictionary = core_orb.apply_orb_builder_tool(tool_name, local)
+		var result: Dictionary = core_orb.apply_orb_builder_tool(tool_name, local, _builder_depth)
 		if not result.is_empty():
 			_refresh_cluster_controls()
 			_refresh_connection_controls()
@@ -1300,7 +1332,7 @@ func _pick_orb_item(global_mouse_position: Vector2) -> void:
 
 
 func _apply_mouse_zoom(value: float) -> void:
-	_mouse_zoom = clampf(value, 0.35, 3.0)
+	_mouse_zoom = clampf(value, 0.12, 12.0)
 	core_orb.set_orb_lab_zoom(_mouse_zoom)
 	_set_status("Zoom %.2f" % _mouse_zoom)
 

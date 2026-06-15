@@ -97,6 +97,7 @@ class SpeechRegionBurst:
 	var phase := 0.0
 
 
+const STARTUP_PRESET_PATH := "res://OrbStartupPreset.json"
 const DEFAULT_STRUCTURAL_NODE_COUNT := 1700
 const DEFAULT_GENERATION_SEED := 26062026
 const DEFAULT_HUB_NODE_COUNT := 30
@@ -140,6 +141,11 @@ const DEFAULT_CORE_GLOW_ALPHA_SCALE := 0.42
 const DEFAULT_CORE_GLOW_RADIUS_SCALE := 1.0
 const DEFAULT_CORE_PARTICLE_BRIGHTNESS_SCALE := 1.0
 const DEFAULT_CORE_PARTICLE_SIZE_SCALE := 1.0
+const DEFAULT_ORB_SHELL_DEFORMATION_ENABLED := true
+const DEFAULT_ORB_SHELL_DEFORMATION_STRENGTH := 0.34
+const DEFAULT_ORB_SHELL_DEFORMATION_SPEED := 2.15
+const DEFAULT_ORB_SHELL_DEFORMATION_RADIUS := 1.05
+const DEFAULT_ORB_SHELL_DEFORMATION_ALPHA := 0.22
 const DEFAULT_CACHED_SPEECH_MOTION_ENABLED := true
 const DEFAULT_REAL_SPEECH_MOTION_ENABLED := false
 const DEFAULT_REAL_SPEECH_MOTION_STRENGTH := 0.18
@@ -152,6 +158,7 @@ const DEFAULT_ENERGY_PULSE_SPEED_WOBBLE_AMOUNT := 0.10
 const DEFAULT_CLUSTER_ACTIVATION_BASE_LIFT := 0.34
 const DEFAULT_CLUSTER_ACTIVATION_BLOOM_BOOST := 0.46
 const DEFAULT_CLUSTER_ACTIVATION_COOLDOWN_SECONDS := 3.0
+const DEFAULT_THINKING_BLOOM_DAMPENING := 0.0
 const DEFAULT_CLUSTER_ACTIVATION_STRENGTH_SCALE := 1.0
 const DEFAULT_CLUSTER_ACTIVATION_ATTACK_MIN := 0.12
 const DEFAULT_CLUSTER_ACTIVATION_ATTACK_MAX := 0.18
@@ -226,6 +233,7 @@ var current_state := OrganismState.IDLE
 var _rng := RandomNumberGenerator.new()
 var _time := 0.0
 var _state_feature_overrides := {}
+var _suppress_generated_rebuilds := false
 var _generation_seed := DEFAULT_GENERATION_SEED
 var _structural_node_count := DEFAULT_STRUCTURAL_NODE_COUNT
 var _hub_node_count := DEFAULT_HUB_NODE_COUNT
@@ -295,6 +303,11 @@ var _core_glow_alpha_scale := DEFAULT_CORE_GLOW_ALPHA_SCALE
 var _core_glow_radius_scale := DEFAULT_CORE_GLOW_RADIUS_SCALE
 var _core_particle_brightness_scale := DEFAULT_CORE_PARTICLE_BRIGHTNESS_SCALE
 var _core_particle_size_scale := DEFAULT_CORE_PARTICLE_SIZE_SCALE
+var _orb_shell_deformation_enabled := DEFAULT_ORB_SHELL_DEFORMATION_ENABLED
+var _orb_shell_deformation_strength := DEFAULT_ORB_SHELL_DEFORMATION_STRENGTH
+var _orb_shell_deformation_speed := DEFAULT_ORB_SHELL_DEFORMATION_SPEED
+var _orb_shell_deformation_radius := DEFAULT_ORB_SHELL_DEFORMATION_RADIUS
+var _orb_shell_deformation_alpha := DEFAULT_ORB_SHELL_DEFORMATION_ALPHA
 var _cached_speech_motion_enabled := DEFAULT_CACHED_SPEECH_MOTION_ENABLED
 var _real_speech_motion_enabled := DEFAULT_REAL_SPEECH_MOTION_ENABLED
 var _real_speech_motion_strength := DEFAULT_REAL_SPEECH_MOTION_STRENGTH
@@ -313,6 +326,7 @@ var _energy_pulse_speed_wobble_amount := DEFAULT_ENERGY_PULSE_SPEED_WOBBLE_AMOUN
 var _cluster_activation_base_lift := DEFAULT_CLUSTER_ACTIVATION_BASE_LIFT
 var _cluster_activation_bloom_boost := DEFAULT_CLUSTER_ACTIVATION_BLOOM_BOOST
 var _cluster_activation_cooldown_seconds := DEFAULT_CLUSTER_ACTIVATION_COOLDOWN_SECONDS
+var _thinking_bloom_dampening := DEFAULT_THINKING_BLOOM_DAMPENING
 var _cluster_activation_strength_scale := DEFAULT_CLUSTER_ACTIVATION_STRENGTH_SCALE
 var _cluster_activation_attack_min := DEFAULT_CLUSTER_ACTIVATION_ATTACK_MIN
 var _cluster_activation_attack_max := DEFAULT_CLUSTER_ACTIVATION_ATTACK_MAX
@@ -397,6 +411,10 @@ var _hub_material: StandardMaterial3D
 var _dust_material: StandardMaterial3D
 var _pulse_material: StandardMaterial3D
 var _core_material: StandardMaterial3D
+var _orb_shell_mesh_instance: MeshInstance3D
+var _orb_shell_material: ShaderMaterial
+var _orb_core_mesh_instance: MeshInstance3D
+var _orb_core_deform_material: ShaderMaterial
 var _cluster_halo_material: ShaderMaterial
 var _orb_frame_index := 0
 var _pulse_connection_mesh_active := false
@@ -517,11 +535,14 @@ func _ready() -> void:
 	_rng.seed = _generation_seed
 	_reset_speech_regions()
 	_build_scene()
-	_rebuild_generated_orb()
+	if not _load_startup_preset():
+		_rebuild_generated_orb()
 	set_process(true)
 
 
 func _rebuild_generated_orb() -> void:
+	if _suppress_generated_rebuilds:
+		return
 	_rng.seed = _generation_seed
 	_pulses.clear()
 	_pending_energy_branches.clear()
@@ -541,6 +562,124 @@ func _rebuild_generated_orb() -> void:
 	_generate_connections()
 	_build_cluster_halo_indices()
 	_setup_multimeshes()
+
+
+func _load_startup_preset() -> bool:
+	if not FileAccess.file_exists(STARTUP_PRESET_PATH):
+		return false
+	var text := FileAccess.get_file_as_string(STARTUP_PRESET_PATH)
+	if text.is_empty():
+		return false
+	var parsed = JSON.parse_string(text)
+	if not (parsed is Dictionary):
+		push_warning("Orb startup preset is not a dictionary.")
+		return false
+	var preset: Dictionary = parsed as Dictionary
+	var geometry: Dictionary = preset.get("geometry", {})
+	if geometry.is_empty():
+		return false
+
+	_clear_runtime_motion()
+	_cluster_lab_overrides.clear()
+	_connection_lab_overrides.clear()
+	_state_feature_overrides.clear()
+	_reset_speech_regions()
+
+	var parameter_types := _startup_parameter_types()
+	var parameters: Dictionary = preset.get("parameters", {})
+	_suppress_generated_rebuilds = true
+	for parameter_name_variant in parameters.keys():
+		var parameter_name := String(parameter_name_variant)
+		var parameter_type := String(parameter_types.get(parameter_name, "float"))
+		apply_orb_lab_parameter(parameter_name, _restore_startup_parameter_value(parameters[parameter_name_variant], parameter_type))
+	_suppress_generated_rebuilds = false
+	_rng.seed = _generation_seed
+
+	if not _apply_builder_snapshot_geometry(geometry):
+		return false
+
+	_build_speech_morph_regions()
+	_build_node_dust_indices()
+	_build_node_cluster_flash_targets()
+	_build_cluster_halo_indices()
+	_apply_startup_cluster_overrides(preset.get("cluster_overrides", []))
+	_apply_startup_connection_overrides(preset.get("connection_overrides", []))
+	_apply_startup_state_features(preset.get("state_features", {}))
+	_setup_multimeshes()
+	return true
+
+
+func _clear_runtime_motion() -> void:
+	_pulses.clear()
+	_pending_energy_branches.clear()
+	_cluster_activations.clear()
+	_cluster_lifecycle_events.clear()
+	_cluster_selection_flashes.clear()
+	_connection_selection_flashes.clear()
+	_cluster_activation_cooldowns.clear()
+	_node_speech_light.clear()
+	_dust_speech_light.clear()
+	_connection_speech_light.clear()
+
+
+func _startup_parameter_types() -> Dictionary:
+	var parameter_types := {}
+	for parameter_variant in get_orb_lab_parameters():
+		var parameter: Dictionary = parameter_variant as Dictionary
+		parameter_types[String(parameter.get("name", ""))] = String(parameter.get("type", "float"))
+	return parameter_types
+
+
+func _restore_startup_parameter_value(value, parameter_type: String):
+	if parameter_type == "color":
+		return Color("#%s" % String(value))
+	if parameter_type == "bool":
+		return bool(value)
+	if parameter_type == "int":
+		return int(value)
+	return float(value)
+
+
+func _apply_startup_cluster_overrides(cluster_overrides: Array) -> void:
+	for cluster_variant in cluster_overrides:
+		var cluster: Dictionary = cluster_variant as Dictionary
+		var cluster_id := int(cluster.get("id", -1))
+		if cluster_id < 0 or cluster_id >= _nodes.size():
+			continue
+		_cluster_lab_overrides[cluster_id] = {
+			"halo_scale": clampf(float(cluster.get("halo_scale", 1.0)), 0.1, 5.0),
+			"brightness_scale": clampf(float(cluster.get("brightness_scale", 1.0)), 0.0, 5.0),
+		}
+
+
+func _apply_startup_connection_overrides(connection_overrides: Array) -> void:
+	for connection_variant in connection_overrides:
+		var connection: Dictionary = connection_variant as Dictionary
+		var connection_id := int(connection.get("id", -1))
+		if connection_id < 0 or connection_id >= _connections.size():
+			continue
+		_connection_lab_overrides[connection_id] = {
+			"route": bool(connection.get("route", false)),
+			"alpha_scale": clampf(float(connection.get("alpha_scale", 1.0)), 0.0, 8.0),
+			"width_scale": clampf(float(connection.get("width_scale", 1.0)), 0.1, 12.0),
+			"glow_scale": clampf(float(connection.get("glow_scale", 1.0)), 0.0, 12.0),
+			"hot_mix": clampf(float(connection.get("hot_mix", 0.0)), 0.0, 1.0),
+		}
+
+
+func _apply_startup_state_features(state_features: Dictionary) -> void:
+	for state_name_variant in state_features.keys():
+		var state_name := String(state_name_variant)
+		if not _orb_lab_state_names().has(state_name):
+			continue
+		var features: Dictionary = state_features[state_name_variant] as Dictionary
+		var state_map := {}
+		for feature_name_variant in features.keys():
+			var feature_name := String(feature_name_variant)
+			if STATE_FEATURES.has(feature_name):
+				state_map[feature_name] = bool(features[feature_name_variant])
+		if not state_map.is_empty():
+			_state_feature_overrides[state_name] = state_map
 
 
 func _dust_node_count() -> int:
@@ -936,18 +1075,18 @@ func pick_orb_lab_item(screen_position: Vector2, viewport_size: Vector2) -> Dict
 	return {}
 
 
-func apply_orb_builder_tool(tool_name: String, screen_position: Vector2, viewport_size: Vector2) -> Dictionary:
+func apply_orb_builder_tool(tool_name: String, screen_position: Vector2, viewport_size: Vector2, depth: float = 0.35) -> Dictionary:
 	match tool_name:
 		"cluster":
-			return _apply_builder_cluster_brush(screen_position, viewport_size)
+			return _apply_builder_cluster_brush(screen_position, viewport_size, depth)
 		"cluster_remove":
-			return _apply_builder_cluster_remove_brush(screen_position, viewport_size)
+			return _apply_builder_cluster_remove_brush(screen_position, viewport_size, depth)
 		"particle":
-			return _apply_builder_particle_brush(screen_position)
+			return _apply_builder_particle_brush(screen_position, depth)
 		"particle_remove":
-			return _apply_builder_particle_remove_brush(screen_position)
+			return _apply_builder_particle_remove_brush(screen_position, depth)
 		"highway":
-			return _apply_builder_highway_brush(screen_position, viewport_size)
+			return _apply_builder_highway_brush(screen_position, viewport_size, depth)
 		"highway_remove":
 			return _apply_builder_highway_remove_brush(screen_position, viewport_size)
 		_:
@@ -979,6 +1118,13 @@ func get_orb_builder_snapshot() -> Dictionary:
 
 
 func apply_orb_builder_snapshot(snapshot: Dictionary) -> bool:
+	if not _apply_builder_snapshot_geometry(snapshot):
+		return false
+	_rebuild_after_builder_mutation(true)
+	return true
+
+
+func _apply_builder_snapshot_geometry(snapshot: Dictionary) -> bool:
 	if not snapshot.has("nodes") or not snapshot.has("dust") or not snapshot.has("connections"):
 		return false
 	_nodes.clear()
@@ -1033,7 +1179,6 @@ func apply_orb_builder_snapshot(snapshot: Dictionary) -> bool:
 		b_connections.append(connection_index)
 		if connection.route:
 			_route_connection_indices.append(connection_index)
-	_rebuild_after_builder_mutation(true)
 	return true
 
 
@@ -1082,6 +1227,11 @@ func get_orb_lab_parameters() -> Array[Dictionary]:
 		_lab_parameter("core_particle_brightness_scale", _core_particle_brightness_scale, DEFAULT_CORE_PARTICLE_BRIGHTNESS_SCALE, "Center", true),
 		_lab_parameter("core_particle_size_scale", _core_particle_size_scale, DEFAULT_CORE_PARTICLE_SIZE_SCALE, "Center", true),
 		_lab_parameter("center_visual_size", _center_visual_size, DEFAULT_CENTER_VISUAL_SIZE, "Center", true),
+		_lab_bool_parameter("orb_shell_deformation_enabled", _orb_shell_deformation_enabled, DEFAULT_ORB_SHELL_DEFORMATION_ENABLED, "Motion"),
+		_lab_parameter("orb_shell_deformation_strength", _orb_shell_deformation_strength, DEFAULT_ORB_SHELL_DEFORMATION_STRENGTH, "Motion"),
+		_lab_parameter("orb_shell_deformation_speed", _orb_shell_deformation_speed, DEFAULT_ORB_SHELL_DEFORMATION_SPEED, "Motion"),
+		_lab_parameter("orb_shell_deformation_radius", _orb_shell_deformation_radius, DEFAULT_ORB_SHELL_DEFORMATION_RADIUS, "Motion"),
+		_lab_parameter("orb_shell_deformation_alpha", _orb_shell_deformation_alpha, DEFAULT_ORB_SHELL_DEFORMATION_ALPHA, "Motion"),
 		_lab_parameter("structural_core_fraction", _structural_core_fraction, DEFAULT_STRUCTURAL_CORE_FRACTION, "Distribution", true),
 		_lab_parameter("structural_mid_fraction", _structural_mid_fraction, DEFAULT_STRUCTURAL_MID_FRACTION, "Distribution", true),
 		_lab_parameter("structural_shell_probability", _structural_shell_probability, DEFAULT_STRUCTURAL_SHELL_PROBABILITY, "Distribution", true),
@@ -1100,6 +1250,7 @@ func get_orb_lab_parameters() -> Array[Dictionary]:
 		_lab_parameter("cluster_activation_base_lift", _cluster_activation_base_lift, DEFAULT_CLUSTER_ACTIVATION_BASE_LIFT, "Thinking"),
 		_lab_parameter("cluster_activation_bloom_boost", _cluster_activation_bloom_boost, DEFAULT_CLUSTER_ACTIVATION_BLOOM_BOOST, "Thinking"),
 		_lab_parameter("cluster_activation_cooldown_seconds", _cluster_activation_cooldown_seconds, DEFAULT_CLUSTER_ACTIVATION_COOLDOWN_SECONDS, "Thinking"),
+		_lab_parameter("thinking_bloom_dampening", _thinking_bloom_dampening, DEFAULT_THINKING_BLOOM_DAMPENING, "Thinking"),
 		_lab_parameter("cluster_activation_strength_scale", _cluster_activation_strength_scale, DEFAULT_CLUSTER_ACTIVATION_STRENGTH_SCALE, "Thinking"),
 		_lab_parameter("cluster_activation_attack_min", _cluster_activation_attack_min, DEFAULT_CLUSTER_ACTIVATION_ATTACK_MIN, "Thinking"),
 		_lab_parameter("cluster_activation_attack_max", _cluster_activation_attack_max, DEFAULT_CLUSTER_ACTIVATION_ATTACK_MAX, "Thinking"),
@@ -1199,6 +1350,16 @@ func apply_orb_lab_parameter(parameter_name: String, value) -> bool:
 	elif parameter_name == "center_visual_size":
 		_center_visual_size = clampf(float(value), 0.10, 3.0)
 		_rebuild_generated_orb()
+	elif parameter_name == "orb_shell_deformation_enabled":
+		_orb_shell_deformation_enabled = bool(value)
+	elif parameter_name == "orb_shell_deformation_strength":
+		_orb_shell_deformation_strength = clampf(float(value), 0.0, 1.25)
+	elif parameter_name == "orb_shell_deformation_speed":
+		_orb_shell_deformation_speed = clampf(float(value), 0.0, 8.0)
+	elif parameter_name == "orb_shell_deformation_radius":
+		_orb_shell_deformation_radius = clampf(float(value), 0.35, 1.75)
+	elif parameter_name == "orb_shell_deformation_alpha":
+		_orb_shell_deformation_alpha = clampf(float(value), 0.0, 1.4)
 	elif parameter_name == "structural_core_fraction":
 		_structural_core_fraction = clampf(float(value), 0.0, 0.75)
 		_rebuild_generated_orb()
@@ -1242,6 +1403,8 @@ func apply_orb_lab_parameter(parameter_name: String, value) -> bool:
 		_cluster_activation_bloom_boost = maxf(float(value), 0.0)
 	elif parameter_name == "cluster_activation_cooldown_seconds":
 		_cluster_activation_cooldown_seconds = maxf(float(value), 0.0)
+	elif parameter_name == "thinking_bloom_dampening":
+		_thinking_bloom_dampening = clampf(float(value), 0.0, 2.0)
 	elif parameter_name == "cluster_activation_strength_scale":
 		_cluster_activation_strength_scale = clampf(float(value), 0.0, 4.0)
 	elif parameter_name == "cluster_activation_attack_min":
@@ -1529,6 +1692,18 @@ func _build_scene() -> void:
 	_graph_root.name = "GraphRoot"
 	add_child(_graph_root)
 
+	_orb_core_mesh_instance = MeshInstance3D.new()
+	_orb_core_mesh_instance.name = "DeformingOrbCore"
+	_orb_core_deform_material = _orb_deformation_shader_material()
+	_orb_core_mesh_instance.material_override = _orb_core_deform_material
+	_graph_root.add_child(_orb_core_mesh_instance)
+
+	_orb_shell_mesh_instance = MeshInstance3D.new()
+	_orb_shell_mesh_instance.name = "DeformingOrbShell"
+	_orb_shell_material = _orb_deformation_shader_material()
+	_orb_shell_mesh_instance.material_override = _orb_shell_material
+	_graph_root.add_child(_orb_shell_mesh_instance)
+
 	_glow_line_mesh_instance = MeshInstance3D.new()
 	_glow_line_mesh_instance.name = "LineGlowMesh"
 	_glow_line_material = _material(CYAN["line"], 0.10, true, true)
@@ -1619,6 +1794,66 @@ void fragment() {
 	ALBEDO = COLOR.rgb;
 	EMISSION = COLOR.rgb * 2.4;
 	ALPHA = COLOR.a * halo * feather;
+}
+"""
+	var material := ShaderMaterial.new()
+	material.shader = shader
+	return material
+
+
+func _orb_deformation_shader_material() -> ShaderMaterial:
+	var shader := Shader.new()
+	shader.code = """
+shader_type spatial;
+render_mode unshaded, blend_add, cull_disabled, depth_draw_never, depth_test_disabled;
+
+uniform vec4 orb_color : source_color = vec4(0.24, 0.78, 1.0, 1.0);
+uniform float time = 0.0;
+uniform float speech_energy = 0.0;
+uniform float global_morph = 0.0;
+uniform float deform_strength = 0.0;
+uniform float deform_speed = 2.0;
+uniform float alpha_scale = 0.18;
+uniform float radius_scale = 1.0;
+uniform vec3 lobe_axis_0 = vec3(0.0, 1.0, 0.0);
+uniform vec3 lobe_axis_1 = vec3(1.0, 0.0, 0.0);
+uniform vec3 lobe_axis_2 = vec3(0.0, 0.0, 1.0);
+uniform vec3 lobe_axis_3 = vec3(-1.0, 0.0, 0.0);
+uniform float lobe_amount_0 = 0.0;
+uniform float lobe_amount_1 = 0.0;
+uniform float lobe_amount_2 = 0.0;
+uniform float lobe_amount_3 = 0.0;
+
+float lobe(vec3 normal, vec3 axis, float amount) {
+	float closeness = clamp(dot(normal, normalize(axis)) * 0.5 + 0.5, 0.0, 1.0);
+	return pow(closeness, 7.0) * amount;
+}
+
+float field(vec3 normal) {
+	float lobes = 0.0;
+	lobes += lobe(normal, lobe_axis_0, lobe_amount_0);
+	lobes += lobe(normal, lobe_axis_1, lobe_amount_1);
+	lobes += lobe(normal, lobe_axis_2, lobe_amount_2);
+	lobes += lobe(normal, lobe_axis_3, lobe_amount_3);
+	float wave_a = sin(time * deform_speed + normal.x * 2.9 + normal.y * 1.7);
+	float wave_b = sin(time * (deform_speed * 0.71) + normal.z * 3.4 - normal.x * 1.6);
+	float global_wave = (wave_a * 0.55 + wave_b * 0.45) * (0.20 + global_morph * 0.80);
+	return lobes + global_wave;
+}
+
+void vertex() {
+	vec3 radial = normalize(VERTEX);
+	float energy = clamp(speech_energy + global_morph * 0.68, 0.0, 1.0);
+	float deformation = field(radial) * deform_strength * energy;
+	VERTEX = radial * radius_scale + radial * deformation;
+}
+
+void fragment() {
+	float fresnel = pow(1.0 - clamp(dot(normalize(NORMAL), normalize(VIEW)), 0.0, 1.0), 2.15);
+	float pulse = 0.72 + sin(time * 1.3) * 0.12 + speech_energy * 0.30 + global_morph * 0.24;
+	ALBEDO = orb_color.rgb;
+	EMISSION = orb_color.rgb * (0.65 + fresnel * 1.35 + speech_energy * 0.75);
+	ALPHA = clamp((0.018 + fresnel * 0.52 + speech_energy * 0.16 + global_morph * 0.12) * alpha_scale * pulse, 0.0, 0.92);
 }
 """
 	var material := ShaderMaterial.new()
@@ -1770,7 +2005,9 @@ func _precompute_speech_membership(
 		var radius_t := clampf(item.base_position.length() / _orb_radius, 0.0, 1.22)
 		var local_weight := 0.86 + sin(item.phase * 1.71) * 0.14
 		if dust_items:
-			local_weight = 0.0 if not item.hub and item.source_node < 0 else 0.42 + sin(item.phase * 1.37) * 0.10
+			local_weight = 0.20 + sin(item.phase * 1.37) * 0.05
+			if item.hub or item.source_node >= 0:
+				local_weight = 0.46 + sin(item.phase * 1.37) * 0.12
 			local_weight *= lerpf(1.05, 0.74, clampf(radius_t, 0.0, 1.0))
 		else:
 			local_weight *= lerpf(1.12, 0.84, clampf(radius_t, 0.0, 1.0))
@@ -2071,6 +2308,10 @@ func _active_halo_inner_color() -> Color:
 
 
 func _setup_multimeshes() -> void:
+	if _orb_shell_mesh_instance != null:
+		_orb_shell_mesh_instance.mesh = _deform_sphere_mesh(1.0, 64, 32)
+	if _orb_core_mesh_instance != null:
+		_orb_core_mesh_instance.mesh = _deform_sphere_mesh(1.0, 48, 24)
 	_node_multimesh.multimesh = _new_multimesh(_node_mesh(1.0), _non_hub_node_count())
 	_hub_multimesh.multimesh = _new_multimesh(_node_mesh(1.0), _hub_render_node_count())
 	_dust_multimesh.multimesh = _new_multimesh(_node_mesh(1.0), _dust.size())
@@ -2082,6 +2323,7 @@ func _setup_multimeshes() -> void:
 	_update_dust(0.0, 0, 1)
 	_update_cluster_halos()
 	_update_core_glow()
+	_update_orb_shell_deformation()
 	_update_materials()
 
 
@@ -2113,6 +2355,15 @@ func _node_mesh(radius: float) -> SphereMesh:
 func _halo_quad_mesh() -> QuadMesh:
 	var mesh := QuadMesh.new()
 	mesh.size = Vector2.ONE
+	return mesh
+
+
+func _deform_sphere_mesh(radius: float, segments: int, rings: int) -> SphereMesh:
+	var mesh := SphereMesh.new()
+	mesh.radius = radius
+	mesh.height = radius * 2.0
+	mesh.radial_segments = segments
+	mesh.rings = rings
 	return mesh
 
 
@@ -2185,7 +2436,10 @@ func _process(delta: float) -> void:
 		_update_pulse_connections()
 	elif not _state_feature_enabled("pulse_connections") and _pulse_connection_mesh_active:
 		_clear_pulse_connection_meshes()
-	if not _connection_selection_flashes.is_empty():
+	var live_connection_mesh := _connection_mesh_uses_live_positions()
+	if live_connection_mesh and _orb_frame_index % _pulse_connection_update_stride() == 0:
+		_rebuild_static_connection_meshes()
+	elif not _connection_selection_flashes.is_empty():
 		_rebuild_static_connection_meshes()
 	var connections_ms := _elapsed_ms_since_usec(section_started_usec)
 	_orb_profile_connections_ms += connections_ms
@@ -2194,6 +2448,7 @@ func _process(delta: float) -> void:
 		_update_core_glow()
 	else:
 		_clear_core_glow()
+	_update_orb_shell_deformation()
 	_update_materials()
 	var materials_ms := _elapsed_ms_since_usec(section_started_usec)
 	_orb_profile_materials_ms += materials_ms
@@ -2763,7 +3018,7 @@ func _pick_orb_lab_connection(screen_position: Vector2, _viewport_size: Vector2)
 	return {}
 
 
-func _apply_builder_cluster_brush(screen_position: Vector2, viewport_size: Vector2) -> Dictionary:
+func _apply_builder_cluster_brush(screen_position: Vector2, viewport_size: Vector2, depth: float) -> Dictionary:
 	var cluster_pick := _pick_orb_lab_cluster(screen_position, viewport_size)
 	if not cluster_pick.is_empty() and float(cluster_pick.get("distance", 99999.0)) <= 42.0:
 		var cluster_id: int = int(cluster_pick.get("id", -1))
@@ -2771,21 +3026,21 @@ func _apply_builder_cluster_brush(screen_position: Vector2, viewport_size: Vecto
 			_grow_builder_cluster(cluster_id, 18, 0.16)
 			select_orb_lab_cluster(cluster_id)
 			return { "message": "grew cluster %s" % cluster_id }
-	var position := _screen_to_orb_builder_position(screen_position)
+	var position := _screen_to_orb_builder_position(screen_position, depth)
 	var node_index := _create_builder_cluster(position)
 	select_orb_lab_cluster(node_index)
 	return { "message": "added cluster %s" % node_index }
 
 
-func _apply_builder_particle_brush(screen_position: Vector2) -> Dictionary:
-	var position := _screen_to_orb_builder_position(screen_position)
+func _apply_builder_particle_brush(screen_position: Vector2, depth: float) -> Dictionary:
+	var position := _screen_to_orb_builder_position(screen_position, depth)
 	var inward := (-position.normalized()) if position.length_squared() > 0.001 else Vector3.FORWARD
 	for index in range(36):
 		var dust := OrganismNode.new()
 		dust.phase = _rng.randf() * TAU
-		var depth := pow(_rng.randf(), 0.78) * _orb_radius * 0.72
+		var volume_depth := pow(_rng.randf(), 0.78) * _orb_radius * 0.72
 		var lateral := _random_unit_vector() * _rng.randf_range(0.018, 0.20)
-		dust.base_position = (position + inward * depth + lateral).limit_length(_orb_radius * 1.16)
+		dust.base_position = (position + inward * volume_depth + lateral).limit_length(_orb_radius * 1.16)
 		dust.current_position = dust.base_position
 		dust.radius = _rng.randf_range(0.0022, 0.0048)
 		dust.brightness = _rng.randf_range(0.22, 0.58)
@@ -2794,14 +3049,14 @@ func _apply_builder_particle_brush(screen_position: Vector2) -> Dictionary:
 	return { "message": "added body particles" }
 
 
-func _apply_builder_particle_remove_brush(screen_position: Vector2) -> Dictionary:
-	var position := _screen_to_orb_builder_position(screen_position)
+func _apply_builder_particle_remove_brush(screen_position: Vector2, depth: float) -> Dictionary:
+	var position := _screen_to_orb_builder_position(screen_position, depth)
 	var removed := _remove_nearby_dust(position, 0.34, 42, false)
 	_rebuild_after_builder_mutation(false)
 	return { "message": "removed %s particles" % removed }
 
 
-func _apply_builder_highway_brush(screen_position: Vector2, viewport_size: Vector2) -> Dictionary:
+func _apply_builder_highway_brush(screen_position: Vector2, viewport_size: Vector2, depth: float) -> Dictionary:
 	var connection_pick := _pick_orb_lab_connection(screen_position, viewport_size)
 	if not connection_pick.is_empty():
 		var connection_id: int = int(connection_pick.get("id", -1))
@@ -2809,7 +3064,7 @@ func _apply_builder_highway_brush(screen_position: Vector2, viewport_size: Vecto
 			_create_builder_highway_bundle(_connections[connection_id].a, _connections[connection_id].b)
 			select_orb_lab_connection(connection_id)
 			return { "message": "added highway bundle" }
-	var position := _screen_to_orb_builder_position(screen_position)
+	var position := _screen_to_orb_builder_position(screen_position, depth)
 	var pair := _nearest_builder_node_pair(position)
 	if pair.size() >= 2:
 		_create_builder_highway_bundle(int(pair[0]), int(pair[1]))
@@ -2827,7 +3082,7 @@ func _apply_builder_highway_remove_brush(screen_position: Vector2, viewport_size
 	return { "message": "removed %s highway connections" % removed }
 
 
-func _apply_builder_cluster_remove_brush(screen_position: Vector2, viewport_size: Vector2) -> Dictionary:
+func _apply_builder_cluster_remove_brush(screen_position: Vector2, viewport_size: Vector2, _depth: float) -> Dictionary:
 	var cluster_pick := _pick_orb_lab_cluster(screen_position, viewport_size)
 	if cluster_pick.is_empty():
 		return { "message": "no cluster nearby" }
@@ -2843,7 +3098,7 @@ func _apply_builder_cluster_remove_brush(screen_position: Vector2, viewport_size
 	return { "message": "thinned cluster: %s particles, %s connections" % [removed_dust, removed_connections] }
 
 
-func _screen_to_orb_builder_position(screen_position: Vector2) -> Vector3:
+func _screen_to_orb_builder_position(screen_position: Vector2, depth: float = 0.35) -> Vector3:
 	if _camera == null or _graph_root == null:
 		return Vector3.ZERO
 	var ray_origin_world: Vector3 = _camera.project_ray_origin(screen_position)
@@ -2860,8 +3115,10 @@ func _screen_to_orb_builder_position(screen_position: Vector2) -> Vector3:
 		var sqrt_d := sqrt(discriminant)
 		var t1 := (-b - sqrt_d) / (2.0 * a)
 		var t2 := (-b + sqrt_d) / (2.0 * a)
-		var t := t1 if t1 > 0.0 else t2
-		if t > 0.0:
+		var near_t := t1 if t1 > 0.0 else t2
+		var far_t := t2 if t2 > near_t else near_t
+		if near_t > 0.0 and far_t >= near_t:
+			var t := lerpf(near_t, far_t, clampf(depth, 0.0, 1.0))
 			return origin + direction * t
 	var closest_t := -origin.dot(direction) / maxf(a, 0.001)
 	return (origin + direction * maxf(closest_t, 0.0)).limit_length(radius)
@@ -3374,9 +3631,10 @@ func _speech_morph_offset(position: Vector3, phase: float, amount_scale: float) 
 	tangent = tangent.normalized()
 	var wave := sin(_time * 4.2 + phase * 1.7) * 0.5 + 0.5
 	var smooth_wave := pow(wave, 0.72)
-	var regional_push := radial * signed_influence * smooth_wave * 0.235
-	var lateral_pull := tangent * influence * sin(_time * 5.8 + phase) * 0.045
-	return (regional_push + lateral_pull) * amount_scale
+	var regional_push := radial * signed_influence * (0.62 + smooth_wave * 0.58) * 0.315
+	var lobe_pressure := radial * signed_influence * influence * sin(_time * 2.9 + phase * 0.43) * 0.115
+	var lateral_pull := tangent * influence * sin(_time * 5.8 + phase) * 0.070
+	return (regional_push + lobe_pressure + lateral_pull) * amount_scale
 
 
 func _update_cached_speech_morph_regions() -> void:
@@ -3561,6 +3819,12 @@ func _connection_light(index: int) -> float:
 	return float(_connection_speech_light.get(index, 0.0))
 
 
+func _connection_mesh_uses_live_positions() -> bool:
+	if not _state_feature_enabled("node_motion"):
+		return false
+	return current_state == OrganismState.SPEAKING or _real_speech_motion_enabled or _cached_speech_motion_enabled
+
+
 func _update_nodes(_delta: float) -> void:
 	var node_index := 0
 	var hub_index := 0
@@ -3693,7 +3957,7 @@ func _update_dust(_delta: float, start_index: int = 0, stride: int = 1) -> void:
 				sin(_time * 0.071 + dust.phase * 1.2),
 				cos(_time * 0.043 + dust.phase * 0.7)
 			) * 0.045
-		var can_morph: bool = dust.hub or dust.source_node >= 0
+		var can_morph := true
 		if profile_active:
 			_speaking_profile_frame_dust_position_ms += _elapsed_ms_since_usec(position_started_usec)
 		var morph_started_usec := Time.get_ticks_usec() if profile_active else 0
@@ -3763,6 +4027,7 @@ func _rebuild_static_connection_meshes() -> void:
 	var glow_vertices := PackedVector3Array()
 	var glow_colors := PackedColorArray()
 	var glow_indices := PackedInt32Array()
+	var live_positions := _connection_mesh_uses_live_positions()
 	var local_camera_forward := _graph_root.global_transform.basis.inverse() * _camera.global_transform.basis.z
 	var local_camera_up := _graph_root.global_transform.basis.inverse() * _camera.global_transform.basis.y
 	local_camera_forward = local_camera_forward.normalized()
@@ -3772,7 +4037,9 @@ func _rebuild_static_connection_meshes() -> void:
 		var connection: OrganismConnection = _connections[connection_index]
 		var a := _nodes[connection.a]
 		var b := _nodes[connection.b]
-		var midpoint := (a.base_position + b.base_position) * 0.5
+		var a_position := a.current_position if live_positions else a.base_position
+		var b_position := b.current_position if live_positions else b.base_position
+		var midpoint := (a_position + b_position) * 0.5
 		var center_t := _center_visual_t(midpoint)
 		var depth_t := _balanced_depth_light(midpoint, 0.90, 1.14)
 		var route_enabled := _connection_lab_route(connection_index, connection.route)
@@ -3797,8 +4064,8 @@ func _rebuild_static_connection_meshes() -> void:
 		glow_color.a = alpha * (0.040 + center_t * 0.018 + shell_band * 0.028 + route_t * 0.030 + selection_flash * 0.18) * glow_alpha_scale * glow_scale
 		var glow_width := connection.width * width_scale * (1.75 + route_t * 0.40 + selection_flash * 1.30) * (1.0 + route_t * (_route_connection_glow_width_scale - 1.0))
 		var core_width := connection.width * width_scale * (1.08 + route_t * 0.12 + selection_flash * 0.65) * (1.0 + route_t * (_route_connection_core_width_scale - 1.0))
-		_add_line_quad_3d(glow_vertices, glow_colors, glow_indices, a.base_position, b.base_position, glow_width, glow_color, local_camera_forward, local_camera_up)
-		_add_line_quad_3d(core_vertices, core_colors, core_indices, a.base_position, b.base_position, core_width, color, local_camera_forward, local_camera_up)
+		_add_line_quad_3d(glow_vertices, glow_colors, glow_indices, a_position, b_position, glow_width, glow_color, local_camera_forward, local_camera_up)
+		_add_line_quad_3d(core_vertices, core_colors, core_indices, a_position, b_position, core_width, color, local_camera_forward, local_camera_up)
 
 	_line_mesh_instance.mesh = _mesh_from_arrays(core_vertices, core_colors, core_indices)
 	_glow_line_mesh_instance.mesh = _mesh_from_arrays(glow_vertices, glow_colors, glow_indices)
@@ -4376,11 +4643,112 @@ func _add_energy_pulse(connection_index: int, from_node: int, to_node: int, brig
 
 func _update_core_glow() -> void:
 	var pulse := 0.5 + sin(_time * 1.05) * 0.5
-	var radius := (0.26 + pulse * 0.055 + _activity * 0.070) * _core_glow_radius_scale * _center_visual_size
+	var thinking_bloom_scale := _thinking_bloom_scale()
+	var glow_activity := _thinking_glow_activity(thinking_bloom_scale)
+	var radius := (0.26 + pulse * 0.055 + glow_activity * 0.070) * _core_glow_radius_scale * _center_visual_size
 	var color := Color(_palette["hot"])
-	color.a = clampf((0.36 + pulse * 0.14) * _brightness * _core_glow_alpha_scale, 0.0, 0.62)
+	var thinking_brightness := 1.0 + maxf(0.0, _brightness - 1.0) * thinking_bloom_scale
+	color.a = clampf((0.36 + pulse * 0.14) * thinking_brightness * _core_glow_alpha_scale, 0.0, 0.62)
 	_core_multimesh.multimesh.set_instance_transform(0, Transform3D(Basis().scaled(Vector3.ONE * radius), Vector3.ZERO))
 	_core_multimesh.multimesh.set_instance_color(0, color)
+
+
+func _thinking_bloom_scale() -> float:
+	if current_state != OrganismState.THINKING:
+		return 1.0
+	return lerpf(1.0, 0.18, _thinking_bloom_dampening)
+
+
+func _thinking_glow_activity(thinking_bloom_scale: float) -> float:
+	if current_state != OrganismState.THINKING:
+		return _activity
+	var idle_activity := 0.18
+	return idle_activity + maxf(0.0, _activity - idle_activity) * thinking_bloom_scale
+
+
+func _update_orb_shell_deformation() -> void:
+	var active := _orb_shell_deformation_enabled and _state_feature_enabled("speech_motion")
+	if _orb_shell_mesh_instance != null:
+		_orb_shell_mesh_instance.visible = active
+		_orb_shell_mesh_instance.scale = Vector3.ONE * _orb_radius
+	if _orb_core_mesh_instance != null:
+		_orb_core_mesh_instance.visible = active
+		_orb_core_mesh_instance.scale = Vector3.ONE * _orb_radius
+	if not active:
+		return
+
+	var speech_energy := _speech_energy if current_state == OrganismState.SPEAKING else 0.0
+	var global_morph := _speech_global_morph if current_state == OrganismState.SPEAKING else 0.0
+	var axes := [
+		Vector3.UP,
+		Vector3.RIGHT,
+		Vector3.FORWARD,
+		Vector3(-1.0, 0.0, 0.0),
+	]
+	var amounts := [0.0, 0.0, 0.0, 0.0]
+	for index in range(mini(4, _speech_region_axes.size())):
+		axes[index] = _speech_region_axes[index]
+		var weight := 1.0
+		if index < _speech_region_weights.size():
+			weight = _speech_region_weights[index]
+		var direction := 1.0
+		if index < _speech_region_directions.size():
+			direction = _speech_region_directions[index]
+		amounts[index] = weight * direction
+
+	var shell_color := Color(_palette["line"]).lerp(Color(_palette["hot"]), clampf(speech_energy * 0.35 + global_morph * 0.45, 0.0, 0.55))
+	var core_color := Color(_palette["hot"]).lerp(Color.WHITE, clampf(speech_energy * 0.12, 0.0, 0.18))
+	_apply_orb_deformation_material(
+		_orb_shell_material,
+		shell_color,
+		speech_energy,
+		global_morph,
+		_orb_shell_deformation_strength,
+		_orb_shell_deformation_speed,
+		_orb_shell_deformation_alpha,
+		_orb_shell_deformation_radius,
+		axes,
+		amounts
+	)
+	_apply_orb_deformation_material(
+		_orb_core_deform_material,
+		core_color,
+		speech_energy,
+		global_morph,
+		_orb_shell_deformation_strength * 0.64,
+		_orb_shell_deformation_speed * 0.78,
+		_orb_shell_deformation_alpha * 0.58,
+		_core_radius_factor * _center_visual_size,
+		axes,
+		amounts
+	)
+
+
+func _apply_orb_deformation_material(
+	material: ShaderMaterial,
+	color: Color,
+	speech_energy: float,
+	global_morph: float,
+	deform_strength: float,
+	deform_speed: float,
+	alpha_scale: float,
+	radius_scale: float,
+	axes: Array,
+	amounts: Array
+) -> void:
+	if material == null:
+		return
+	material.set_shader_parameter("orb_color", color)
+	material.set_shader_parameter("time", _time)
+	material.set_shader_parameter("speech_energy", speech_energy)
+	material.set_shader_parameter("global_morph", global_morph)
+	material.set_shader_parameter("deform_strength", deform_strength)
+	material.set_shader_parameter("deform_speed", deform_speed)
+	material.set_shader_parameter("alpha_scale", alpha_scale)
+	material.set_shader_parameter("radius_scale", radius_scale)
+	for index in range(4):
+		material.set_shader_parameter("lobe_axis_%s" % index, axes[index])
+		material.set_shader_parameter("lobe_amount_%s" % index, amounts[index])
 
 
 func _update_cluster_halos() -> void:
@@ -4392,6 +4760,9 @@ func _update_cluster_halos() -> void:
 	local_camera_right = local_camera_right.normalized()
 	local_camera_up = local_camera_up.normalized()
 	var local_camera_forward := local_camera_right.cross(local_camera_up).normalized()
+	var thinking_bloom_scale := _thinking_bloom_scale()
+	var thinking_brightness := 1.0 + maxf(0.0, _brightness - 1.0) * thinking_bloom_scale
+	var glow_activity := _thinking_glow_activity(thinking_bloom_scale)
 	for index in range(MAX_CLUSTER_HALOS):
 		if index >= _cluster_halo_node_indices.size():
 			_cluster_halo_multimesh.multimesh.set_instance_transform(index, Transform3D(Basis().scaled(Vector3.ZERO), Vector3.ZERO))
@@ -4404,8 +4775,8 @@ func _update_cluster_halos() -> void:
 		var alpha := 0.06
 		if source_node == -1:
 			var core_pulse := 0.5 + sin(_time * 0.95) * 0.5
-			radius = (1.34 + core_pulse * 0.24 + _activity * 0.24) * _cluster_halo_radius_scale * _center_visual_size
-			alpha = clampf((0.20 + core_pulse * 0.075 + _activity * 0.110) * _brightness * _cluster_halo_intensity, 0.0, 0.96)
+			radius = (1.34 + core_pulse * 0.24 + glow_activity * 0.24) * _cluster_halo_radius_scale * _center_visual_size
+			alpha = clampf((0.20 + core_pulse * 0.075 + glow_activity * 0.110) * thinking_brightness * _cluster_halo_intensity, 0.0, 0.96)
 		elif source_node >= 0 and source_node < _nodes.size():
 			var node := _nodes[source_node]
 			position = node.current_position
@@ -4415,14 +4786,15 @@ func _update_cluster_halos() -> void:
 				dust_count = _node_dust_indices[source_node].size()
 			var density_t := clampf(float(dust_count) / 140.0, 0.0, 1.0)
 			var speech_light := _node_light(source_node)
+			var halo_speech_light := speech_light * thinking_bloom_scale
 			var lifecycle_dim := _cluster_lifecycle_node_dim(source_node)
 			var living_pulse := pow(maxf(0.0, sin(_time * 0.72 + node.phase)), 3.0)
 			var override_halo_scale := _cluster_lab_override(source_node, "halo_scale", 1.0)
 			var override_brightness_scale := _cluster_lab_override(source_node, "brightness_scale", 1.0)
 			var selection_flash := _cluster_selection_flash_amount(source_node)
 			var luminosity_t := clampf(_cluster_luminosity_score(source_node), 0.0, 1.65)
-			radius = (0.42 + luminosity_t * 0.86 + density_t * 0.34 + center_t * 0.20 + speech_light * 0.42 + selection_flash * 0.36) * _cluster_halo_radius_scale * override_halo_scale * (1.0 - lifecycle_dim * 0.26)
-			alpha = clampf((0.040 + luminosity_t * 0.145 + living_pulse * 0.026 + speech_light * 0.190 + selection_flash * 0.42) * _brightness * _cluster_halo_intensity * override_brightness_scale * (1.0 - lifecycle_dim), 0.0, 1.0)
+			radius = (0.42 + luminosity_t * 0.86 + density_t * 0.34 + center_t * 0.20 + halo_speech_light * 0.42 + selection_flash * 0.36) * _cluster_halo_radius_scale * override_halo_scale * (1.0 - lifecycle_dim * 0.26)
+			alpha = clampf((0.040 + luminosity_t * 0.145 + living_pulse * 0.026 + halo_speech_light * 0.190 + selection_flash * 0.42) * thinking_brightness * _cluster_halo_intensity * override_brightness_scale * (1.0 - lifecycle_dim), 0.0, 1.0)
 		else:
 			_cluster_halo_multimesh.multimesh.set_instance_transform(index, Transform3D(Basis().scaled(Vector3.ZERO), Vector3.ZERO))
 			_cluster_halo_multimesh.multimesh.set_instance_color(index, Color(0, 0, 0, 0))

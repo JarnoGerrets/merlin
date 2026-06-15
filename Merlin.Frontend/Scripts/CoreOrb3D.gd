@@ -4,7 +4,6 @@ class_name CoreOrb3D
 signal state_changed(state)
 
 const ORGANISM_SCRIPT_PATH := "res://Scripts/MerlinOrganism3D.gd"
-
 var _viewport_container: SubViewportContainer
 var _viewport: SubViewport
 var _organism: Node
@@ -207,11 +206,11 @@ func pick_orb_lab_item(local_position: Vector2) -> Dictionary:
 	return result
 
 
-func apply_orb_builder_tool(tool_name: String, local_position: Vector2) -> Dictionary:
+func apply_orb_builder_tool(tool_name: String, local_position: Vector2, depth: float = 0.35) -> Dictionary:
 	if _organism == null or _viewport == null:
 		return {}
 	var render_scale := Vector2(float(_viewport.size.x) / maxf(size.x, 1.0), float(_viewport.size.y) / maxf(size.y, 1.0))
-	var result: Dictionary = _organism.call("apply_orb_builder_tool", tool_name, local_position * render_scale, Vector2(_viewport.size)) as Dictionary
+	var result: Dictionary = _organism.call("apply_orb_builder_tool", tool_name, local_position * render_scale, Vector2(_viewport.size), depth) as Dictionary
 	return result
 
 
