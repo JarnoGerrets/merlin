@@ -135,12 +135,13 @@ func _ready() -> void:
 	show_debug_check_box.toggled.connect(_on_show_debug_check_box_toggled)
 	message_input.text_submitted.connect(_on_message_submitted)
 
-	web_socket_client.connection_state_changed.connect(_on_connection_state_changed)
-	web_socket_client.response_received.connect(_on_response_received)
-	web_socket_client.visual_event_received.connect(_on_visual_event_received)
-	web_socket_client.malformed_response.connect(_on_malformed_response)
-	web_socket_client.socket_closed.connect(_on_socket_closed)
-	web_socket_client.frontend_work_observed.connect(_on_frontend_work_observed)
+	web_socket_client.connection_state_changed.connect(_profiled_connection_state_changed)
+	web_socket_client.visual_state_received.connect(_profiled_visual_state_received)
+	web_socket_client.response_received.connect(_profiled_response_received)
+	web_socket_client.visual_event_received.connect(_profiled_visual_event_received)
+	web_socket_client.malformed_response.connect(_profiled_malformed_response)
+	web_socket_client.socket_closed.connect(_profiled_socket_closed)
+	web_socket_client.frontend_work_observed.connect(_profiled_frontend_work_observed)
 
 	_add_system_message("Connecting to Merlin.Backend...")
 	_add_notification("Connecting to Merlin.Backend", "system")
@@ -152,6 +153,8 @@ func _ready() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F9:
 		_start_streaming_pcm_poc()
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F10:
+		_toggle_backend_stress_fake_mode()
 
 
 func _process(delta: float) -> void:
@@ -179,6 +182,14 @@ func _on_send_pressed() -> void:
 func _on_message_submitted(_text: String) -> void:
 	_send_current_message()
 	_focus_message_input()
+
+
+func _toggle_backend_stress_fake_mode() -> void:
+	if web_socket_client == null or not web_socket_client.has_method("set_backend_stress_fake_mode"):
+		return
+	var enabled := not bool(web_socket_client.call("is_backend_stress_fake_mode_enabled"))
+	web_socket_client.call("set_backend_stress_fake_mode", enabled)
+	_add_notification("Backend stress fake mode %s" % ("on" if enabled else "off"), "system")
 
 
 
@@ -628,6 +639,42 @@ func _summarize_transcript_for_acknowledgement(transcript: String) -> String:
 	return " ".join(summary_words)
 
 
+func _profiled_connection_state_changed(state: String, detail: String) -> void:
+	_profile_signal_handler("_on_connection_state_changed", Callable(self, "_on_connection_state_changed"), [state, detail])
+
+
+func _profiled_visual_state_received(state: Dictionary) -> void:
+	_profile_signal_handler("_on_visual_state_received", Callable(self, "_on_visual_state_received"), [state])
+
+
+func _profiled_response_received(response: Dictionary) -> void:
+	_profile_signal_handler("_on_response_received", Callable(self, "_on_response_received"), [response])
+
+
+func _profiled_visual_event_received(event: Dictionary) -> void:
+	_profile_signal_handler("_on_visual_event_received", Callable(self, "_on_visual_event_received"), [event])
+
+
+func _profiled_malformed_response(raw_message: String, detail: String) -> void:
+	_profile_signal_handler("_on_malformed_response", Callable(self, "_on_malformed_response"), [raw_message, detail])
+
+
+func _profiled_socket_closed(code: int, reason: String) -> void:
+	_profile_signal_handler("_on_socket_closed", Callable(self, "_on_socket_closed"), [code, reason])
+
+
+func _profiled_frontend_work_observed(metrics: Dictionary) -> void:
+	_profile_signal_handler("_on_frontend_work_observed", Callable(self, "_on_frontend_work_observed"), [metrics])
+
+
+func _profile_signal_handler(handler_name: String, handler: Callable, args: Array) -> void:
+	var started_usec := Time.get_ticks_usec()
+	handler.callv(args)
+	var elapsed_ms := _elapsed_ms_since(started_usec)
+	if elapsed_ms >= 2.0:
+		print("SignalHandlerPerf slow handler=%s ms=%.2f" % [handler_name, elapsed_ms])
+
+
 func _on_connection_state_changed(state: String, detail: String) -> void:
 	connection_state_label.text = _format_connection_state(state, detail)
 
@@ -659,10 +706,17 @@ func _on_connection_state_changed(state: String, detail: String) -> void:
 	_update_send_button()
 
 
+func _on_visual_state_received(state: Dictionary) -> void:
+	if core_orb != null and core_orb.has_method("update_visual_state"):
+		core_orb.update_visual_state(state)
+
+
 func _on_response_received(response: Dictionary) -> void:
 	_llm_response_received_usec = Time.get_ticks_usec()
 	print("Voice timing: LLM response received. ElapsedMs: %.1f" % _voice_elapsed_ms())
 	_set_voice_phase("llm_response")
+	await get_tree().process_frame
+	var prepare_started_usec := Time.get_ticks_usec()
 	var correlation_id := str(response.get("correlationId", ""))
 	if not correlation_id.is_empty():
 		_pending_requests.erase(correlation_id)
@@ -676,6 +730,9 @@ func _on_response_received(response: Dictionary) -> void:
 	var confirmation = response.get("confirmation", null)
 	var application_candidates = response.get("applicationCandidates", null)
 	var debug_text := _format_debug_info(response)
+	var prepare_ms := _elapsed_ms_since(prepare_started_usec)
+	if prepare_ms >= 2.0:
+		print("SignalHandlerPerf slow handler=_on_response_received.prepare ms=%.2f" % prepare_ms)
 
 	_update_pending_state()
 	_update_send_button()
@@ -1758,6 +1815,7 @@ func _is_tool_execution_response(response: Dictionary) -> bool:
 
 
 func _set_merlin_state(state: int) -> void:
+	var started_usec := Time.get_ticks_usec()
 	_merlin_state = state
 	activity_label.text = _activity_text_for_state(state)
 	match state:
@@ -1773,6 +1831,9 @@ func _set_merlin_state(state: int) -> void:
 			core_orb.play_error()
 		_:
 			core_orb.set_idle()
+	var elapsed_ms := _elapsed_ms_since(started_usec)
+	if elapsed_ms >= 2.0:
+		print("SignalHandlerPerf slow handler=_set_merlin_state state=%s ms=%.2f" % [_merlin_state_name(state), elapsed_ms])
 
 
 func _activity_text_for_state(state: int) -> String:

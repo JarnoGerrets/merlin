@@ -8,6 +8,14 @@ var _viewport_container: SubViewportContainer
 var _viewport: SubViewport
 var _organism: Node
 var _temporary_state_token := 0
+var visual_state := {
+	"mode": "idle",
+	"energy": 0.0,
+	"speech_energy": 0.0,
+	"thinking_intensity": 0.0,
+	"error_intensity": 0.0,
+	"tool_intensity": 0.0,
+}
 
 
 func _ready() -> void:
@@ -18,26 +26,22 @@ func _ready() -> void:
 
 
 func set_idle() -> void:
-	if _organism != null:
-		_organism.call("set_idle")
+	update_visual_state({ "mode": "idle", "energy": 0.0, "thinking_intensity": 0.0, "error_intensity": 0.0, "tool_intensity": 0.0 })
 	state_changed.emit("idle")
 
 
 func set_thinking() -> void:
-	if _organism != null:
-		_organism.call("set_thinking")
+	update_visual_state({ "mode": "thinking", "energy": 0.55, "thinking_intensity": 1.0 })
 	state_changed.emit("thinking")
 
 
 func set_listening() -> void:
-	if _organism != null:
-		_organism.call("set_listening")
+	update_visual_state({ "mode": "listening", "energy": 0.35 })
 	state_changed.emit("listening")
 
 
 func set_speaking() -> void:
-	if _organism != null:
-		_organism.call("set_speaking")
+	update_visual_state({ "mode": "speaking", "energy": 0.72, "speech_energy": maxf(float(visual_state.get("speech_energy", 0.0)), 0.62) })
 	state_changed.emit("speaking")
 
 
@@ -49,8 +53,7 @@ func start_speaking_startup_profile() -> void:
 func play_tool_execution(duration: float = 2.5) -> void:
 	_temporary_state_token += 1
 	var token := _temporary_state_token
-	if _organism != null:
-		_organism.call("play_tool_execution", duration)
+	update_visual_state({ "mode": "tool", "energy": 0.68, "tool_intensity": 1.0 })
 	state_changed.emit("executing_tool")
 	await get_tree().create_timer(duration).timeout
 	if token == _temporary_state_token:
@@ -59,26 +62,33 @@ func play_tool_execution(duration: float = 2.5) -> void:
 
 func play_error(duration: float = 3.0) -> void:
 	_temporary_state_token += 1
-	if _organism != null:
-		_organism.call("play_error", duration)
+	update_visual_state({ "mode": "error", "energy": 0.62, "error_intensity": 1.0 })
 	state_changed.emit("error")
 
 
 func play_confirmation() -> void:
 	_temporary_state_token += 1
-	if _organism != null:
-		_organism.call("play_confirmation")
+	update_visual_state({ "mode": "confirmation", "energy": 0.36 })
 	state_changed.emit("confirmation")
 
 
 func notify_speech_tick(character: String = "", delay: float = 0.0, progress: float = 0.0) -> void:
+	update_visual_state({ "mode": "speaking", "speech_energy": maxf(float(visual_state.get("speech_energy", 0.0)), 0.62), "energy": 0.72 })
 	if _organism != null:
 		_organism.call("notify_speech_tick", character, delay, progress)
 
 
 func set_speech_energy_override(value: float) -> void:
+	update_visual_state({ "speech_energy": clampf(value, 0.0, 1.0) })
 	if _organism != null:
 		_organism.call("set_speech_energy_override", value)
+
+
+func update_visual_state(patch: Dictionary) -> void:
+	for key in patch.keys():
+		visual_state[key] = patch[key]
+	if _organism != null:
+		_organism.call("set_visual_state", visual_state)
 
 
 func set_manual_rotation_enabled(enabled: bool) -> void:

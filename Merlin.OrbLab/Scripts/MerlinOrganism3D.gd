@@ -77,6 +77,15 @@ class ConnectionSelectionFlash:
 	var duration := 1.0
 
 
+class PulseHitWebEvent:
+	var node_index := -1
+	var age := 0.0
+	var duration := 2.45
+	var strength := 1.0
+	var connection_ids: Array[int] = []
+	var phase := 0.0
+
+
 class SpeechRipple:
 	var axis := Vector3.UP
 	var phase := 0.0
@@ -192,9 +201,61 @@ const DEFAULT_CLUSTER_LIFECYCLE_BIRTH_STRENGTH := 1.30
 const DEFAULT_CLUSTER_LIFECYCLE_DEATH_STRENGTH := 0.72
 const MAX_SPEECH_REGION_BURSTS := 7
 const SPEECH_MORPH_REGION_COUNT := 48
+const TARGET_FRAME_MS := 8.33
+const MAX_SAFE_FRAME_MS := 12.0
+const ORB_PRESSURE_FRAME_MS := 20.0
+const ORB_CRITICAL_FRAME_MS := 33.0
+const ORB_EMERGENCY_TRIGGER_MS := 25.0
+const ORB_EMERGENCY_TRIGGER_SECONDS := 1.0
+const ACTIVE_PULSE_CONNECTION_SEGMENT_BUDGET := 96
+const ACTIVE_PULSE_TRAVEL_SEGMENT_BUDGET := 72
+const ACTIVE_PULSE_WEB_SEGMENT_BUDGET := 104
+const ACTIVE_PULSE_EMERGENCY_TRAVEL_SEGMENT_BUDGET := 32
+const ACTIVE_PULSE_EMERGENCY_WEB_SEGMENT_BUDGET := 48
+const THINKING_WEB_ATTACK_MIN := 0.32
+const THINKING_WEB_ATTACK_MAX := 0.48
+const THINKING_WEB_HOLD_MIN := 1.30
+const THINKING_WEB_FADE_MIN := 1.45
+const THINKING_WEB_COOLDOWN_MAX := 0.75
+const THINKING_WEB_VISIBLE_MIN := 12
+const THINKING_WEB_VISIBLE_MAX := 42
+const PULSE_HIT_WEB_MAX_EVENTS := 10
+const PULSE_HIT_WEB_MIN_CONNECTIONS := 18
+const PULSE_HIT_WEB_MAX_CONNECTIONS := 48
+const PULSE_HIT_WEB_DURATION := 2.55
+const PULSE_HIT_WEB_ATTACK_SECONDS := 0.34
+const PULSE_HIT_WEB_HOLD_SECONDS := 0.72
+const PULSE_HIT_WEB_FADE_SECONDS := 1.49
+const SPEAKING_SHADER_REGION_SECONDS_MIN := 0.30
+const SPEAKING_SHADER_REGION_SECONDS_MAX := 0.62
+const SPEAKING_SHADER_GLOBAL_SECONDS_MIN := 0.58
+const SPEAKING_SHADER_GLOBAL_SECONDS_MAX := 1.10
+const SPEAKING_ORB_GLOBAL_MORPH_MAX := 0.68
+const SPEAKING_REGION_NODE_MOTION_SCALE := 1.05
+const SPEAKING_REGION_DUST_MOTION_SCALE := 0.68
+const SPEAKING_REGION_BLEND_IN_SPEED := 5.5
+const SPEAKING_REGION_BLEND_OUT_SPEED := 1.65
+const SPEAKING_REGION_FIELD_ATTACK_SPEED := 7.0
+const SPEAKING_REGION_FIELD_RELEASE_SPEED := 2.4
+const SPEAKING_NODE_POSITION_SMOOTHING := 11.0
+const SPEAKING_DUST_POSITION_SMOOTHING := 7.5
+const STATE_LIGHT_BLEND_IN_SPEED := 2.8
+const STATE_LIGHT_BLEND_OUT_SPEED := 2.4
+const THINKING_CONNECTION_TARGET_COUNT := 512
+const THINKING_CONNECTION_MIN_VISIBLE := 256
+const THINKING_CONNECTION_ROTATE_SECONDS := 0.85
+const THINKING_CONNECTION_REBUILD_SECONDS := 0.10
+const THINKING_CONNECTION_ROTATE_FRACTION := 0.08
+const THINKING_CONNECTION_FADE_IN_MIN := 0.15
+const THINKING_CONNECTION_FADE_IN_MAX := 0.25
+const THINKING_CONNECTION_HOLD_MIN := 0.70
+const THINKING_CONNECTION_HOLD_MAX := 1.50
+const THINKING_CONNECTION_FADE_OUT_MIN := 0.40
+const THINKING_CONNECTION_FADE_OUT_MAX := 0.80
 const DEFAULT_DISPLAY_SCALE := 0.76
-const ORB_FRAME_PROFILER_ENABLED := false
-const ORB_FRAME_PROFILER_REPORT_SECONDS := 1.0
+const ORB_FRAME_PROFILER_ENABLED := true
+const ORB_FRAME_PROFILER_REPORT_SECONDS := 3.0
+const ORB_THINKING_PROFILER_REPORT_SECONDS := 1.0
 const ORB_FRAME_PROFILER_SPIKE_MS := 20.0
 const SPEAKING_STARTUP_PROFILER_ENABLED := false
 const SPEAKING_STARTUP_PROFILE_BUCKETS_MS := [0, 100, 250, 500, 1000, 2000, 3000, 4000, 5000, 6000, 7000]
@@ -232,6 +293,19 @@ var current_state := OrganismState.IDLE
 
 var _rng := RandomNumberGenerator.new()
 var _time := 0.0
+var visual_state := {
+	"mode": "idle",
+	"energy": 0.0,
+	"speech_energy": 0.0,
+	"thinking_intensity": 0.0,
+	"error_intensity": 0.0,
+	"tool_intensity": 0.0,
+}
+var last_frame_ms := 0.0
+var quality_pressure := 0.0
+var average_frame_ms := 0.0
+var emergency_visual_protection := false
+var _overloaded_time := 0.0
 var _state_feature_overrides := {}
 var _suppress_generated_rebuilds := false
 var _generation_seed := DEFAULT_GENERATION_SEED
@@ -267,6 +341,7 @@ var _connections: Array[OrganismConnection] = []
 var _pulses: Array[EnergyPulse] = []
 var _pending_energy_branches: Array[PendingEnergyBranch] = []
 var _cluster_activations: Array[ClusterActivation] = []
+var _pulse_hit_web_events: Array[PulseHitWebEvent] = []
 var _cluster_lifecycle_events: Array[ClusterLifecycle] = []
 var _cluster_selection_flashes: Array[ClusterSelectionFlash] = []
 var _connection_selection_flashes: Array[ConnectionSelectionFlash] = []
@@ -290,6 +365,12 @@ var _activity := 0.18
 var _target_activity := 0.18
 var _brightness := 1.0
 var _target_brightness := 1.0
+var _thinking_light_blend := 0.0
+var _listening_light_blend := 0.0
+var _speaking_light_blend := 0.0
+var _executing_light_blend := 0.0
+var _error_light_blend := 0.0
+var _confirmation_light_blend := 0.0
 var _cluster_halo_intensity := DEFAULT_CLUSTER_HALO_INTENSITY
 var _cluster_halo_radius_scale := DEFAULT_CLUSTER_HALO_RADIUS_SCALE
 var _natural_halo_dust_weight := DEFAULT_NATURAL_HALO_DUST_WEIGHT
@@ -373,6 +454,7 @@ var _speech_tick_count := 0
 var _speech_region_timer := 0.0
 var _speech_global_timer := 0.0
 var _speech_ripple_timer := 0.0
+var _speaking_region_blend := 0.0
 var _speech_region_axes: Array[Vector3] = []
 var _speech_region_targets: Array[Vector3] = []
 var _speech_region_weights: Array[float] = []
@@ -399,11 +481,15 @@ var _pulse_multimesh: MultiMeshInstance3D
 var _core_multimesh: MultiMeshInstance3D
 var _line_mesh_instance: MeshInstance3D
 var _glow_line_mesh_instance: MeshInstance3D
+var _thinking_line_mesh_instance: MeshInstance3D
+var _thinking_glow_line_mesh_instance: MeshInstance3D
 var _pulse_line_mesh_instance: MeshInstance3D
 var _pulse_glow_line_mesh_instance: MeshInstance3D
 var _camera: Camera3D
 var _line_material: StandardMaterial3D
 var _glow_line_material: StandardMaterial3D
+var _thinking_line_material: ShaderMaterial
+var _thinking_glow_line_material: ShaderMaterial
 var _pulse_line_material: StandardMaterial3D
 var _pulse_glow_line_material: StandardMaterial3D
 var _node_material: StandardMaterial3D
@@ -418,6 +504,14 @@ var _orb_core_deform_material: ShaderMaterial
 var _cluster_halo_material: ShaderMaterial
 var _orb_frame_index := 0
 var _pulse_connection_mesh_active := false
+var _thinking_connection_mesh_active := false
+var _thinking_connections := {}
+var _thinking_refresh_timer := 0.0
+var _thinking_rebuild_timer := 0.0
+var _debug_disable_thinking_connections := false
+var _debug_disable_travel_pulses := false
+var _debug_disable_static_connections := false
+var _debug_freeze_connection_updates := false
 var _orb_profile_last_report_usec := 0
 var _orb_profile_frames := 0
 var _orb_profile_total_ms := 0.0
@@ -425,6 +519,15 @@ var _orb_profile_max_ms := 0.0
 var _orb_profile_nodes_ms := 0.0
 var _orb_profile_dust_ms := 0.0
 var _orb_profile_connections_ms := 0.0
+var _orb_profile_thinking_total_ms := 0.0
+var _orb_profile_thinking_selection_ms := 0.0
+var _orb_profile_thinking_mesh_build_ms := 0.0
+var _orb_profile_thinking_shader_uniform_ms := 0.0
+var _orb_profile_thinking_fade_ms := 0.0
+var _orb_profile_thinking_rotation_ms := 0.0
+var _orb_profile_thinking_pulse_accent_ms := 0.0
+var _orb_profile_connection_static_ms := 0.0
+var _orb_profile_connection_active_ms := 0.0
 var _orb_profile_pulses_ms := 0.0
 var _orb_profile_materials_ms := 0.0
 var _orb_profile_palette_ms := 0.0
@@ -436,6 +539,8 @@ var _orb_profile_dust_transform_sets := 0
 var _orb_profile_dust_color_sets := 0
 var _orb_profile_pulse_mesh_builds := 0
 var _orb_profile_spikes := 0
+var _orb_profile_deferred_updates := 0
+var _orb_profile_preset_load_ms := 0.0
 var _speaking_profile_active := false
 var _speaking_profile_started_usec := 0
 var _speaking_profile_next_bucket_index := 0
@@ -537,7 +642,55 @@ func _ready() -> void:
 	_build_scene()
 	if not _load_startup_preset():
 		_rebuild_generated_orb()
+		_save_startup_preset_from_current()
 	set_process(true)
+
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	if not (event is InputEventKey):
+		return
+	var key_event := event as InputEventKey
+	if not key_event.pressed or key_event.echo:
+		return
+	match key_event.keycode:
+		KEY_F6:
+			_debug_disable_thinking_connections = not _debug_disable_thinking_connections
+			_apply_debug_connection_visibility()
+			if _debug_disable_thinking_connections:
+				_clear_thinking_connection_meshes()
+			elif current_state == OrganismState.THINKING:
+				_start_thinking_connection_layer()
+			print("OrbDebug: F6 ThinkingConnectionLayer disabled=%s" % str(_debug_disable_thinking_connections))
+		KEY_F7:
+			_debug_disable_travel_pulses = not _debug_disable_travel_pulses
+			_apply_debug_connection_visibility()
+			if _debug_disable_travel_pulses:
+				_clear_pulses_and_lights()
+			print("OrbDebug: F7 TravelPulseLayer disabled=%s" % str(_debug_disable_travel_pulses))
+		KEY_F8:
+			_debug_disable_static_connections = not _debug_disable_static_connections
+			_apply_debug_connection_visibility()
+			if not _debug_disable_static_connections and not _debug_freeze_connection_updates:
+				_rebuild_static_connection_meshes()
+			print("OrbDebug: F8 StaticConnectionLayer disabled=%s" % str(_debug_disable_static_connections))
+		KEY_F9:
+			_debug_freeze_connection_updates = not _debug_freeze_connection_updates
+			print("OrbDebug: F9 connection updates frozen=%s" % str(_debug_freeze_connection_updates))
+
+
+func _apply_debug_connection_visibility() -> void:
+	if _thinking_line_mesh_instance != null:
+		_thinking_line_mesh_instance.visible = not _debug_disable_thinking_connections
+	if _thinking_glow_line_mesh_instance != null:
+		_thinking_glow_line_mesh_instance.visible = not _debug_disable_thinking_connections
+	if _pulse_line_mesh_instance != null:
+		_pulse_line_mesh_instance.visible = not _debug_disable_travel_pulses
+	if _pulse_glow_line_mesh_instance != null:
+		_pulse_glow_line_mesh_instance.visible = not _debug_disable_travel_pulses
+	if _line_mesh_instance != null:
+		_line_mesh_instance.visible = not _debug_disable_static_connections
+	if _glow_line_mesh_instance != null:
+		_glow_line_mesh_instance.visible = not _debug_disable_static_connections
 
 
 func _rebuild_generated_orb() -> void:
@@ -547,6 +700,7 @@ func _rebuild_generated_orb() -> void:
 	_pulses.clear()
 	_pending_energy_branches.clear()
 	_cluster_activations.clear()
+	_pulse_hit_web_events.clear()
 	_cluster_lifecycle_events.clear()
 	_cluster_selection_flashes.clear()
 	_connection_selection_flashes.clear()
@@ -566,9 +720,13 @@ func _rebuild_generated_orb() -> void:
 
 func _load_startup_preset() -> bool:
 	if not FileAccess.file_exists(STARTUP_PRESET_PATH):
+		print("Orb startup preset missing: generating once and saving preset.")
 		return false
+	var preset_started_usec := Time.get_ticks_usec()
+	print("Orb startup preset found: loading baked geometry.")
 	var text := FileAccess.get_file_as_string(STARTUP_PRESET_PATH)
 	if text.is_empty():
+		push_warning("Orb startup preset is empty.")
 		return false
 	var parsed = JSON.parse_string(text)
 	if not (parsed is Dictionary):
@@ -577,6 +735,7 @@ func _load_startup_preset() -> bool:
 	var preset: Dictionary = parsed as Dictionary
 	var geometry: Dictionary = preset.get("geometry", {})
 	if geometry.is_empty():
+		push_warning("Orb startup preset has no geometry.")
 		return false
 
 	_clear_runtime_motion()
@@ -596,6 +755,7 @@ func _load_startup_preset() -> bool:
 	_rng.seed = _generation_seed
 
 	if not _apply_builder_snapshot_geometry(geometry):
+		push_warning("Orb startup preset geometry could not be applied.")
 		return false
 
 	_build_speech_morph_regions()
@@ -606,13 +766,72 @@ func _load_startup_preset() -> bool:
 	_apply_startup_connection_overrides(preset.get("connection_overrides", []))
 	_apply_startup_state_features(preset.get("state_features", {}))
 	_setup_multimeshes()
+	_orb_profile_preset_load_ms = _elapsed_ms_since_usec(preset_started_usec)
+	print("Orb startup geometry loaded in %.2f ms." % _orb_profile_preset_load_ms)
 	return true
+
+
+func _save_startup_preset_from_current() -> void:
+	var preset := {
+		"name": "Generated Startup Orb",
+		"has_data": true,
+		"saved_at": Time.get_datetime_string_from_system(),
+		"parameters": _startup_serialized_parameters(),
+		"state_features": get_orb_lab_state_features(),
+		"connection_overrides": get_orb_lab_connection_overrides(),
+		"cluster_overrides": _startup_cluster_overrides(),
+		"geometry": get_orb_builder_snapshot(),
+	}
+	var file := FileAccess.open(STARTUP_PRESET_PATH, FileAccess.WRITE)
+	if file == null:
+		push_warning("Could not write generated orb startup preset to %s." % STARTUP_PRESET_PATH)
+		return
+	file.store_string(JSON.stringify(preset))
+	file.close()
+	print("Orb startup preset saved to %s." % STARTUP_PRESET_PATH)
+
+
+func _startup_serialized_parameters() -> Dictionary:
+	var parameters := {}
+	for parameter_variant in get_orb_lab_parameters():
+		var parameter: Dictionary = parameter_variant as Dictionary
+		var parameter_name := String(parameter.get("name", ""))
+		var parameter_type := String(parameter.get("type", "float"))
+		parameters[parameter_name] = _json_safe_startup_parameter_value(parameter.get("value"), parameter_type)
+	return parameters
+
+
+func _startup_cluster_overrides() -> Array:
+	var items: Array = []
+	for cluster_variant in get_orb_lab_clusters():
+		var cluster: Dictionary = cluster_variant as Dictionary
+		var halo_scale := float(cluster.get("halo_scale", 1.0))
+		var brightness_scale := float(cluster.get("brightness_scale", 1.0))
+		if not is_equal_approx(halo_scale, 1.0) or not is_equal_approx(brightness_scale, 1.0):
+			items.append({
+				"id": int(cluster.get("id", -1)),
+				"halo_scale": halo_scale,
+				"brightness_scale": brightness_scale,
+			})
+	return items
+
+
+func _json_safe_startup_parameter_value(value, parameter_type: String):
+	if parameter_type == "color":
+		var color: Color = value
+		return color.to_html(false)
+	if parameter_type == "bool":
+		return bool(value)
+	if parameter_type == "int":
+		return int(value)
+	return float(value)
 
 
 func _clear_runtime_motion() -> void:
 	_pulses.clear()
 	_pending_energy_branches.clear()
 	_cluster_activations.clear()
+	_pulse_hit_web_events.clear()
 	_cluster_lifecycle_events.clear()
 	_cluster_selection_flashes.clear()
 	_connection_selection_flashes.clear()
@@ -819,6 +1038,40 @@ func set_speech_energy_override(value: float) -> void:
 		_speech_energy = clampf(_speech_energy_override, 0.0, 0.96)
 		_target_activity = maxf(_target_activity, lerpf(0.58, 0.92, _speech_energy_override))
 		_speech_global_morph = maxf(_speech_global_morph, lerpf(0.10, 0.58, _speech_energy_override))
+
+
+func set_visual_state(state: Dictionary) -> void:
+	for key in state.keys():
+		visual_state[key] = state[key]
+	var mode := String(visual_state.get("mode", "idle"))
+	match mode:
+		"thinking":
+			if current_state != OrganismState.THINKING:
+				set_thinking()
+		"listening":
+			if current_state != OrganismState.LISTENING:
+				set_listening()
+		"speaking":
+			if current_state != OrganismState.SPEAKING:
+				set_speaking()
+		"tool":
+			if current_state != OrganismState.EXECUTING:
+				play_tool_execution()
+		"error":
+			if current_state != OrganismState.ERROR:
+				play_error()
+		"confirmation":
+			if current_state != OrganismState.CONFIRMATION:
+				play_confirmation()
+		"waiting":
+			if current_state != OrganismState.CONFIRMATION:
+				play_confirmation()
+		_:
+			if current_state != OrganismState.IDLE:
+				set_idle()
+	var speech_energy := float(visual_state.get("speech_energy", -1.0))
+	if speech_energy >= 0.0:
+		set_speech_energy_override(speech_energy)
 
 
 func set_manual_rotation_enabled(enabled: bool) -> void:
@@ -1622,7 +1875,6 @@ func _cyan_palette() -> Dictionary:
 func _refresh_cyan_palette_if_active() -> void:
 	if current_state == OrganismState.IDLE or current_state == OrganismState.THINKING or current_state == OrganismState.LISTENING or current_state == OrganismState.SPEAKING or current_state == OrganismState.EXECUTING:
 		_target_palette = _cyan_palette()
-		_palette = _cyan_palette()
 
 
 func notify_speech_tick(_character: String = "", delay: float = 0.0, progress: float = 0.0) -> void:
@@ -1663,10 +1915,17 @@ func notify_speech_tick(_character: String = "", delay: float = 0.0, progress: f
 
 
 func _set_state(state: int, palette: Dictionary, activity: float, brightness: float) -> void:
+	var previous_state := current_state
 	current_state = state
 	_target_palette = palette.duplicate(true)
 	_target_activity = activity
 	_target_brightness = brightness
+	if state == OrganismState.THINKING and previous_state != OrganismState.THINKING:
+		_start_thinking_connection_layer()
+	elif previous_state == OrganismState.THINKING and state != OrganismState.THINKING:
+		_fade_out_thinking_connection_layer()
+	if previous_state == OrganismState.SPEAKING and state != OrganismState.SPEAKING and not _debug_disable_static_connections and not _debug_freeze_connection_updates:
+		_rebuild_static_connection_meshes()
 	_apply_current_state_feature_side_effects()
 
 
@@ -1715,6 +1974,18 @@ func _build_scene() -> void:
 	_line_material = _material(CYAN["line"], 1.0, true, true)
 	_line_mesh_instance.material_override = _line_material
 	_graph_root.add_child(_line_mesh_instance)
+
+	_thinking_glow_line_mesh_instance = MeshInstance3D.new()
+	_thinking_glow_line_mesh_instance.name = "ThinkingConnectionGlowMesh"
+	_thinking_glow_line_material = _thinking_connection_shader_material(CYAN["hot"], 0.30)
+	_thinking_glow_line_mesh_instance.material_override = _thinking_glow_line_material
+	_graph_root.add_child(_thinking_glow_line_mesh_instance)
+
+	_thinking_line_mesh_instance = MeshInstance3D.new()
+	_thinking_line_mesh_instance.name = "ThinkingConnectionMesh"
+	_thinking_line_material = _thinking_connection_shader_material(CYAN["hot"], 0.92)
+	_thinking_line_mesh_instance.material_override = _thinking_line_material
+	_graph_root.add_child(_thinking_line_mesh_instance)
 
 	_pulse_glow_line_mesh_instance = MeshInstance3D.new()
 	_pulse_glow_line_mesh_instance.name = "PulseLineGlowMesh"
@@ -1777,6 +2048,36 @@ func _material(color: Color, alpha: float, additive: bool, through_depth: bool =
 	material.vertex_color_use_as_albedo = true
 	material.no_depth_test = through_depth
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	return material
+
+
+func _thinking_connection_shader_material(color: Color, alpha: float) -> ShaderMaterial:
+	var shader := Shader.new()
+	shader.code = """
+shader_type spatial;
+render_mode unshaded, blend_add, cull_disabled, depth_draw_never, depth_test_disabled;
+
+uniform vec4 line_tint : source_color = vec4(0.92, 0.98, 1.0, 1.0);
+uniform float base_alpha = 1.0;
+uniform float thinking_time = 0.0;
+uniform float thinking_intensity = 1.0;
+uniform float thinking_fade = 1.0;
+
+void fragment() {
+	float pulse = 0.94 + sin(thinking_time * 0.72 + COLOR.a * 3.0) * 0.06;
+	float alpha = COLOR.a * base_alpha * thinking_fade * mix(1.0, pulse, clamp(thinking_intensity, 0.0, 1.0));
+	ALBEDO = COLOR.rgb * line_tint.rgb;
+	EMISSION = COLOR.rgb * line_tint.rgb * (0.7 + thinking_intensity * 0.55);
+	ALPHA = clamp(alpha, 0.0, 1.0);
+}
+"""
+	var material := ShaderMaterial.new()
+	material.shader = shader
+	material.set_shader_parameter("line_tint", color)
+	material.set_shader_parameter("base_alpha", alpha)
+	material.set_shader_parameter("thinking_time", 0.0)
+	material.set_shader_parameter("thinking_intensity", 1.0)
+	material.set_shader_parameter("thinking_fade", 1.0)
 	return material
 
 
@@ -2378,6 +2679,7 @@ func _new_multimesh(mesh: Mesh, count: int) -> MultiMesh:
 
 func _process(delta: float) -> void:
 	var profile_started_usec := Time.get_ticks_usec()
+	_update_frame_budget(delta)
 	_reset_speaking_profile_frame_counters()
 	_orb_frame_index += 1
 	_time += delta
@@ -2389,6 +2691,8 @@ func _process(delta: float) -> void:
 	_orb_profile_palette_ms += palette_ms
 	_target_activity = lerpf(_target_activity, _state_activity_floor(), minf(delta * 0.9, 1.0))
 	_target_brightness = lerpf(_target_brightness, _state_brightness_floor(), minf(delta * 0.9, 1.0))
+	_update_state_light_blends(delta)
+	_update_speaking_region_blend(delta)
 	var speech_motion_started_usec := Time.get_ticks_usec()
 	if _state_feature_enabled("speech_motion"):
 		_update_autonomous_speech_motion(delta)
@@ -2396,11 +2700,10 @@ func _process(delta: float) -> void:
 		_update_speech_region_bursts(delta)
 		_speech_global_morph = move_toward(_speech_global_morph, 0.0, delta * 2.4)
 		_update_speech_region_axes(delta)
-		_update_cached_speech_morph_regions()
+		_update_cached_speech_morph_regions(delta)
 	else:
-		_speech_global_morph = 0.0
-		for index in range(_speech_morph_region_offsets.size()):
-			_speech_morph_region_offsets[index] = Vector3.ZERO
+		_update_shader_speech_motion(delta)
+		_update_cached_speech_morph_regions(delta)
 	_update_cluster_selection_flashes(delta)
 	var speech_motion_ms := _elapsed_ms_since_usec(speech_motion_started_usec)
 
@@ -2412,14 +2715,18 @@ func _process(delta: float) -> void:
 	var rotation_ms := _elapsed_ms_since_usec(rotation_started_usec)
 
 	var section_started_usec := Time.get_ticks_usec()
-	if _state_feature_enabled("pulses"):
+	if _state_feature_enabled("pulses") and not _debug_disable_travel_pulses:
 		_update_pulses(delta)
 	else:
-		_clear_pulses_and_lights()
+		if not _pulses.is_empty() or not _pending_energy_branches.is_empty() or not _cluster_activations.is_empty() or not _cluster_activation_cooldowns.is_empty() or _pulse_connection_mesh_active:
+			_clear_pulses_and_lights()
 	var pulses_ms := _elapsed_ms_since_usec(section_started_usec)
 	_orb_profile_pulses_ms += pulses_ms
 	section_started_usec = Time.get_ticks_usec()
-	_update_nodes(delta)
+	var node_stride := _node_transform_update_stride()
+	_update_nodes(delta, _orb_frame_index % node_stride, node_stride)
+	if node_stride > 1:
+		_orb_profile_deferred_updates += maxi(_nodes.size() - int(ceil(float(_nodes.size()) / float(node_stride))), 0)
 	var nodes_ms := _elapsed_ms_since_usec(section_started_usec)
 	_orb_profile_nodes_ms += nodes_ms
 	if _state_feature_enabled("cluster_halos"):
@@ -2429,18 +2736,28 @@ func _process(delta: float) -> void:
 	section_started_usec = Time.get_ticks_usec()
 	var dust_stride := _dust_update_stride()
 	_update_dust(delta, _orb_frame_index % dust_stride, dust_stride)
+	if dust_stride > 1:
+		_orb_profile_deferred_updates += maxi(_dust.size() - int(ceil(float(_dust.size()) / float(dust_stride))), 0)
 	var dust_ms := _elapsed_ms_since_usec(section_started_usec)
 	_orb_profile_dust_ms += dust_ms
 	section_started_usec = Time.get_ticks_usec()
-	if _state_feature_enabled("pulse_connections") and (_orb_frame_index % _pulse_connection_update_stride() == 0 or (_pulse_connection_mesh_active and _pulses.is_empty() and _cluster_activations.is_empty())):
+	var thinking_started_usec := Time.get_ticks_usec()
+	if not _debug_disable_thinking_connections and (not _debug_freeze_connection_updates or current_state != OrganismState.THINKING):
+		_update_thinking_connection_layer(delta)
+	elif _debug_disable_thinking_connections and _thinking_connection_mesh_active:
+		_clear_thinking_connection_meshes()
+	_orb_profile_thinking_total_ms += _elapsed_ms_since_usec(thinking_started_usec)
+	var active_started_usec := Time.get_ticks_usec()
+	if not _debug_disable_travel_pulses and not _debug_freeze_connection_updates and _state_feature_enabled("pulse_connections") and (_orb_frame_index % _pulse_connection_update_stride() == 0 or (_pulse_connection_mesh_active and _pulses.is_empty() and _cluster_activations.is_empty())):
 		_update_pulse_connections()
-	elif not _state_feature_enabled("pulse_connections") and _pulse_connection_mesh_active:
+	elif (_debug_disable_travel_pulses or not _state_feature_enabled("pulse_connections")) and _pulse_connection_mesh_active:
 		_clear_pulse_connection_meshes()
-	var live_connection_mesh := _connection_mesh_uses_live_positions()
-	if live_connection_mesh and _orb_frame_index % _pulse_connection_update_stride() == 0:
-		_rebuild_static_connection_meshes()
-	elif not _connection_selection_flashes.is_empty():
-		_rebuild_static_connection_meshes()
+	_orb_profile_connection_active_ms += _elapsed_ms_since_usec(active_started_usec)
+	var static_started_usec := Time.get_ticks_usec()
+	if not _debug_disable_static_connections and not _debug_freeze_connection_updates:
+		if not _connection_selection_flashes.is_empty():
+			_rebuild_static_connection_meshes()
+	_orb_profile_connection_static_ms += _elapsed_ms_since_usec(static_started_usec)
 	var connections_ms := _elapsed_ms_since_usec(section_started_usec)
 	_orb_profile_connections_ms += connections_ms
 	section_started_usec = Time.get_ticks_usec()
@@ -2499,6 +2816,32 @@ func _update_organic_rotation(delta: float) -> void:
 
 func _elapsed_ms_since_usec(started_usec: int) -> float:
 	return float(Time.get_ticks_usec() - started_usec) / 1000.0
+
+
+func _update_frame_budget(delta: float) -> void:
+	last_frame_ms = delta * 1000.0
+	average_frame_ms = last_frame_ms if average_frame_ms <= 0.0 else lerpf(average_frame_ms, last_frame_ms, 0.08)
+	var pressure_target := clampf((last_frame_ms - TARGET_FRAME_MS) / maxf(MAX_SAFE_FRAME_MS - TARGET_FRAME_MS, 0.001), 0.0, 1.0)
+	quality_pressure = lerpf(quality_pressure, pressure_target, 0.18)
+	if average_frame_ms > ORB_EMERGENCY_TRIGGER_MS:
+		_overloaded_time += delta
+	else:
+		_overloaded_time = maxf(_overloaded_time - delta * 2.0, 0.0)
+	emergency_visual_protection = _overloaded_time >= ORB_EMERGENCY_TRIGGER_SECONDS
+
+
+func _pressure_extra_stride(max_extra: int) -> int:
+	return int(round(quality_pressure * float(max_extra)))
+
+
+func _dynamic_orb_quality_name(frame_average_ms: float) -> String:
+	if frame_average_ms > ORB_CRITICAL_FRAME_MS:
+		return "CRITICAL"
+	if frame_average_ms > ORB_PRESSURE_FRAME_MS:
+		return "OVERLOADED"
+	if frame_average_ms > MAX_SAFE_FRAME_MS:
+		return "PRESSURE"
+	return "SAFE"
 
 
 func _reset_speaking_profile_frame_counters() -> void:
@@ -2730,43 +3073,63 @@ func _record_speaking_startup_frame(
 
 
 func _dust_update_stride() -> int:
+	if emergency_visual_protection:
+		return 32
+	var pressure_extra := _pressure_extra_stride(16)
 	match ORB_QUALITY_MODE:
 		ORB_QUALITY_HIGH:
-			return 2
+			return 4 + pressure_extra
 		ORB_QUALITY_EMERGENCY:
-			return 5
+			return 12 + pressure_extra
 		_:
-			return 3
+			return 8 + pressure_extra
+
+
+func _node_transform_update_stride() -> int:
+	if _speaking_region_motion_active():
+		return 1
+	if emergency_visual_protection:
+		return 12
+	return 4 + _pressure_extra_stride(8)
 
 
 func _pulse_connection_update_stride() -> int:
+	if emergency_visual_protection:
+		return 12
+	var pressure_extra := _pressure_extra_stride(4)
 	match ORB_QUALITY_MODE:
 		ORB_QUALITY_HIGH:
-			return 1
+			return 1 + pressure_extra
 		ORB_QUALITY_EMERGENCY:
-			return 4
+			return 4 + pressure_extra
 		_:
-			return 2
+			return 2 + pressure_extra
 
 
 func _node_color_update_stride() -> int:
+	if emergency_visual_protection:
+		return 24
+	var pressure_extra := _pressure_extra_stride(12)
 	match ORB_QUALITY_MODE:
 		ORB_QUALITY_HIGH:
-			return 1
+			return 4 + pressure_extra
 		ORB_QUALITY_EMERGENCY:
-			return 4
+			return 12 + pressure_extra
 		_:
-			return 2
+			return 8 + pressure_extra
 
 
 func _dust_color_update_stride() -> int:
+	if emergency_visual_protection:
+		return 64
+	var pressure_extra := _pressure_extra_stride(24)
 	match ORB_QUALITY_MODE:
 		ORB_QUALITY_HIGH:
-			return 1
+			return 8 + pressure_extra
 		ORB_QUALITY_EMERGENCY:
-			return 4
+			return 24 + pressure_extra
 		_:
-			return 2
+			return 16 + pressure_extra
 
 
 func _record_orb_frame(started_usec: int) -> void:
@@ -2784,34 +3147,61 @@ func _record_orb_frame(started_usec: int) -> void:
 	if elapsed_ms >= ORB_FRAME_PROFILER_SPIKE_MS:
 		_orb_profile_spikes += 1
 
-	var report_due := float(now_usec - _orb_profile_last_report_usec) / 1000000.0 >= ORB_FRAME_PROFILER_REPORT_SECONDS
-	if report_due and (_orb_profile_spikes > 0 or _orb_profile_max_ms >= ORB_FRAME_PROFILER_SPIKE_MS):
-		var average_ms := _orb_profile_total_ms / maxf(float(_orb_profile_frames), 1.0)
-		print("Orb frame profile: state=%s quality=%s frames=%s avgMs=%.2f maxMs=%.2f spikes=%s nodesMs=%.2f dustMs=%.2f pulseLinesMs=%.2f pulsesMs=%.2f materialsMs=%.2f paletteMs=%.2f speechMapsMs=%.2f pulseMeshMs=%.2f nodeTransformSets=%s nodeColorSets=%s dustTransformSets=%s dustColorSets=%s pulseMeshBuilds=%s nodes=%s dust=%s dustStride=%s pulseStride=%s connections=%s" % [
+	var report_seconds := ORB_THINKING_PROFILER_REPORT_SECONDS if current_state == OrganismState.THINKING else ORB_FRAME_PROFILER_REPORT_SECONDS
+	var report_due := float(now_usec - _orb_profile_last_report_usec) / 1000000.0 >= report_seconds
+	if report_due:
+		var frame_count := maxf(float(_orb_profile_frames), 1.0)
+		var average_ms := _orb_profile_total_ms / frame_count
+		var average_nodes_ms := _orb_profile_nodes_ms / frame_count
+		var average_dust_ms := _orb_profile_dust_ms / frame_count
+		var average_connections_ms := _orb_profile_connections_ms / frame_count
+		var average_materials_ms := _orb_profile_materials_ms / frame_count
+		var average_thinking_total_ms := _orb_profile_thinking_total_ms / frame_count
+		var average_thinking_selection_ms := _orb_profile_thinking_selection_ms / frame_count
+		var average_thinking_mesh_build_ms := _orb_profile_thinking_mesh_build_ms / frame_count
+		var average_thinking_shader_uniform_ms := _orb_profile_thinking_shader_uniform_ms / frame_count
+		var average_thinking_fade_ms := _orb_profile_thinking_fade_ms / frame_count
+		var average_thinking_rotation_ms := _orb_profile_thinking_rotation_ms / frame_count
+		var average_thinking_pulse_accent_ms := _orb_profile_thinking_pulse_accent_ms / frame_count
+		var average_connection_static_ms := _orb_profile_connection_static_ms / frame_count
+		var average_connection_active_ms := _orb_profile_connection_active_ms / frame_count
+		print("OrbPerf: state=%s quality=%s frameAvg=%.2fms frameMax=%.2fms nodeUpdate=%.2fms dustUpdate=%.2fms pulseLines=%.2fms coreMaterials=%.2fms thinkingTotalMs=%.3f thinkingSelectionMs=%.3f thinkingMeshBuildMs=%.3f thinkingShaderUniformMs=%.3f thinkingFadeMs=%.3f thinkingRotationMs=%.3f thinkingPulseAccentMs=%.3f connectionStaticMs=%.3f connectionActiveMs=%.3f uploads=%s/%s/%s/%s deferred=%s qualityPressure=%.2f emergency=%s presetLoad=%.2fms nodes=%s dust=%s connections=%s thinkingConnections=%s nodeStride=%s dustStride=%s pulseStride=%s debugF6ThinkingDisabled=%s debugF7TravelDisabled=%s debugF8StaticDisabled=%s debugF9Frozen=%s" % [
 			_organism_state_name(current_state),
-			_orb_quality_name(),
-			_orb_profile_frames,
+			_dynamic_orb_quality_name(average_ms),
 			average_ms,
 			_orb_profile_max_ms,
-			_orb_profile_spikes,
-			_orb_profile_nodes_ms,
-			_orb_profile_dust_ms,
-			_orb_profile_connections_ms,
-			_orb_profile_pulses_ms,
-			_orb_profile_materials_ms,
-			_orb_profile_palette_ms,
-			_orb_profile_speech_maps_ms,
-			_orb_profile_pulse_mesh_ms,
+			average_nodes_ms,
+			average_dust_ms,
+			average_connections_ms,
+			average_materials_ms,
+			average_thinking_total_ms,
+			average_thinking_selection_ms,
+			average_thinking_mesh_build_ms,
+			average_thinking_shader_uniform_ms,
+			average_thinking_fade_ms,
+			average_thinking_rotation_ms,
+			average_thinking_pulse_accent_ms,
+			average_connection_static_ms,
+			average_connection_active_ms,
 			_orb_profile_node_transform_sets,
 			_orb_profile_node_color_sets,
 			_orb_profile_dust_transform_sets,
 			_orb_profile_dust_color_sets,
-			_orb_profile_pulse_mesh_builds,
+			_orb_profile_deferred_updates,
+			quality_pressure,
+			str(emergency_visual_protection),
+			_orb_profile_preset_load_ms,
 			_nodes.size(),
 			_dust.size(),
+			_connections.size(),
+			_active_thinking_connection_ids().size(),
+			_node_transform_update_stride(),
 			_dust_update_stride(),
 			_pulse_connection_update_stride(),
-			_connections.size()
+			str(_debug_disable_thinking_connections),
+			str(_debug_disable_travel_pulses),
+			str(_debug_disable_static_connections),
+			str(_debug_freeze_connection_updates)
 		])
 		_orb_profile_last_report_usec = now_usec
 		_orb_profile_frames = 0
@@ -2820,6 +3210,15 @@ func _record_orb_frame(started_usec: int) -> void:
 		_orb_profile_nodes_ms = 0.0
 		_orb_profile_dust_ms = 0.0
 		_orb_profile_connections_ms = 0.0
+		_orb_profile_thinking_total_ms = 0.0
+		_orb_profile_thinking_selection_ms = 0.0
+		_orb_profile_thinking_mesh_build_ms = 0.0
+		_orb_profile_thinking_shader_uniform_ms = 0.0
+		_orb_profile_thinking_fade_ms = 0.0
+		_orb_profile_thinking_rotation_ms = 0.0
+		_orb_profile_thinking_pulse_accent_ms = 0.0
+		_orb_profile_connection_static_ms = 0.0
+		_orb_profile_connection_active_ms = 0.0
 		_orb_profile_pulses_ms = 0.0
 		_orb_profile_materials_ms = 0.0
 		_orb_profile_palette_ms = 0.0
@@ -2830,6 +3229,7 @@ func _record_orb_frame(started_usec: int) -> void:
 		_orb_profile_dust_transform_sets = 0
 		_orb_profile_dust_color_sets = 0
 		_orb_profile_pulse_mesh_builds = 0
+		_orb_profile_deferred_updates = 0
 		_orb_profile_spikes = 0
 
 
@@ -2875,6 +3275,7 @@ func _clear_pulses_and_lights() -> void:
 	_pulses.clear()
 	_pending_energy_branches.clear()
 	_cluster_activations.clear()
+	_pulse_hit_web_events.clear()
 	_cluster_activation_cooldowns.clear()
 	_node_speech_light.clear()
 	_dust_speech_light.clear()
@@ -3410,6 +3811,49 @@ func _update_palette(amount: float) -> void:
 	_palette["dust"] = Color(_palette["dust"]).lerp(Color(_target_palette["dust"]), amount)
 
 
+func _update_state_light_blends(delta: float) -> void:
+	_thinking_light_blend = _move_state_light_blend(_thinking_light_blend, current_state == OrganismState.THINKING, delta)
+	_listening_light_blend = _move_state_light_blend(_listening_light_blend, current_state == OrganismState.LISTENING, delta)
+	_speaking_light_blend = _move_state_light_blend(_speaking_light_blend, current_state == OrganismState.SPEAKING, delta)
+	_executing_light_blend = _move_state_light_blend(_executing_light_blend, current_state == OrganismState.EXECUTING, delta)
+	_error_light_blend = _move_state_light_blend(_error_light_blend, current_state == OrganismState.ERROR, delta)
+	_confirmation_light_blend = _move_state_light_blend(_confirmation_light_blend, current_state == OrganismState.CONFIRMATION, delta)
+
+
+func _move_state_light_blend(value: float, enabled: bool, delta: float) -> float:
+	var target := 1.0 if enabled else 0.0
+	var speed := STATE_LIGHT_BLEND_IN_SPEED if enabled else STATE_LIGHT_BLEND_OUT_SPEED
+	return move_toward(value, target, delta * speed)
+
+
+func _state_light_blend(state: int) -> float:
+	match state:
+		OrganismState.THINKING:
+			return _thinking_light_blend
+		OrganismState.LISTENING:
+			return _listening_light_blend
+		OrganismState.SPEAKING:
+			return _speaking_light_blend
+		OrganismState.EXECUTING:
+			return _executing_light_blend
+		OrganismState.ERROR:
+			return _error_light_blend
+		OrganismState.CONFIRMATION:
+			return _confirmation_light_blend
+		_:
+			return 1.0
+
+
+func _update_speaking_region_blend(delta: float) -> void:
+	var target := 1.0 if current_state == OrganismState.SPEAKING else 0.0
+	var speed := SPEAKING_REGION_BLEND_IN_SPEED if target > _speaking_region_blend else SPEAKING_REGION_BLEND_OUT_SPEED
+	_speaking_region_blend = move_toward(_speaking_region_blend, target, delta * speed)
+
+
+func _speaking_region_motion_active() -> bool:
+	return _speaking_region_blend > 0.001 or current_state == OrganismState.SPEAKING
+
+
 func _update_autonomous_speech_motion(delta: float) -> void:
 	if current_state != OrganismState.SPEAKING:
 		_speech_energy = move_toward(_speech_energy, 0.0, delta * 2.4)
@@ -3438,6 +3882,32 @@ func _update_autonomous_speech_motion(delta: float) -> void:
 		_spawn_speech_ripple()
 		if _rng.randf() > 0.58:
 			_spawn_speech_region_burst(_rng.randf(), 0.0)
+
+
+func _update_shader_speech_motion(delta: float) -> void:
+	if current_state != OrganismState.SPEAKING:
+		_speech_energy = move_toward(_speech_energy, 0.0, delta * 2.4)
+		_speech_global_morph = move_toward(_speech_global_morph, 0.0, delta * 2.2)
+		return
+
+	var energy_target := _speech_energy_override
+	if energy_target < 0.0:
+		var voice_wave := 0.5 + sin(_time * 5.2 + sin(_time * 1.7) * 0.8) * 0.5
+		energy_target = 0.36 + voice_wave * 0.32
+	_speech_energy = lerpf(_speech_energy, energy_target, minf(delta * 5.2, 1.0))
+
+	_speech_region_timer -= delta
+	if _speech_region_timer <= 0.0:
+		_speech_region_timer = _rng.randf_range(SPEAKING_SHADER_REGION_SECONDS_MIN, SPEAKING_SHADER_REGION_SECONDS_MAX)
+		_pick_speech_region(_rng.randf())
+
+	_speech_global_timer -= delta
+	if _speech_global_timer <= 0.0:
+		_speech_global_timer = _rng.randf_range(SPEAKING_SHADER_GLOBAL_SECONDS_MIN, SPEAKING_SHADER_GLOBAL_SECONDS_MAX)
+		_speech_global_morph = clampf(_speech_global_morph + _rng.randf_range(0.10, 0.22), 0.0, SPEAKING_ORB_GLOBAL_MORPH_MAX)
+
+	_speech_global_morph = move_toward(_speech_global_morph, 0.0, delta * 1.75)
+	_update_speech_region_axes(delta)
 
 
 func _reset_speech_regions() -> void:
@@ -3637,19 +4107,21 @@ func _speech_morph_offset(position: Vector3, phase: float, amount_scale: float) 
 	return (regional_push + lobe_pressure + lateral_pull) * amount_scale
 
 
-func _update_cached_speech_morph_regions() -> void:
+func _update_cached_speech_morph_regions(delta: float) -> void:
 	if _speech_morph_region_offsets.is_empty():
 		return
-	if current_state != OrganismState.SPEAKING:
+	if not _speaking_region_motion_active():
 		for index in range(_speech_morph_region_offsets.size()):
-			_speech_morph_region_offsets[index] = Vector3.ZERO
+			_speech_morph_region_offsets[index] = _speech_morph_region_offsets[index].lerp(Vector3.ZERO, minf(delta * SPEAKING_REGION_FIELD_RELEASE_SPEED, 1.0))
 		return
+	var field_speed := lerpf(SPEAKING_REGION_FIELD_RELEASE_SPEED, SPEAKING_REGION_FIELD_ATTACK_SPEED, _speaking_region_blend)
+	var field_amount := minf(delta * field_speed, 1.0)
 	for index in range(_speech_morph_region_axes.size()):
 		var axis := _speech_morph_region_axes[index]
 		var phase := float(index) * 1.137 + _time * 0.11
 		var offset := _speech_morph_offset(axis * _orb_radius, phase, 1.0)
 		offset += _speech_region_burst_offset(axis)
-		_speech_morph_region_offsets[index] = offset
+		_speech_morph_region_offsets[index] = _speech_morph_region_offsets[index].lerp(offset, field_amount)
 
 
 func _speech_region_burst_offset(axis: Vector3) -> Vector3:
@@ -3677,6 +4149,14 @@ func _speech_region_burst_offset(axis: Vector3) -> Vector3:
 func _cached_node_speech_morph(index: int, phase: float) -> Vector3:
 	if not _cached_speech_motion_enabled:
 		return Vector3.ZERO
+	return _cached_node_speech_morph_value(index, phase)
+
+
+func _speaking_region_node_morph(index: int, phase: float) -> Vector3:
+	return _cached_node_speech_morph_value(index, phase) * SPEAKING_REGION_NODE_MOTION_SCALE * _speaking_region_blend
+
+
+func _cached_node_speech_morph_value(index: int, phase: float) -> Vector3:
 	if index < 0 or index >= _node_speech_primary_regions.size():
 		return Vector3.ZERO
 	var primary_index := _node_speech_primary_regions[index]
@@ -3696,6 +4176,14 @@ func _cached_node_speech_morph(index: int, phase: float) -> Vector3:
 func _cached_dust_speech_morph(index: int, phase: float) -> Vector3:
 	if not _cached_speech_motion_enabled:
 		return Vector3.ZERO
+	return _cached_dust_speech_morph_value(index, phase)
+
+
+func _speaking_region_dust_morph(index: int, phase: float) -> Vector3:
+	return _cached_dust_speech_morph_value(index, phase) * SPEAKING_REGION_DUST_MOTION_SCALE * _speaking_region_blend
+
+
+func _cached_dust_speech_morph_value(index: int, phase: float) -> Vector3:
 	if index < 0 or index >= _dust_speech_primary_regions.size():
 		return Vector3.ZERO
 	var local_weight := _dust_speech_local_weights[index]
@@ -3820,12 +4308,10 @@ func _connection_light(index: int) -> float:
 
 
 func _connection_mesh_uses_live_positions() -> bool:
-	if not _state_feature_enabled("node_motion"):
-		return false
-	return current_state == OrganismState.SPEAKING or _real_speech_motion_enabled or _cached_speech_motion_enabled
+	return false
 
 
-func _update_nodes(_delta: float) -> void:
+func _update_nodes(_delta: float, start_index: int = 0, stride: int = 1) -> void:
 	var node_index := 0
 	var hub_index := 0
 	var update_color := _orb_frame_index == 0 or _orb_frame_index % _node_color_update_stride() == 0
@@ -3833,6 +4319,13 @@ func _update_nodes(_delta: float) -> void:
 	var motion_enabled := _state_feature_enabled("node_motion")
 	for index in range(_nodes.size()):
 		var node := _nodes[index]
+		var target_multimesh_index := hub_index if node.hub else node_index
+		if node.hub:
+			hub_index += 1
+		else:
+			node_index += 1
+		if stride > 1 and index % stride != start_index:
+			continue
 		var position_started_usec := Time.get_ticks_usec() if profile_active else 0
 		var drift := Vector3.ZERO
 		if motion_enabled:
@@ -3847,7 +4340,7 @@ func _update_nodes(_delta: float) -> void:
 		if profile_active:
 			_speaking_profile_frame_node_position_ms += _elapsed_ms_since_usec(position_started_usec)
 		var morph_started_usec := Time.get_ticks_usec() if profile_active else 0
-		var speech_morph: Vector3 = _cached_node_speech_morph(index, node.phase) if motion_enabled and current_state == OrganismState.SPEAKING else Vector3.ZERO
+		var speech_morph: Vector3 = _speaking_region_node_morph(index, node.phase) if _speaking_region_motion_active() else Vector3.ZERO
 		if profile_active:
 			_speaking_profile_frame_node_morph_ms += _elapsed_ms_since_usec(morph_started_usec)
 		var previous_position := node.current_position
@@ -3855,6 +4348,8 @@ func _update_nodes(_delta: float) -> void:
 		var target_position := node.base_position + drift + local_breath + speech_morph + (_real_node_speech_motion(index, node.phase) if motion_enabled else Vector3.ZERO)
 		if _real_speech_motion_enabled and current_state == OrganismState.SPEAKING:
 			node.current_position = node.current_position.lerp(target_position, minf(_delta * _real_speech_motion_smoothing, 1.0))
+		elif _speaking_region_motion_active():
+			node.current_position = node.current_position.lerp(target_position, minf(_delta * SPEAKING_NODE_POSITION_SMOOTHING, 1.0))
 		else:
 			node.current_position = target_position
 		if profile_active:
@@ -3884,7 +4379,7 @@ func _update_nodes(_delta: float) -> void:
 			_speaking_profile_frame_node_position_ms += _elapsed_ms_since_usec(position_started_usec)
 		if node.hub:
 			var upload_started_usec := Time.get_ticks_usec() if profile_active else 0
-			_hub_multimesh.multimesh.set_instance_transform(hub_index, transform)
+			_hub_multimesh.multimesh.set_instance_transform(target_multimesh_index, transform)
 			if profile_active:
 				_speaking_profile_frame_node_transform_upload_ms += _elapsed_ms_since_usec(upload_started_usec)
 			_orb_profile_node_transform_sets += 1
@@ -3897,7 +4392,7 @@ func _update_nodes(_delta: float) -> void:
 				color.a = alpha
 				if profile_active:
 					_speaking_profile_frame_node_color_calc_ms += _elapsed_ms_since_usec(color_started_usec)
-					var previous_color_index := _node_multimesh.multimesh.instance_count + hub_index
+					var previous_color_index := _node_multimesh.multimesh.instance_count + target_multimesh_index
 					if previous_color_index < _speaking_profile_previous_node_colors.size():
 						var color_delta := _profile_color_delta(_speaking_profile_previous_node_colors[previous_color_index], color)
 						_speaking_profile_frame_node_color_delta_total += color_delta
@@ -3905,16 +4400,15 @@ func _update_nodes(_delta: float) -> void:
 						_speaking_profile_frame_node_color_delta_count += 1
 						_speaking_profile_previous_node_colors[previous_color_index] = color
 				upload_started_usec = Time.get_ticks_usec() if profile_active else 0
-				_hub_multimesh.multimesh.set_instance_color(hub_index, color)
+				_hub_multimesh.multimesh.set_instance_color(target_multimesh_index, color)
 				if profile_active:
 					_speaking_profile_frame_node_color_upload_ms += _elapsed_ms_since_usec(upload_started_usec)
 				_orb_profile_node_color_sets += 1
 				if _speaking_profile_active:
 					_speaking_profile_frame_node_color_sets += 1
-			hub_index += 1
 		else:
 			var upload_started_usec := Time.get_ticks_usec() if profile_active else 0
-			_node_multimesh.multimesh.set_instance_transform(node_index, transform)
+			_node_multimesh.multimesh.set_instance_transform(target_multimesh_index, transform)
 			if profile_active:
 				_speaking_profile_frame_node_transform_upload_ms += _elapsed_ms_since_usec(upload_started_usec)
 			_orb_profile_node_transform_sets += 1
@@ -3934,13 +4428,12 @@ func _update_nodes(_delta: float) -> void:
 						_speaking_profile_frame_node_color_delta_count += 1
 						_speaking_profile_previous_node_colors[node_index] = color
 				upload_started_usec = Time.get_ticks_usec() if profile_active else 0
-				_node_multimesh.multimesh.set_instance_color(node_index, color)
+				_node_multimesh.multimesh.set_instance_color(target_multimesh_index, color)
 				if profile_active:
 					_speaking_profile_frame_node_color_upload_ms += _elapsed_ms_since_usec(upload_started_usec)
 				_orb_profile_node_color_sets += 1
 				if _speaking_profile_active:
 					_speaking_profile_frame_node_color_sets += 1
-			node_index += 1
 
 
 func _update_dust(_delta: float, start_index: int = 0, stride: int = 1) -> void:
@@ -3961,7 +4454,7 @@ func _update_dust(_delta: float, start_index: int = 0, stride: int = 1) -> void:
 		if profile_active:
 			_speaking_profile_frame_dust_position_ms += _elapsed_ms_since_usec(position_started_usec)
 		var morph_started_usec := Time.get_ticks_usec() if profile_active else 0
-		var speech_morph: Vector3 = _cached_dust_speech_morph(index, dust.phase) if motion_enabled and current_state == OrganismState.SPEAKING and can_morph else Vector3.ZERO
+		var speech_morph: Vector3 = _speaking_region_dust_morph(index, dust.phase) if _speaking_region_motion_active() and can_morph else Vector3.ZERO
 		if profile_active:
 			_speaking_profile_frame_dust_morph_ms += _elapsed_ms_since_usec(morph_started_usec)
 		var previous_position := dust.current_position
@@ -3969,6 +4462,8 @@ func _update_dust(_delta: float, start_index: int = 0, stride: int = 1) -> void:
 		var target_position := dust.base_position + orbit + speech_morph + (_real_dust_speech_motion(index, dust.phase) if motion_enabled else Vector3.ZERO)
 		if _real_speech_motion_enabled and current_state == OrganismState.SPEAKING:
 			dust.current_position = dust.current_position.lerp(target_position, minf(_delta * _real_speech_motion_smoothing, 1.0))
+		elif _speaking_region_motion_active():
+			dust.current_position = dust.current_position.lerp(target_position, minf(_delta * SPEAKING_DUST_POSITION_SMOOTHING, 1.0))
 		else:
 			dust.current_position = target_position
 		var depth_t := _balanced_depth_light(dust.current_position, 0.82, 1.06)
@@ -4021,6 +4516,8 @@ func _update_dust(_delta: float, start_index: int = 0, stride: int = 1) -> void:
 
 
 func _rebuild_static_connection_meshes() -> void:
+	if _debug_disable_static_connections or _debug_freeze_connection_updates:
+		return
 	var core_vertices := PackedVector3Array()
 	var core_colors := PackedColorArray()
 	var core_indices := PackedInt32Array()
@@ -4071,8 +4568,267 @@ func _rebuild_static_connection_meshes() -> void:
 	_glow_line_mesh_instance.mesh = _mesh_from_arrays(glow_vertices, glow_colors, glow_indices)
 
 
+func _start_thinking_connection_layer() -> void:
+	if _debug_disable_thinking_connections or _debug_freeze_connection_updates:
+		_clear_thinking_connection_meshes()
+		return
+	_thinking_connections.clear()
+	_thinking_refresh_timer = 0.0
+	_thinking_rebuild_timer = 0.0
+	_refresh_thinking_connections(true)
+	_rebuild_thinking_connection_mesh()
+	_update_thinking_connection_shader_uniforms()
+
+
+func _fade_out_thinking_connection_layer() -> void:
+	_thinking_connections.clear()
+	_thinking_rebuild_timer = 0.0
+
+
+func _update_thinking_connection_layer(delta: float) -> void:
+	if _thinking_connections.is_empty() and current_state != OrganismState.THINKING:
+		_update_thinking_connection_shader_uniforms()
+		if _thinking_light_blend <= 0.001:
+			_clear_thinking_connection_meshes()
+		return
+	if current_state == OrganismState.THINKING:
+		_update_thinking_connection_shader_uniforms()
+		return
+	_thinking_refresh_timer -= delta
+	_thinking_rebuild_timer -= delta
+	if _thinking_rebuild_timer <= 0.0:
+		_rebuild_thinking_connection_mesh()
+		_thinking_rebuild_timer = THINKING_CONNECTION_REBUILD_SECONDS
+
+
+func _update_thinking_connection_shader_uniforms() -> void:
+	var started_usec := Time.get_ticks_usec()
+	var intensity := clampf(float(visual_state.get("thinking_intensity", 1.0)), 0.0, 1.0)
+	var fade := _thinking_light_blend
+	if _thinking_line_material != null:
+		_thinking_line_material.set_shader_parameter("thinking_time", _time)
+		_thinking_line_material.set_shader_parameter("thinking_intensity", intensity)
+		_thinking_line_material.set_shader_parameter("thinking_fade", fade)
+	if _thinking_glow_line_material != null:
+		_thinking_glow_line_material.set_shader_parameter("thinking_time", _time)
+		_thinking_glow_line_material.set_shader_parameter("thinking_intensity", intensity)
+		_thinking_glow_line_material.set_shader_parameter("thinking_fade", fade)
+	_orb_profile_thinking_shader_uniform_ms += _elapsed_ms_since_usec(started_usec)
+
+
+func _refresh_thinking_connections(force: bool) -> void:
+	if _connections.is_empty():
+		return
+	var selection_started_usec := Time.get_ticks_usec()
+	var target_count := _thinking_connection_target_count()
+	var active_connections := _active_thinking_connection_ids()
+	if force and active_connections.size() >= target_count:
+		_orb_profile_thinking_selection_ms += _elapsed_ms_since_usec(selection_started_usec)
+		return
+	if not force and active_connections.size() >= target_count:
+		var rotate_count := maxi(1, int(round(float(target_count) * THINKING_CONNECTION_ROTATE_FRACTION)))
+		var rotation_started_usec := Time.get_ticks_usec()
+		_mark_thinking_connections_for_rotation(rotate_count)
+		_add_thinking_connections(rotate_count)
+		_orb_profile_thinking_rotation_ms += _elapsed_ms_since_usec(rotation_started_usec)
+		_orb_profile_thinking_selection_ms += _elapsed_ms_since_usec(selection_started_usec)
+		return
+	_add_thinking_connections(maxi(target_count - active_connections.size(), THINKING_CONNECTION_MIN_VISIBLE - active_connections.size()))
+	_orb_profile_thinking_selection_ms += _elapsed_ms_since_usec(selection_started_usec)
+
+
+func _thinking_connection_target_count() -> int:
+	var preferred := THINKING_CONNECTION_TARGET_COUNT
+	if emergency_visual_protection:
+		preferred = maxi(THINKING_CONNECTION_MIN_VISIBLE, int(THINKING_CONNECTION_TARGET_COUNT * 0.70))
+	return mini(preferred, _connections.size())
+
+
+func _active_thinking_connection_ids() -> Array[int]:
+	var ids: Array[int] = []
+	for connection_id_variant in _thinking_connections.keys():
+		var data: Dictionary = _thinking_connections[connection_id_variant]
+		if not bool(data.get("removing", false)):
+			ids.append(int(connection_id_variant))
+	return ids
+
+
+func _mark_thinking_connections_for_rotation(count: int) -> void:
+	if count <= 0:
+		return
+	var candidates: Array = []
+	for connection_id_variant in _thinking_connections.keys():
+		var connection_id := int(connection_id_variant)
+		var data: Dictionary = _thinking_connections[connection_id_variant]
+		if bool(data.get("removing", false)):
+			continue
+		var age := _time - float(data.get("born", _time))
+		if age < float(data.get("hold", THINKING_CONNECTION_HOLD_MIN)):
+			continue
+		candidates.append({
+			"id": connection_id,
+			"age": age,
+		})
+	candidates.sort_custom(Callable(self, "_sort_thinking_rotation_candidates"))
+	var removed := 0
+	for candidate_variant in candidates:
+		if removed >= count:
+			return
+		var candidate: Dictionary = candidate_variant
+		var connection_id := int(candidate.get("id", -1))
+		if not _thinking_connections.has(connection_id):
+			continue
+		var data: Dictionary = _thinking_connections[connection_id]
+		data["removing"] = true
+		data["removed_at"] = _time
+		_thinking_connections[connection_id] = data
+		removed += 1
+
+
+func _sort_thinking_rotation_candidates(a: Dictionary, b: Dictionary) -> bool:
+	return float(a.get("age", 0.0)) > float(b.get("age", 0.0))
+
+
+func _add_thinking_connections(count: int) -> void:
+	if count <= 0:
+		return
+	var candidates := _ranked_thinking_connection_candidates()
+	var added := 0
+	for candidate_variant in candidates:
+		if added >= count:
+			return
+		var candidate: Dictionary = candidate_variant
+		var connection_id := int(candidate.get("id", -1))
+		if connection_id < 0 or _thinking_connections.has(connection_id):
+			continue
+		var phase := _thinking_connection_phase(connection_id)
+		_thinking_connections[connection_id] = {
+			"born": _time,
+			"removed_at": 0.0,
+			"removing": false,
+			"fade_in": lerpf(THINKING_CONNECTION_FADE_IN_MIN, THINKING_CONNECTION_FADE_IN_MAX, _deterministic_unit(connection_id, 11.0)),
+			"hold": lerpf(THINKING_CONNECTION_HOLD_MIN, THINKING_CONNECTION_HOLD_MAX, _deterministic_unit(connection_id, 19.0)),
+			"fade_out": lerpf(THINKING_CONNECTION_FADE_OUT_MIN, THINKING_CONNECTION_FADE_OUT_MAX, _deterministic_unit(connection_id, 29.0)),
+			"phase": phase,
+			"importance": clampf(float(candidate.get("importance", 1.0)), 0.35, 1.35),
+		}
+		added += 1
+
+
+func _ranked_thinking_connection_candidates() -> Array:
+	var candidates: Array = []
+	for connection_index in range(_connections.size()):
+		var connection: OrganismConnection = _connections[connection_index]
+		var a := _nodes[connection.a]
+		var b := _nodes[connection.b]
+		var midpoint := (a.base_position + b.base_position) * 0.5
+		var center_t := _center_visual_t(midpoint)
+		var shell_t := clampf(midpoint.length() / _orb_radius, 0.0, 1.0)
+		var route_bonus := 0.65 if connection.route else 0.0
+		var hub_bonus := 0.42 if a.hub or b.hub else 0.0
+		var width_bonus := clampf(connection.width / 0.012, 0.0, 0.55)
+		var alpha_bonus := clampf(connection.base_alpha, 0.0, 0.65)
+		var wave := sin(_time * 0.38 + _thinking_connection_phase(connection_index)) * 0.12
+		var score := route_bonus + hub_bonus + width_bonus + alpha_bonus + center_t * 0.42 + shell_t * 0.22 + wave
+		candidates.append({
+			"id": connection_index,
+			"score": score,
+			"importance": 0.72 + route_bonus * 0.35 + hub_bonus * 0.25 + alpha_bonus * 0.40,
+		})
+	candidates.sort_custom(Callable(self, "_sort_thinking_connection_candidates"))
+	return candidates
+
+
+func _sort_thinking_connection_candidates(a: Dictionary, b: Dictionary) -> bool:
+	return float(a.get("score", 0.0)) > float(b.get("score", 0.0))
+
+
+func _thinking_connection_phase(connection_id: int) -> float:
+	return _deterministic_unit(connection_id, 37.0) * TAU
+
+
+func _deterministic_unit(index: int, salt: float) -> float:
+	return fposmod(sin(float(index) * 12.9898 + salt * 78.233) * 43758.5453, 1.0)
+
+
+func _rebuild_thinking_connection_mesh() -> void:
+	var mesh_started_usec := Time.get_ticks_usec()
+	if _thinking_connections.is_empty():
+		_clear_thinking_connection_meshes()
+		_orb_profile_thinking_mesh_build_ms += _elapsed_ms_since_usec(mesh_started_usec)
+		return
+	var core_vertices := PackedVector3Array()
+	var core_colors := PackedColorArray()
+	var core_indices := PackedInt32Array()
+	var glow_vertices := PackedVector3Array()
+	var glow_colors := PackedColorArray()
+	var glow_indices := PackedInt32Array()
+	var local_camera_forward := _graph_root.global_transform.basis.inverse() * _camera.global_transform.basis.z
+	var local_camera_up := _graph_root.global_transform.basis.inverse() * _camera.global_transform.basis.y
+	local_camera_forward = local_camera_forward.normalized()
+	local_camera_up = local_camera_up.normalized()
+	var thinking_bloom_scale := _thinking_bloom_scale()
+	var thinking_activity := _thinking_glow_activity(thinking_bloom_scale)
+	var expired_connections: Array = []
+	for connection_id_variant in _thinking_connections.keys():
+		var connection_id := int(connection_id_variant)
+		if connection_id < 0 or connection_id >= _connections.size():
+			expired_connections.append(connection_id_variant)
+			continue
+		var data: Dictionary = _thinking_connections[connection_id_variant]
+		var fade := 1.0
+		if current_state != OrganismState.THINKING:
+			var fade_started_usec := Time.get_ticks_usec()
+			fade = _thinking_connection_fade(data)
+			_orb_profile_thinking_fade_ms += _elapsed_ms_since_usec(fade_started_usec)
+		if fade <= 0.0:
+			expired_connections.append(connection_id_variant)
+			continue
+		var connection: OrganismConnection = _connections[connection_id]
+		var a := _nodes[connection.a].base_position
+		var b := _nodes[connection.b].base_position
+		var phase := float(data.get("phase", 0.0))
+		var importance := float(data.get("importance", 1.0))
+		var flow := 1.0
+		if current_state != OrganismState.THINKING:
+			var accent_started_usec := Time.get_ticks_usec()
+			flow = 0.72 + sin(_time * 1.85 + phase) * 0.28
+			_orb_profile_thinking_pulse_accent_ms += _elapsed_ms_since_usec(accent_started_usec)
+		var alpha := clampf(fade * flow * importance * (0.55 + thinking_activity * 0.45), 0.0, 1.0)
+		var color := Color(_palette["hot"])
+		color.a = alpha * 0.46
+		var glow_color := Color(_palette["hot"])
+		glow_color.a = alpha * 0.18
+		_add_line_quad_3d(glow_vertices, glow_colors, glow_indices, a, b, connection.width * 4.35, glow_color, local_camera_forward, local_camera_up)
+		_add_line_quad_3d(core_vertices, core_colors, core_indices, a, b, connection.width * 1.70, color, local_camera_forward, local_camera_up)
+	for connection_id_variant in expired_connections:
+		_thinking_connections.erase(connection_id_variant)
+	_thinking_line_mesh_instance.mesh = _mesh_from_arrays(core_vertices, core_colors, core_indices)
+	_thinking_glow_line_mesh_instance.mesh = _mesh_from_arrays(glow_vertices, glow_colors, glow_indices)
+	_thinking_connection_mesh_active = not core_vertices.is_empty() or not glow_vertices.is_empty()
+	_orb_profile_thinking_mesh_build_ms += _elapsed_ms_since_usec(mesh_started_usec)
+
+
+func _thinking_connection_fade(data: Dictionary) -> float:
+	if bool(data.get("removing", false)):
+		var fade_out := maxf(float(data.get("fade_out", THINKING_CONNECTION_FADE_OUT_MIN)), 0.001)
+		return clampf(1.0 - ((_time - float(data.get("removed_at", _time))) / fade_out), 0.0, 1.0)
+	var fade_in := maxf(float(data.get("fade_in", THINKING_CONNECTION_FADE_IN_MIN)), 0.001)
+	return clampf((_time - float(data.get("born", _time))) / fade_in, 0.0, 1.0)
+
+
+func _clear_thinking_connection_meshes() -> void:
+	if _thinking_line_mesh_instance != null:
+		_thinking_line_mesh_instance.mesh = ArrayMesh.new()
+	if _thinking_glow_line_mesh_instance != null:
+		_thinking_glow_line_mesh_instance.mesh = ArrayMesh.new()
+	_thinking_connection_mesh_active = false
+
+
 func _update_pulse_connections() -> void:
-	if _pulses.is_empty() and _cluster_activations.is_empty():
+	if _debug_disable_travel_pulses or _debug_freeze_connection_updates:
+		return
+	if _pulses.is_empty() and _cluster_activations.is_empty() and _pulse_hit_web_events.is_empty():
 		if _pulse_connection_mesh_active:
 			_pulse_line_mesh_instance.mesh = ArrayMesh.new()
 			_pulse_glow_line_mesh_instance.mesh = ArrayMesh.new()
@@ -4099,8 +4855,13 @@ func _update_pulse_connections() -> void:
 	local_camera_forward = local_camera_forward.normalized()
 	local_camera_up = local_camera_up.normalized()
 
-	_add_traveling_light_segments(core_vertices, core_colors, core_indices, glow_vertices, glow_colors, glow_indices, local_camera_forward, local_camera_up)
-	_add_cluster_activation_segments(core_vertices, core_colors, core_indices, glow_vertices, glow_colors, glow_indices, local_camera_forward, local_camera_up)
+	var travel_segment_budget := ACTIVE_PULSE_TRAVEL_SEGMENT_BUDGET
+	var web_segment_budget := ACTIVE_PULSE_WEB_SEGMENT_BUDGET
+	if emergency_visual_protection:
+		travel_segment_budget = mini(travel_segment_budget, ACTIVE_PULSE_EMERGENCY_TRAVEL_SEGMENT_BUDGET)
+		web_segment_budget = mini(web_segment_budget, ACTIVE_PULSE_EMERGENCY_WEB_SEGMENT_BUDGET)
+	_add_pulse_hit_web_segments(core_vertices, core_colors, core_indices, glow_vertices, glow_colors, glow_indices, local_camera_forward, local_camera_up, web_segment_budget)
+	_add_traveling_light_segments(core_vertices, core_colors, core_indices, glow_vertices, glow_colors, glow_indices, local_camera_forward, local_camera_up, web_segment_budget + travel_segment_budget)
 
 	var mesh_started_usec := Time.get_ticks_usec()
 	_pulse_line_mesh_instance.mesh = _mesh_from_arrays(core_vertices, core_colors, core_indices)
@@ -4123,9 +4884,12 @@ func _add_traveling_light_segments(
 	glow_colors: PackedColorArray,
 	glow_indices: PackedInt32Array,
 	local_camera_forward: Vector3,
-	local_camera_up: Vector3
+	local_camera_up: Vector3,
+	segment_budget: int
 ) -> void:
 	for index in range(_pulses.size()):
+		if int(core_indices.size() / 6) >= segment_budget:
+			return
 		var pulse: EnergyPulse = _pulses[index]
 		var connection: OrganismConnection = _connections[pulse.connection_index]
 		var from_position: Vector3 = _nodes[pulse.from_node].current_position
@@ -4138,6 +4902,8 @@ func _add_traveling_light_segments(
 		var brightness := clampf((0.55 + fade * 0.86) * pulse.brightness, 0.0, 1.18)
 		var segment_count := 4
 		for segment_index in range(segment_count):
+			if int(core_indices.size() / 6) >= segment_budget:
+				return
 			var start_t := lerpf(tail, head, float(segment_index) / float(segment_count))
 			var end_t := lerpf(tail, head, float(segment_index + 1) / float(segment_count))
 			var segment_t := float(segment_index + 1) / float(segment_count)
@@ -4152,6 +4918,63 @@ func _add_traveling_light_segments(
 			_add_line_quad_3d(core_vertices, core_colors, core_indices, start_position, end_position, connection.width * (1.4 + segment_t * 1.4), core_color, local_camera_forward, local_camera_up)
 
 
+func _add_pulse_hit_web_segments(
+	core_vertices: PackedVector3Array,
+	core_colors: PackedColorArray,
+	core_indices: PackedInt32Array,
+	glow_vertices: PackedVector3Array,
+	glow_colors: PackedColorArray,
+	glow_indices: PackedInt32Array,
+	local_camera_forward: Vector3,
+	local_camera_up: Vector3,
+	segment_budget: int
+) -> void:
+	for event in _pulse_hit_web_events:
+		if int(core_indices.size() / 6) >= segment_budget:
+			return
+		var amount := _pulse_hit_web_amount(event)
+		if amount <= 0.01:
+			continue
+		var connection_count := event.connection_ids.size()
+		if connection_count <= 0:
+			continue
+		var reveal := _pulse_hit_web_reveal(event)
+		var visible_count := mini(connection_count, maxi(1, int(ceil(float(connection_count) * reveal))))
+		for index in range(visible_count):
+			if int(core_indices.size() / 6) >= segment_budget:
+				return
+			var connection_index: int = event.connection_ids[index]
+			if connection_index < 0 or connection_index >= _connections.size():
+				continue
+			var connection: OrganismConnection = _connections[connection_index]
+			var a := _nodes[connection.a].current_position
+			var b := _nodes[connection.b].current_position
+			var falloff := float(index) / maxf(float(visible_count), 1.0)
+			var wave := 0.88 + sin(_time * 2.1 + event.phase + falloff * 2.7) * 0.12
+			var intensity := amount * lerpf(1.0, 0.24, falloff) * wave * event.strength
+			var core_color := Color(_palette["hot"])
+			core_color.a = clampf(intensity * (0.62 if connection.route else 0.48), 0.0, 0.82)
+			var glow_color := Color(_palette["hot"])
+			glow_color.a = clampf(intensity * 0.27, 0.0, 0.38)
+			_add_line_quad_3d(glow_vertices, glow_colors, glow_indices, a, b, connection.width * 6.1, glow_color, local_camera_forward, local_camera_up)
+			_add_line_quad_3d(core_vertices, core_colors, core_indices, a, b, connection.width * 1.72, core_color, local_camera_forward, local_camera_up)
+
+
+func _pulse_hit_web_amount(event: PulseHitWebEvent) -> float:
+	if event.age < PULSE_HIT_WEB_ATTACK_SECONDS:
+		var attack_t := clampf(event.age / maxf(PULSE_HIT_WEB_ATTACK_SECONDS, 0.001), 0.0, 1.0)
+		return smoothstep(0.0, 1.0, attack_t)
+	if event.age < PULSE_HIT_WEB_ATTACK_SECONDS + PULSE_HIT_WEB_HOLD_SECONDS:
+		return 1.0
+	var fade_t := clampf((event.age - PULSE_HIT_WEB_ATTACK_SECONDS - PULSE_HIT_WEB_HOLD_SECONDS) / maxf(PULSE_HIT_WEB_FADE_SECONDS, 0.001), 0.0, 1.0)
+	return 1.0 - smoothstep(0.0, 1.0, fade_t)
+
+
+func _pulse_hit_web_reveal(event: PulseHitWebEvent) -> float:
+	var reveal_t := clampf(event.age / maxf(PULSE_HIT_WEB_ATTACK_SECONDS + 0.24, 0.001), 0.0, 1.0)
+	return smoothstep(0.0, 1.0, reveal_t)
+
+
 func _add_cluster_activation_segments(
 	core_vertices: PackedVector3Array,
 	core_colors: PackedColorArray,
@@ -4160,9 +4983,12 @@ func _add_cluster_activation_segments(
 	glow_colors: PackedColorArray,
 	glow_indices: PackedInt32Array,
 	local_camera_forward: Vector3,
-	local_camera_up: Vector3
+	local_camera_up: Vector3,
+	segment_budget: int
 ) -> void:
 	for activation in _cluster_activations:
+		if int(core_indices.size() / 6) >= segment_budget:
+			return
 		if activation.node_index < 0 or activation.node_index >= _node_connections.size():
 			continue
 		var amount := _cluster_activation_amount(activation)
@@ -4170,20 +4996,24 @@ func _add_cluster_activation_segments(
 			continue
 		var expansion := _cluster_activation_expansion(activation)
 		var connection_indices: Array = _node_connections[activation.node_index]
-		var limit := mini(connection_indices.size(), int(lerpf(_cluster_activation_segment_min, _cluster_activation_segment_max, expansion)))
+		var lab_limit := int(lerpf(_cluster_activation_segment_min, _cluster_activation_segment_max, expansion))
+		var web_limit := int(lerpf(THINKING_WEB_VISIBLE_MIN, THINKING_WEB_VISIBLE_MAX, expansion))
+		var limit := mini(connection_indices.size(), maxi(lab_limit, web_limit))
 		for index in range(limit):
+			if int(core_indices.size() / 6) >= segment_budget:
+				return
 			var connection_index: int = connection_indices[index]
 			var connection: OrganismConnection = _connections[connection_index]
 			var a := _nodes[connection.a].current_position
 			var b := _nodes[connection.b].current_position
 			var falloff := float(index) / maxf(float(limit), 1.0)
-			var intensity := amount * lerpf(0.94, 0.28, falloff)
+			var intensity := amount * lerpf(1.08, 0.22, falloff)
 			var core_color := Color(_palette["hot"])
-			core_color.a = clampf(intensity * (0.70 if connection.route else 0.54), 0.0, 0.92)
+			core_color.a = clampf(intensity * (0.58 if connection.route else 0.44), 0.0, 0.82)
 			var glow_color := Color(_palette["hot"])
-			glow_color.a = clampf(intensity * 0.32, 0.0, 0.44)
-			_add_line_quad_3d(glow_vertices, glow_colors, glow_indices, a, b, connection.width * 4.8, glow_color, local_camera_forward, local_camera_up)
-			_add_line_quad_3d(core_vertices, core_colors, core_indices, a, b, connection.width * 1.95, core_color, local_camera_forward, local_camera_up)
+			glow_color.a = clampf(intensity * 0.24, 0.0, 0.36)
+			_add_line_quad_3d(glow_vertices, glow_colors, glow_indices, a, b, connection.width * 5.9, glow_color, local_camera_forward, local_camera_up)
+			_add_line_quad_3d(core_vertices, core_colors, core_indices, a, b, connection.width * 1.65, core_color, local_camera_forward, local_camera_up)
 
 
 func _add_line_quad_3d(
@@ -4261,8 +5091,14 @@ func _update_pulses(delta: float) -> void:
 		var activation: ClusterActivation = _cluster_activations[index]
 		activation.age += delta
 		if activation.age >= activation.duration:
-			_cluster_activation_cooldowns[activation.node_index] = _cluster_activation_cooldown_seconds
+			_cluster_activation_cooldowns[activation.node_index] = minf(_cluster_activation_cooldown_seconds, THINKING_WEB_COOLDOWN_MAX) if current_state == OrganismState.THINKING else _cluster_activation_cooldown_seconds
 			_cluster_activations.remove_at(index)
+
+	for index in range(_pulse_hit_web_events.size() - 1, -1, -1):
+		var event: PulseHitWebEvent = _pulse_hit_web_events[index]
+		event.age += delta
+		if event.age >= event.duration:
+			_pulse_hit_web_events.remove_at(index)
 
 	for index in range(_cluster_lifecycle_events.size() - 1, -1, -1):
 		var event: ClusterLifecycle = _cluster_lifecycle_events[index]
@@ -4503,11 +5339,61 @@ func _spawn_energy_burst(count: int) -> void:
 func _arrive_energy_pulse(pulse: EnergyPulse) -> void:
 	if current_state != OrganismState.THINKING:
 		return
+	_spawn_pulse_hit_web(pulse.to_node, pulse.brightness)
 	var triggered_activation := _add_cluster_activation(pulse.to_node, pulse.brightness)
 	if triggered_activation:
 		_queue_energy_branch(pulse.from_node, pulse.to_node, pulse.brightness, pulse.generation, pulse.can_split)
 		return
 	_continue_energy_branch_from(pulse.from_node, pulse.to_node, pulse.brightness, pulse.generation, pulse.can_split)
+
+
+func _spawn_pulse_hit_web(node_index: int, brightness: float) -> void:
+	var cluster_node_index := _cluster_flash_target_for_node(node_index)
+	if cluster_node_index < 0:
+		cluster_node_index = node_index
+	if cluster_node_index < 0 or cluster_node_index >= _nodes.size():
+		return
+	var connection_ids := _pulse_hit_web_connection_ids(cluster_node_index, brightness)
+	if connection_ids.is_empty():
+		return
+	if _pulse_hit_web_events.size() >= PULSE_HIT_WEB_MAX_EVENTS:
+		_pulse_hit_web_events.remove_at(0)
+	var event := PulseHitWebEvent.new()
+	event.node_index = cluster_node_index
+	event.age = 0.0
+	event.duration = PULSE_HIT_WEB_DURATION
+	event.strength = clampf(brightness, 0.35, 1.25)
+	event.connection_ids = connection_ids
+	event.phase = _thinking_connection_phase(cluster_node_index)
+	_pulse_hit_web_events.append(event)
+
+
+func _pulse_hit_web_connection_ids(node_index: int, brightness: float) -> Array[int]:
+	var ids: Array[int] = []
+	if node_index < 0 or node_index >= _node_connections.size():
+		return ids
+	var source: Array = _node_connections[node_index].duplicate()
+	if source.is_empty():
+		return ids
+	source.shuffle()
+	source.sort_custom(Callable(self, "_sort_pulse_hit_web_connections"))
+	var target_count := int(round(lerpf(float(PULSE_HIT_WEB_MIN_CONNECTIONS), float(PULSE_HIT_WEB_MAX_CONNECTIONS), clampf(brightness, 0.0, 1.0))))
+	target_count = mini(target_count, source.size())
+	for index in range(target_count):
+		ids.append(int(source[index]))
+	return ids
+
+
+func _sort_pulse_hit_web_connections(a, b) -> bool:
+	var left: OrganismConnection = _connections[int(a)]
+	var right: OrganismConnection = _connections[int(b)]
+	if left.route != right.route:
+		return left.route
+	var left_hub := _nodes[left.a].hub or _nodes[left.b].hub
+	var right_hub := _nodes[right.a].hub or _nodes[right.b].hub
+	if left_hub != right_hub:
+		return left_hub
+	return left.base_alpha > right.base_alpha
 
 
 func _queue_energy_branch(from_node: int, node_index: int, brightness: float, generation: int, can_split: bool) -> void:
@@ -4602,14 +5488,17 @@ func _add_cluster_activation(node_index: int, brightness: float) -> bool:
 			return false
 	if _cluster_activations.size() >= MAX_DESTINATION_FLASHES:
 		var removed_activation: ClusterActivation = _cluster_activations[0]
-		_cluster_activation_cooldowns[removed_activation.node_index] = _cluster_activation_cooldown_seconds
+		_cluster_activation_cooldowns[removed_activation.node_index] = minf(_cluster_activation_cooldown_seconds, THINKING_WEB_COOLDOWN_MAX) if current_state == OrganismState.THINKING else _cluster_activation_cooldown_seconds
 		_cluster_activations.remove_at(0)
 	var activation := ClusterActivation.new()
 	activation.node_index = cluster_node_index
 	activation.age = 0.0
-	activation.attack_duration = _randf_between(_cluster_activation_attack_min, _cluster_activation_attack_max)
-	activation.hold_duration = _randf_between(_cluster_activation_hold_min, _cluster_activation_hold_max)
-	activation.duration = activation.hold_duration + _randf_between(_cluster_activation_fade_min, _cluster_activation_fade_max)
+	activation.attack_duration = _randf_between(
+		maxf(_cluster_activation_attack_min, THINKING_WEB_ATTACK_MIN),
+		maxf(_cluster_activation_attack_max, THINKING_WEB_ATTACK_MAX)
+	)
+	activation.hold_duration = maxf(_randf_between(_cluster_activation_hold_min, _cluster_activation_hold_max), THINKING_WEB_HOLD_MIN)
+	activation.duration = activation.hold_duration + maxf(_randf_between(_cluster_activation_fade_min, _cluster_activation_fade_max), THINKING_WEB_FADE_MIN)
 	activation.strength = strength
 	activation.expansion = 0.0
 	_cluster_activations.append(activation)
@@ -4654,74 +5543,22 @@ func _update_core_glow() -> void:
 
 
 func _thinking_bloom_scale() -> float:
-	if current_state != OrganismState.THINKING:
-		return 1.0
-	return lerpf(1.0, 0.18, _thinking_bloom_dampening)
+	return lerpf(1.0, lerpf(1.0, 0.18, _thinking_bloom_dampening), _thinking_light_blend)
 
 
 func _thinking_glow_activity(thinking_bloom_scale: float) -> float:
-	if current_state != OrganismState.THINKING:
-		return _activity
 	var idle_activity := 0.18
-	return idle_activity + maxf(0.0, _activity - idle_activity) * thinking_bloom_scale
+	var thinking_activity := idle_activity + maxf(0.0, _activity - idle_activity) * thinking_bloom_scale
+	return lerpf(_activity, thinking_activity, _thinking_light_blend)
 
 
 func _update_orb_shell_deformation() -> void:
-	var active := _orb_shell_deformation_enabled and _state_feature_enabled("speech_motion")
 	if _orb_shell_mesh_instance != null:
-		_orb_shell_mesh_instance.visible = active
+		_orb_shell_mesh_instance.visible = false
 		_orb_shell_mesh_instance.scale = Vector3.ONE * _orb_radius
 	if _orb_core_mesh_instance != null:
-		_orb_core_mesh_instance.visible = active
+		_orb_core_mesh_instance.visible = false
 		_orb_core_mesh_instance.scale = Vector3.ONE * _orb_radius
-	if not active:
-		return
-
-	var speech_energy := _speech_energy if current_state == OrganismState.SPEAKING else 0.0
-	var global_morph := _speech_global_morph if current_state == OrganismState.SPEAKING else 0.0
-	var axes := [
-		Vector3.UP,
-		Vector3.RIGHT,
-		Vector3.FORWARD,
-		Vector3(-1.0, 0.0, 0.0),
-	]
-	var amounts := [0.0, 0.0, 0.0, 0.0]
-	for index in range(mini(4, _speech_region_axes.size())):
-		axes[index] = _speech_region_axes[index]
-		var weight := 1.0
-		if index < _speech_region_weights.size():
-			weight = _speech_region_weights[index]
-		var direction := 1.0
-		if index < _speech_region_directions.size():
-			direction = _speech_region_directions[index]
-		amounts[index] = weight * direction
-
-	var shell_color := Color(_palette["line"]).lerp(Color(_palette["hot"]), clampf(speech_energy * 0.35 + global_morph * 0.45, 0.0, 0.55))
-	var core_color := Color(_palette["hot"]).lerp(Color.WHITE, clampf(speech_energy * 0.12, 0.0, 0.18))
-	_apply_orb_deformation_material(
-		_orb_shell_material,
-		shell_color,
-		speech_energy,
-		global_morph,
-		_orb_shell_deformation_strength,
-		_orb_shell_deformation_speed,
-		_orb_shell_deformation_alpha,
-		_orb_shell_deformation_radius,
-		axes,
-		amounts
-	)
-	_apply_orb_deformation_material(
-		_orb_core_deform_material,
-		core_color,
-		speech_energy,
-		global_morph,
-		_orb_shell_deformation_strength * 0.64,
-		_orb_shell_deformation_speed * 0.78,
-		_orb_shell_deformation_alpha * 0.58,
-		_core_radius_factor * _center_visual_size,
-		axes,
-		amounts
-	)
 
 
 func _apply_orb_deformation_material(
@@ -4814,6 +5651,9 @@ func _update_cluster_halos() -> void:
 func _update_materials() -> void:
 	_update_material_color(_line_material, _palette["line"], 1.0)
 	_update_material_color(_glow_line_material, _palette["line"], 0.10)
+	if current_state != OrganismState.THINKING:
+		_update_material_color(_thinking_line_material, _palette["hot"], 0.92)
+		_update_material_color(_thinking_glow_line_material, _palette["hot"], 0.30)
 	_update_material_color(_pulse_line_material, _palette["hot"], 1.0)
 	_update_material_color(_pulse_glow_line_material, _palette["hot"], 0.36)
 	_update_material_color(_node_material, _palette["node"], 1.0)
@@ -4823,8 +5663,16 @@ func _update_materials() -> void:
 	_update_material_color(_core_material, _palette["hot"], 0.32)
 
 
-func _update_material_color(material: StandardMaterial3D, color: Color, alpha: float) -> void:
+func _update_material_color(material: Material, color: Color, alpha: float) -> void:
 	if material == null:
 		return
-	material.albedo_color = Color(color.r, color.g, color.b, alpha)
-	material.emission = color
+	if material is ShaderMaterial:
+		var shader_material := material as ShaderMaterial
+		shader_material.set_shader_parameter("line_tint", color)
+		shader_material.set_shader_parameter("base_alpha", alpha)
+		return
+	var standard_material := material as StandardMaterial3D
+	if standard_material == null:
+		return
+	standard_material.albedo_color = Color(color.r, color.g, color.b, alpha)
+	standard_material.emission = color
