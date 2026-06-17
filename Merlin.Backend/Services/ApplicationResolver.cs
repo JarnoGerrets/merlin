@@ -93,9 +93,14 @@ public sealed class ApplicationResolver : IApplicationResolver
         AddPathCandidates(query, candidates);
 
         var orderedCandidates = candidates
-            .GroupBy(candidate => candidate.ExecutablePath, StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.OrderByDescending(candidate => candidate.Confidence).First())
+            .GroupBy(candidate => NormalizeName(candidate.DisplayName), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group
+                .OrderByDescending(candidate => candidate.Confidence)
+                .ThenBy(candidate => SourcePriority(candidate.Source))
+                .ThenBy(candidate => candidate.ExecutablePath, StringComparer.OrdinalIgnoreCase)
+                .First())
             .OrderByDescending(candidate => candidate.Confidence)
+            .ThenBy(candidate => SourcePriority(candidate.Source))
             .Take(5)
             .ToArray();
 
@@ -277,8 +282,13 @@ public sealed class ApplicationResolver : IApplicationResolver
         }
 
         var topCandidates = candidates.Take(3).ToArray();
-        return AmbiguousShortTerms.Contains(query)
-            || topCandidates.Count(candidate => candidate.Confidence >= 0.75) > 1;
+        if (AmbiguousShortTerms.Contains(query))
+        {
+            return topCandidates.Count(candidate => candidate.Confidence >= 0.75) > 1;
+        }
+
+        var bestConfidence = topCandidates[0].Confidence;
+        return topCandidates.Count(candidate => Math.Abs(candidate.Confidence - bestConfidence) <= 0.05) > 1;
     }
 
     private void RecordStatus(string status)
@@ -327,5 +337,17 @@ public sealed class ApplicationResolver : IApplicationResolver
         }
 
         return fileName;
+    }
+
+    private static int SourcePriority(string source)
+    {
+        return source switch
+        {
+            "Configured" => 0,
+            "Trusted" => 1,
+            "StartMenu" => 2,
+            "PATH" => 3,
+            _ => 4
+        };
     }
 }

@@ -1,0 +1,281 @@
+{
+  "startedAt": "2026-06-17T22:52:45.5045412+02:00",
+  "finishedAt": "2026-06-17T22:54:35.7317115+02:00",
+  "sessionId": "20260617_225243",
+  "reportDirectory": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Reports\\20260617_225243",
+  "recordingDirectory": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_225243",
+  "config": {
+    "phrases": "default",
+    "maxPhrases": 3,
+    "mode": "fixed",
+    "recordingSeconds": 5,
+    "output": "Reports",
+    "keepAudio": true,
+    "device": null,
+    "deviceType": "cuda",
+    "model": "medium.en",
+    "computeType": "int8_float16",
+    "language": "en",
+    "task": "transcribe",
+    "beamSize": 5,
+    "temperature": 0,
+    "pythonExecutable": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe",
+    "pythonArguments": [],
+    "whisperScriptPath": "..\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py",
+    "initialPrompt": "Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.",
+    "processTimeoutSeconds": 120,
+    "inputSampleRate": 16000,
+    "targetSampleRate": 16000,
+    "channels": 1,
+    "preRollMs": 300,
+    "minSpeechMs": 250,
+    "endSilenceMs": 700,
+    "maxUtteranceMs": 9000,
+    "vadStartRmsThreshold": 0.015,
+    "vadEndRmsThreshold": 0.01
+  },
+  "environment": {
+    "machineName": "LAPTOP-GERRETS",
+    "userName": "jarno",
+    "osVersion": "Microsoft Windows NT 10.0.26200.0",
+    "dotNetVersion": "8.0.23",
+    "selectedInputDevice": "0: Microfoon van hoofdtelefoon (A5 (2 channels)",
+    "inputDevices": [
+      "0: Microfoon van hoofdtelefoon (A5 (2 channels)",
+      "1: Lijn (A50 Stream Out) (2 channels)",
+      "2: Microphone Array (AMD Audio Dev (2 channels)"
+    ],
+    "microphoneDetected": true,
+    "sttScriptExists": true,
+    "pythonExecutableDetected": true,
+    "cudaDetected": true,
+    "cudaDetectionDetail": "True"
+  },
+  "phrases": [
+    {
+      "id": "whisper_beam_001",
+      "category": "WhisperTerms",
+      "expectedText": "What does beam do in Whisper?",
+      "acceptableAlternatives": [
+        "What does beam do in whisper"
+      ],
+      "importantTerms": [
+        "beam",
+        "Whisper"
+      ],
+      "notes": "Tests beam vs bean confusion.",
+      "recommendedRecordingSeconds": 4
+    },
+    {
+      "id": "whisper_beam_002",
+      "category": "WhisperTerms",
+      "expectedText": "Use beam five with medium dot E N.",
+      "acceptableAlternatives": [
+        "Use beam 5 with medium.en",
+        "Use beam five with medium E N"
+      ],
+      "importantTerms": [
+        "beam",
+        "medium.en"
+      ],
+      "notes": "Tests spoken punctuation and number normalization.",
+      "recommendedRecordingSeconds": 5
+    },
+    {
+      "id": "whisper_vram_003",
+      "category": "WhisperTerms",
+      "expectedText": "How much VRAM does Whisper medium dot E N use with beam five?",
+      "acceptableAlternatives": [
+        "How much VRAM does Whisper medium.en use with beam 5"
+      ],
+      "importantTerms": [
+        "VRAM",
+        "Whisper",
+        "medium.en",
+        "beam"
+      ],
+      "notes": "Technical acronym and model phrase.",
+      "recommendedRecordingSeconds": 6
+    }
+  ],
+  "attempts": [
+    {
+      "phraseId": "whisper_beam_001",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T22:53:11.5257759+02:00",
+      "finishedAt": "2026-06-17T22:53:24.5007072+02:00",
+      "expectedText": "What does beam do in Whisper?",
+      "actualTranscript": "What does beam do in Whisper?",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 3988.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.038758355399359706,
+        "peakLevel": 0.420440673828125,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 1252,
+        "silenceAfterSpeechMs": 994.125,
+        "speechDurationMs": 1741.9375,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_225243\\whisper_beam_001_attempt1.wav",
+        "wavFileSize": 127664,
+        "transcriptionLatencyMs": 8882.5141,
+        "totalAttemptMs": 12964.7279,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "What does beam do in Whisper?",
+        "language": "en",
+        "audioDurationSeconds": 3.9880625,
+        "latencyMs": 8882.5141,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_225243\\whisper_beam_001_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 29,
+        "normalizedExpected": "what does beam do in whisper",
+        "normalizedActual": "what does beam do in whisper"
+      },
+      "normalizerPreview": {
+        "rawTranscript": "What does beam do in Whisper?",
+        "previewTranscript": "What does beam do in Whisper?",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "whisper_beam_002",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T22:53:44.3328892+02:00",
+      "finishedAt": "2026-06-17T22:53:56.823273+02:00",
+      "expectedText": "Use beam five with medium dot E N.",
+      "actualTranscript": "Use beam 5 with medium.en.",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 4998.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.04775884087806042,
+        "peakLevel": 0.4404296875,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 1536.125,
+        "silenceAfterSpeechMs": 683.625,
+        "speechDurationMs": 2778.3125,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_225243\\whisper_beam_002_attempt1.wav",
+        "wavFileSize": 159984,
+        "transcriptionLatencyMs": 7418.6326,
+        "totalAttemptMs": 12490.0215,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "Use beam 5 with medium.en.",
+        "language": "en",
+        "audioDurationSeconds": 4.9980625,
+        "latencyMs": 7418.6326,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_225243\\whisper_beam_002_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 26,
+        "normalizedExpected": "use beam 5 with medium.en.",
+        "normalizedActual": "use beam 5 with medium.en."
+      },
+      "normalizerPreview": {
+        "rawTranscript": "Use beam 5 with medium.en.",
+        "previewTranscript": "Use beam 5 with medium.en.",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "whisper_vram_003",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T22:54:05.1825788+02:00",
+      "finishedAt": "2026-06-17T22:54:18.8555865+02:00",
+      "expectedText": "How much VRAM does Whisper medium dot E N use with beam five?",
+      "actualTranscript": "How much VRAM does whispermedium.en use with beam5?",
+      "userRating": "minor mistake",
+      "audioDiagnostics": {
+        "durationMs": 5988.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.04005877566719689,
+        "peakLevel": 0.304931640625,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 856.4375,
+        "silenceAfterSpeechMs": 1399.625,
+        "speechDurationMs": 3732,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_225243\\whisper_vram_003_attempt1.wav",
+        "wavFileSize": 191664,
+        "transcriptionLatencyMs": 7615.4698,
+        "totalAttemptMs": 13672.4111,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "How much VRAM does whispermedium.en use with beam5?",
+        "language": "en",
+        "audioDurationSeconds": 5.9880625,
+        "latencyMs": 7615.4698,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_225243\\whisper_vram_003_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": false,
+        "wordErrorRate": 0.4,
+        "characterErrorRate": 0.038461538461538464,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 51,
+        "normalizedExpected": "how much vram does whisper medium.en use with beam 5",
+        "normalizedActual": "how much vram does whispermedium.en use with beam5"
+      },
+      "normalizerPreview": {
+        "rawTranscript": "How much VRAM does whispermedium.en use with beam5?",
+        "previewTranscript": "How much VRAM does whispermedium.en use with beam5?",
+        "reasons": [],
+        "changed": false
+      }
+    }
+  ],
+  "skippedPhraseIds": []
+}

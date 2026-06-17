@@ -40,6 +40,18 @@ public sealed class ResponsePolisherTests
     }
 
     [Fact]
+    public async Task PolishMessageAsync_WhenUnknownUrlCommand_ExplainsInvalidUrlTarget()
+    {
+        var response = CreateResponse("Unknown command.", "UNKNOWN_COMMAND", "open_url");
+        var polisher = CreatePolisher();
+
+        var message = await polisher.PolishMessageAsync(response);
+
+        Assert.Contains("open a website", message);
+        Assert.Contains("valid HTTP or HTTPS address", message);
+    }
+
+    [Fact]
     public async Task PolishMessageAsync_WhenBlockedUrlScheme_UsesSafetyTemplate()
     {
         var response = CreateResponse("Blocked URL scheme.", "BLOCKED_URL_SCHEME", "open_url");

@@ -6,6 +6,14 @@ public sealed class ToolResult
 
     public string Message { get; init; } = string.Empty;
 
+    public string? SpokenText { get; init; }
+
+    public string? SpeechCacheKey { get; init; }
+
+    public bool PreferPhraseCache { get; init; }
+
+    public bool IsReplayableSpeech { get; init; }
+
     public string? ErrorCode { get; init; }
 
     public string? ToolName { get; init; }
@@ -25,4 +33,6 @@ public sealed class ToolResult
     public PendingConfirmation? Confirmation { get; init; }
 
     public IReadOnlyList<ApplicationCandidate>? ApplicationCandidates { get; init; }
+
+    public IReadOnlyList<DevVisualFlowStep>? DevVisualFlow { get; init; }
 }

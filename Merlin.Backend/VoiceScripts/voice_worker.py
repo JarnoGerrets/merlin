@@ -26,10 +26,12 @@ class VoiceWorker:
         language = (request.get("language") or "").strip() or None
         beam_size = int(request.get("beam_size", 1))
         vad_silence_ms = int(request.get("vad_min_silence_duration_ms", 250))
+        initial_prompt = (request.get("initial_prompt") or "").strip() or None
         segments, info = self.whisper_model.transcribe(
             request["input"],
             language=language,
             beam_size=beam_size,
+            initial_prompt=initial_prompt,
             vad_filter=True,
             vad_parameters={"min_silence_duration_ms": vad_silence_ms},
         )

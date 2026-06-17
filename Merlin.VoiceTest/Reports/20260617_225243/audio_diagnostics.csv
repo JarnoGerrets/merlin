@@ -1,0 +1,4 @@
+phraseId,attemptNumber,durationMs,sampleRate,channelCount,rmsLevel,peakLevel,clippingDetected,signalTooQuiet,signalTooLoud,silenceBeforeSpeechMs,silenceAfterSpeechMs,speechDurationMs,audioFilePath
+"whisper_beam_001","1","3988.0625","16000","1","0.038758355399359706","0.420440673828125","False","False","False","1252","994.125","1741.9375","C:\Users\jarno\Source\Merlin\Merlin.VoiceTest\Recordings\20260617_225243\whisper_beam_001_attempt1.wav"
+"whisper_beam_002","1","4998.0625","16000","1","0.04775884087806042","0.4404296875","False","False","False","1536.125","683.625","2778.3125","C:\Users\jarno\Source\Merlin\Merlin.VoiceTest\Recordings\20260617_225243\whisper_beam_002_attempt1.wav"
+"whisper_vram_003","1","5988.0625","16000","1","0.04005877566719689","0.304931640625","False","False","False","856.4375","1399.625","3732","C:\Users\jarno\Source\Merlin\Merlin.VoiceTest\Recordings\20260617_225243\whisper_vram_003_attempt1.wav"

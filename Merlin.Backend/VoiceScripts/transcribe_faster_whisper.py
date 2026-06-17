@@ -11,12 +11,13 @@ from faster_whisper import WhisperModel
 def main() -> int:
     parser = argparse.ArgumentParser(description="Transcribe audio with Faster-Whisper.")
     parser.add_argument("--input", required=True)
-    parser.add_argument("--model-size", default="base.en")
-    parser.add_argument("--device", default="cpu")
-    parser.add_argument("--compute-type", default="int8")
+    parser.add_argument("--model-size", default="medium.en")
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--compute-type", default="int8_float16")
     parser.add_argument("--language", default="en")
-    parser.add_argument("--beam-size", type=int, default=1)
-    parser.add_argument("--vad-min-silence-duration-ms", type=int, default=250)
+    parser.add_argument("--beam-size", type=int, default=5)
+    parser.add_argument("--vad-min-silence-duration-ms", type=int, default=600)
+    parser.add_argument("--initial-prompt", default="")
     args = parser.parse_args()
 
     model = WhisperModel(args.model_size, device=args.device, compute_type=args.compute_type)
@@ -25,6 +26,7 @@ def main() -> int:
         args.input,
         language=language,
         beam_size=args.beam_size,
+        initial_prompt=args.initial_prompt.strip() or None,
         vad_filter=True,
         vad_parameters={"min_silence_duration_ms": args.vad_min_silence_duration_ms},
     )

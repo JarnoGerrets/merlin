@@ -276,6 +276,9 @@ ServiceFabricBackup/
 *.mdf
 *.ldf
 *.ndf
+*.db
+*.db-shm
+*.db-wal
 
 # Business Intelligence projects
 *.rdl.data
@@ -483,3 +486,21 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Merlin local voice assets and generated TTS cache
+Merlin.Backend/VoiceReference/*.wav
+Merlin.Backend/VoiceCache/
+
+# Python virtual environments
+**/.venv/
+**/.venv-optimized/
+tools/chatterbox-bench/.venv/
+tools/chatterbox-bench/.venv-optimized/
+
+# Python virtual environments
+.venv/
+.venv-optimized/
+**/.venv/
+**/.venv-optimized/
+tools/chatterbox-bench/.venv/
+tools/chatterbox-bench/.venv-optimized/

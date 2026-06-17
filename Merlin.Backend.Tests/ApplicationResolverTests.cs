@@ -119,6 +119,87 @@ public sealed class ApplicationResolverTests
     }
 
     [Fact]
+    public async Task ResolveAsync_WhenSameAppHasUserAndMachineShortcuts_CollapsesToSingleCandidate()
+    {
+        var tempRoot = CreateTempDirectory();
+        var tempAppData = CreateTempDirectory();
+        var originalProgramData = Environment.GetEnvironmentVariable("ProgramData");
+        var originalAppData = Environment.GetEnvironmentVariable("AppData");
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            var machineStartMenu = Path.Combine(tempRoot, "Microsoft", "Windows", "Start Menu", "Programs", "Steam");
+            var userStartMenu = Path.Combine(tempAppData, "Microsoft", "Windows", "Start Menu", "Programs", "Steam");
+            Directory.CreateDirectory(machineStartMenu);
+            Directory.CreateDirectory(userStartMenu);
+            File.WriteAllText(Path.Combine(machineStartMenu, "Steam.lnk"), "");
+            File.WriteAllText(Path.Combine(userStartMenu, "Steam.lnk"), "");
+            Environment.SetEnvironmentVariable("ProgramData", tempRoot);
+            Environment.SetEnvironmentVariable("AppData", tempAppData);
+            Environment.SetEnvironmentVariable("PATH", string.Empty);
+
+            var resolver = new ApplicationResolver(
+                Options.Create(new ApplicationLaunchOptions()),
+                new FakeTrustedApplicationStore());
+
+            var result = await resolver.ResolveAsync("steam");
+
+            Assert.True(result.Found);
+            Assert.False(result.IsAmbiguous);
+            Assert.True(result.RequiresConfirmation);
+            Assert.Single(result.Candidates);
+            Assert.Equal("Steam", result.Candidates.Single().DisplayName);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ProgramData", originalProgramData);
+            Environment.SetEnvironmentVariable("AppData", originalAppData);
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+            Directory.Delete(tempRoot, recursive: true);
+            Directory.Delete(tempAppData, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ResolveAsync_WhenOneCandidateIsClearlyBetter_DoesNotMarkAmbiguous()
+    {
+        var tempRoot = CreateTempDirectory();
+        var originalProgramData = Environment.GetEnvironmentVariable("ProgramData");
+        var originalAppData = Environment.GetEnvironmentVariable("AppData");
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            var startMenu = Path.Combine(tempRoot, "Microsoft", "Windows", "Start Menu", "Programs");
+            Directory.CreateDirectory(startMenu);
+            File.WriteAllText(Path.Combine(startMenu, "Word.lnk"), "");
+            File.WriteAllText(Path.Combine(startMenu, "WordPad.lnk"), "");
+            Environment.SetEnvironmentVariable("ProgramData", tempRoot);
+            Environment.SetEnvironmentVariable("AppData", Path.Combine(tempRoot, "missing"));
+            Environment.SetEnvironmentVariable("PATH", string.Empty);
+
+            var resolver = new ApplicationResolver(
+                Options.Create(new ApplicationLaunchOptions()),
+                new FakeTrustedApplicationStore());
+
+            var result = await resolver.ResolveAsync("word");
+
+            Assert.True(result.Found);
+            Assert.False(result.IsAmbiguous);
+            Assert.True(result.RequiresConfirmation);
+            Assert.Equal("Word", result.Candidates.First().DisplayName);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ProgramData", originalProgramData);
+            Environment.SetEnvironmentVariable("AppData", originalAppData);
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task ResolveAsync_WhenPathExecutableMatches_ReturnsPathCandidate()
     {
         var tempRoot = CreateTempDirectory();

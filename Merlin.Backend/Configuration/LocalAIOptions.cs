@@ -14,5 +14,5 @@ public sealed class LocalAIOptions
 
     public string KeepAlive { get; set; } = "10m";
 
-    public bool WarmupOnStartup { get; set; } = true;
+    public bool WarmupOnStartup { get; set; } = false;
 }

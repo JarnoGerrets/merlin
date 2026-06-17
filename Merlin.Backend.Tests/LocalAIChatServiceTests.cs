@@ -36,12 +36,23 @@ public sealed class LocalAIChatServiceTests
     [Fact]
     public async Task GenerateResponseAsync_WhenLocalAIIsUnavailable_ReturnsUnavailable()
     {
-        var service = CreateService(new FakeLocalAIClient("unused"), enabled: true, available: false);
+        var service = CreateService(new FakeLocalAIClient("unused"), enabled: true, available: false, warmupSucceeds: false);
 
         var result = await service.GenerateResponseAsync("tell me a joke");
 
         Assert.False(result.Success);
         Assert.Equal(LocalAIChatService.UnavailableErrorCode, result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task GenerateResponseAsync_WhenLocalAIIsCold_WarmsOnDemand()
+    {
+        var service = CreateService(new FakeLocalAIClient("Local answer."), enabled: true, available: false, warmupSucceeds: true);
+
+        var result = await service.GenerateResponseAsync("tell me a joke");
+
+        Assert.True(result.Success);
+        Assert.Equal("Local answer.", result.Message);
     }
 
     [Fact]
@@ -57,7 +68,7 @@ public sealed class LocalAIChatServiceTests
         Assert.Contains("Follow this policy silently.", client.LastPrompt);
         Assert.Contains("must not mention the Merlin Constitution", client.LastPrompt);
         Assert.Contains("You must not execute actions.", client.LastPrompt);
-        Assert.Contains("User message:", client.LastPrompt);
+        Assert.Contains("USER:", client.LastPrompt);
         Assert.Contains("how do you work", client.LastPrompt);
     }
 
@@ -80,9 +91,9 @@ public sealed class LocalAIChatServiceTests
         Assert.Contains("Conversation summary:", client.LastPrompt);
         Assert.Contains("User asked about Merlin tools.", client.LastPrompt);
         Assert.Contains("Recent conversation messages:", client.LastPrompt);
-        Assert.Contains("User: What tools do you have?", client.LastPrompt);
-        Assert.Contains("Assistant: Open Application is listed first.", client.LastPrompt);
-        Assert.Contains("User message:", client.LastPrompt);
+        Assert.Contains("USER:\nWhat tools do you have?", client.LastPrompt);
+        Assert.Contains("ASSISTANT:\nOpen Application is listed first.", client.LastPrompt);
+        Assert.Contains("USER:\nTell me more about the first one.", client.LastPrompt);
         Assert.Contains("Tell me more about the first one.", client.LastPrompt);
     }
 
@@ -144,17 +155,21 @@ public sealed class LocalAIChatServiceTests
         ILocalAIClient client,
         bool enabled,
         bool available,
+        bool warmupSucceeds = true,
         string policy = "TEST POLICY",
         IConversationSessionService? sessionService = null,
         ILongTermMemoryStore? memoryStore = null)
     {
+        var localOptions = Options.Create(new LocalAIOptions { Enabled = enabled });
+        var llmOptions = Options.Create(new LlmOptions { Provider = "local" });
+        var healthService = new FakeLocalAIHealthService(available, warmupSucceeds);
         return new LocalAIChatService(
-            client,
-            Options.Create(new LocalAIOptions { Enabled = enabled }),
+            new DeepInfraLlmProvider(new HttpClient(), llmOptions, NullLogger<DeepInfraLlmProvider>.Instance),
+            new LocalLlmProvider(client, healthService, localOptions, NullLogger<LocalLlmProvider>.Instance),
+            llmOptions,
             new FakeAssistantPolicyProvider(policy),
             sessionService ?? new ConversationSessionService(new FakeConversationSummaryStore()),
             memoryStore ?? new FakeLongTermMemoryStore(),
-            new FakeLocalAIHealthService(available),
             NullLogger<LocalAIChatService>.Instance);
     }
 
@@ -195,9 +210,12 @@ public sealed class LocalAIChatServiceTests
 
     private sealed class FakeLocalAIHealthService : ILocalAIHealthService
     {
-        public FakeLocalAIHealthService(bool isAvailable)
+        private readonly bool _warmupSucceeds;
+
+        public FakeLocalAIHealthService(bool isAvailable, bool warmupSucceeds)
         {
             IsAvailable = isAvailable;
+            _warmupSucceeds = warmupSucceeds;
         }
 
         public bool IsEnabled => true;
@@ -212,6 +230,7 @@ public sealed class LocalAIChatServiceTests
 
         public Task WarmupAsync(CancellationToken cancellationToken = default)
         {
+            IsAvailable = _warmupSucceeds;
             return Task.CompletedTask;
         }
 

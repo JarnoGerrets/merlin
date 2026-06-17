@@ -1,0 +1,6 @@
+# Use a separate virtual environment for this file. It installs a fork over
+# the official chatterbox package namespace.
+torch
+torchaudio
+numpy
+git+https://github.com/rsxdalv/chatterbox.git@faster

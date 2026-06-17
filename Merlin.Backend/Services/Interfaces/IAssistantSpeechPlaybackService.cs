@@ -8,9 +8,17 @@ public interface IAssistantSpeechPlaybackService
         string text,
         string? correlationId,
         Func<AssistantVisualEvent, CancellationToken, Task> sendEventAsync,
-        CancellationToken cancellationToken);
+        string? speechCacheKey,
+        bool? isReplayableSpeech,
+        CancellationToken cancellationToken,
+        SpeechPlaybackItemType itemType = SpeechPlaybackItemType.FinalAnswer,
+        bool cancelOnlyBeforePlayback = false);
 
     Task StopCurrentAsync(CancellationToken cancellationToken = default);
+
+    Task PauseCurrentSpeechAsync(CancellationToken cancellationToken = default);
+
+    Task ResumeCurrentSpeechAsync(CancellationToken cancellationToken = default);
 
     Task ClearQueueAsync(CancellationToken cancellationToken = default);
 }

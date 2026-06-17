@@ -1,6 +1,8 @@
 using Merlin.Backend.Configuration;
 using Merlin.Backend.Models;
 using Merlin.Backend.Services;
+using Merlin.Backend.Services.IntentRouting;
+using Merlin.Backend.Tools;
 using Microsoft.Extensions.Options;
 using Xunit;
 
@@ -130,6 +132,60 @@ public sealed class HybridIntentParserTests
     }
 
     [Fact]
+    public async Task ParseAsync_WhenLocalAIUnavailableAndTimezoneQuestionIsFlexible_UsesHierarchicalRouter()
+    {
+        var localParser = new FakeIntentParser(new IntentParseResult
+        {
+            Intent = "open_url",
+            NormalizedCommand = "open google.com",
+            Confidence = 0.95,
+            OriginalMessage = "what timezone are we in?"
+        });
+
+        var parser = CreateParser(localParser, enabled: true, localAIAvailable: false, includeHierarchicalRouter: true);
+
+        var result = await parser.ParseAsync("what timezone are we in?");
+
+        Assert.Equal("system_resource_query", result.Intent);
+        Assert.Equal("system resource timezone", result.NormalizedCommand);
+        Assert.Equal("system_timezone", result.CapabilityId);
+        Assert.Equal(nameof(MerlinIntentRouter), result.ParserUsed);
+        Assert.Equal(0, localParser.CallCount);
+    }
+
+    [Theory]
+    [InlineData("Can you open paint?", "open paint", "open_application", "application_launch", nameof(RuleBasedIntentParser))]
+    [InlineData("Can you open the terminal for me?", "open terminal", "open_application", "application_launch", nameof(RuleBasedIntentParser))]
+    [InlineData("Can you pull up facebook for me?", "open facebook", "open_application", "application_launch", nameof(RuleBasedIntentParser))]
+    [InlineData("Please open facebook.com", "open facebook.com", "open_url", "url_opening", nameof(RuleBasedIntentParser))]
+    [InlineData("Please open facebook.com for me", "open facebook.com", "open_url", "url_opening", nameof(MerlinIntentRouter))]
+    public async Task ParseAsync_WhenLocalAIUnavailableAndOpenRequestIsPolite_UsesHierarchicalRouter(
+        string message,
+        string expectedCommand,
+        string expectedIntent,
+        string expectedCapabilityId,
+        string expectedParser)
+    {
+        var localParser = new FakeIntentParser(new IntentParseResult
+        {
+            Intent = "general_conversation",
+            NormalizedCommand = $"chat {message}",
+            Confidence = 0.95,
+            OriginalMessage = message
+        });
+
+        var parser = CreateParser(localParser, enabled: true, localAIAvailable: false, includeHierarchicalRouter: true);
+
+        var result = await parser.ParseAsync(message);
+
+        Assert.Equal(expectedIntent, result.Intent);
+        Assert.Equal(expectedCommand, result.NormalizedCommand);
+        Assert.Equal(expectedCapabilityId, result.CapabilityId);
+        Assert.Equal(expectedParser, result.ParserUsed);
+        Assert.Equal(0, localParser.CallCount);
+    }
+
+    [Fact]
     public async Task ParseAsync_WhenLocalAIReturnsMissingCapability_UsesLocalAIResult()
     {
         var localParser = new FakeIntentParser(new IntentParseResult
@@ -192,10 +248,220 @@ public sealed class HybridIntentParserTests
         Assert.Equal(0, localParser.CallCount);
     }
 
+    [Fact]
+    public async Task ParseAsync_WhenPendingCandidateNameMatches_ReturnsConfirmation()
+    {
+        var confirmationService = new ConfirmationService();
+        confirmationService.Create(
+            "open_application",
+            string.Empty,
+            "visual",
+            "visual",
+            "open visual",
+            "open_application",
+            "open visual",
+            "Open Application",
+            [
+                new ApplicationCandidate
+                {
+                    DisplayName = "Visual Studio",
+                    ExecutablePath = "visual-studio.lnk",
+                    Source = "StartMenu",
+                    Confidence = 0.85
+                },
+                new ApplicationCandidate
+                {
+                    DisplayName = "Visual Studio Installer",
+                    ExecutablePath = "visual-studio-installer.lnk",
+                    Source = "StartMenu",
+                    Confidence = 0.85
+                }
+            ]);
+        var localParser = new FakeIntentParser(new IntentParseResult
+        {
+            Intent = "general_conversation",
+            NormalizedCommand = "chat Visual Studio Installer",
+            Confidence = 0.95,
+            OriginalMessage = "Visual Studio Installer"
+        });
+
+        var parser = CreateParser(
+            localParser,
+            enabled: true,
+            localAIAvailable: false,
+            includeHierarchicalRouter: true,
+            confirmationService: confirmationService);
+
+        var result = await parser.ParseAsync("Visual Studio Installer");
+
+        Assert.Equal("confirmation", result.Intent);
+        Assert.Equal("Visual Studio Installer", result.NormalizedCommand);
+        Assert.Equal(nameof(ConfirmationTool), result.ParserUsed);
+        Assert.Equal(0, localParser.CallCount);
+    }
+
+    [Theory]
+    [InlineData("confirm")]
+    [InlineData("I confirm.")]
+    [InlineData("yes please")]
+    [InlineData("yes please do")]
+    [InlineData("yes please open it")]
+    [InlineData("please do so")]
+    [InlineData("do so")]
+    [InlineData("yes do so")]
+    [InlineData("sure do so")]
+    [InlineData("okay please do so")]
+    [InlineData("go ahead please")]
+    [InlineData("open that as a website")]
+    [InlineData("yes open that in the browser")]
+    [InlineData("that works")]
+    [InlineData("works for me")]
+    [InlineData("sure go ahead")]
+    [InlineData("okay do it")]
+    [InlineData("go ahead")]
+    [InlineData("open it")]
+    public async Task ParseAsync_WhenPendingConfirmationAndConfirmationPhraseIsSpoken_ReturnsConfirmation(string confirmationPhrase)
+    {
+        var confirmationService = new ConfirmationService();
+        confirmationService.Create(
+            "open_application",
+            "powerpnt.exe",
+            "PowerPoint",
+            "powerpoint",
+            "open powerpoint",
+            "open_application",
+            "open powerpoint",
+            "Open Application");
+        var localParser = new FakeIntentParser(new IntentParseResult
+        {
+            Intent = "general_conversation",
+            NormalizedCommand = $"chat {confirmationPhrase}",
+            Confidence = 0.95,
+            OriginalMessage = confirmationPhrase
+        });
+
+        var parser = CreateParser(
+            localParser,
+            enabled: true,
+            localAIAvailable: false,
+            includeHierarchicalRouter: true,
+            confirmationService: confirmationService);
+
+        var result = await parser.ParseAsync(confirmationPhrase);
+
+        Assert.Equal("confirmation", result.Intent);
+        Assert.Equal(confirmationPhrase.Trim(), result.NormalizedCommand);
+        Assert.Equal(nameof(ConfirmationTool), result.ParserUsed);
+        Assert.Equal(0, localParser.CallCount);
+    }
+
+    [Fact]
+    public async Task ParseAsync_WhenPendingConfirmationAndUnrelatedMessageArrives_ClearsPendingAndRoutesMessage()
+    {
+        var confirmationService = new ConfirmationService();
+        confirmationService.Create(
+            "open_application",
+            "powerpnt.exe",
+            "PowerPoint",
+            "powerpoint",
+            "open powerpoint",
+            "open_application",
+            "open powerpoint",
+            "Open Application");
+        var localParser = new FakeIntentParser(new IntentParseResult
+        {
+            Intent = "general_conversation",
+            NormalizedCommand = "chat what time is it",
+            Confidence = 0.95,
+            OriginalMessage = "what time is it"
+        });
+
+        var parser = CreateParser(
+            localParser,
+            enabled: true,
+            localAIAvailable: false,
+            includeHierarchicalRouter: true,
+            confirmationService: confirmationService);
+
+        var result = await parser.ParseAsync("what time is it");
+
+        Assert.Equal("system_resource_query", result.Intent);
+        Assert.Equal("system resource current_time", result.NormalizedCommand);
+        Assert.Equal(0, confirmationService.PendingCount);
+        Assert.Equal(0, localParser.CallCount);
+    }
+
+    [Fact]
+    public async Task ParseAsync_WhenPendingBrowserMappingEditAndValidDomainArrives_ReturnsEditBrowserMapping()
+    {
+        var pendingInteractions = new PendingInteractionService();
+        pendingInteractions.Create(
+            PendingInteractionTypes.BrowserMappingEdit,
+            "What should I change terminal to?",
+            new Dictionary<string, string> { ["alias"] = "terminal" },
+            "edit browser mapping terminal");
+        var localParser = new FakeIntentParser(new IntentParseResult
+        {
+            Intent = "general_conversation",
+            NormalizedCommand = "chat terminal.nl",
+            Confidence = 0.95,
+            OriginalMessage = "terminal.nl"
+        });
+
+        var parser = CreateParser(
+            localParser,
+            enabled: true,
+            localAIAvailable: false,
+            includeHierarchicalRouter: true,
+            pendingInteractionService: pendingInteractions);
+
+        var result = await parser.ParseAsync("terminal dot nl");
+
+        Assert.Equal("edit_browser_mapping", result.Intent);
+        Assert.Equal("edit browser mapping terminal to terminal.nl", result.NormalizedCommand);
+        Assert.Equal(0, pendingInteractions.PendingCount);
+        Assert.Equal(0, localParser.CallCount);
+    }
+
+    [Fact]
+    public async Task ParseAsync_WhenPendingBrowserMappingEditAndUnrelatedMessageArrives_ClearsPendingAndRoutesMessage()
+    {
+        var pendingInteractions = new PendingInteractionService();
+        pendingInteractions.Create(
+            PendingInteractionTypes.BrowserMappingEdit,
+            "What should I change terminal to?",
+            new Dictionary<string, string> { ["alias"] = "terminal" },
+            "edit browser mapping terminal");
+        var localParser = new FakeIntentParser(new IntentParseResult
+        {
+            Intent = "general_conversation",
+            NormalizedCommand = "chat what time is it",
+            Confidence = 0.95,
+            OriginalMessage = "what time is it"
+        });
+
+        var parser = CreateParser(
+            localParser,
+            enabled: true,
+            localAIAvailable: false,
+            includeHierarchicalRouter: true,
+            pendingInteractionService: pendingInteractions);
+
+        var result = await parser.ParseAsync("what time is it");
+
+        Assert.Equal("system_resource_query", result.Intent);
+        Assert.Equal("system resource current_time", result.NormalizedCommand);
+        Assert.Equal(0, pendingInteractions.PendingCount);
+        Assert.Equal(0, localParser.CallCount);
+    }
+
     private static HybridIntentParser CreateParser(
         LocalAIIntentParser localParser,
         bool enabled,
-        bool localAIAvailable = true)
+        bool localAIAvailable = true,
+        bool includeHierarchicalRouter = false,
+        IConfirmationService? confirmationService = null,
+        IPendingInteractionService? pendingInteractionService = null)
     {
         var localAIOptions = Options.Create(new LocalAIOptions
         {
@@ -223,7 +489,11 @@ public sealed class HybridIntentParserTests
             localAIOptions,
             new RuntimeStateService(),
             healthService,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<HybridIntentParser>.Instance);
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<HybridIntentParser>.Instance,
+            includeHierarchicalRouter ? MerlinIntentRouterTests.CreateRouter() : null,
+            confirmationService,
+            pendingInteractionService,
+            new SpeechCommandNormalizer());
     }
 
     private sealed class FakeIntentParser : LocalAIIntentParser

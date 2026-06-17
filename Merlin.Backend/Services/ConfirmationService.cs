@@ -81,7 +81,7 @@ public sealed class ConfirmationService : IConfirmationService
             : null;
     }
 
-    public PendingConfirmation? ConsumeChoice(int choiceNumber)
+    public PendingConfirmation? SelectChoice(int choiceNumber)
     {
         var pending = GetLatestPending();
         if (pending is null || choiceNumber < 1 || choiceNumber > pending.Candidates.Count)
@@ -89,13 +89,31 @@ public sealed class ConfirmationService : IConfirmationService
             return null;
         }
 
-        var selected = pending.Candidates[choiceNumber - 1];
-        if (!_confirmations.TryRemove(pending.ConfirmationId, out _))
+        return SelectCandidate(pending, pending.Candidates[choiceNumber - 1]);
+    }
+
+    public PendingConfirmation? SelectCandidateName(string candidateName)
+    {
+        var normalizedCandidateName = NormalizeName(candidateName);
+        var pending = GetLatestPending();
+        if (pending is null || string.IsNullOrWhiteSpace(normalizedCandidateName))
         {
             return null;
         }
 
-        return new PendingConfirmation
+        var selected = pending.Candidates
+            .FirstOrDefault(candidate => string.Equals(
+                NormalizeName(candidate.DisplayName),
+                normalizedCandidateName,
+                StringComparison.OrdinalIgnoreCase));
+        return selected is null
+            ? null
+            : SelectCandidate(pending, selected);
+    }
+
+    private PendingConfirmation? SelectCandidate(PendingConfirmation pending, ApplicationCandidate selected)
+    {
+        var updated = new PendingConfirmation
         {
             ConfirmationId = pending.ConfirmationId,
             Action = pending.Action,
@@ -107,8 +125,12 @@ public sealed class ConfirmationService : IConfirmationService
             Intent = pending.Intent,
             NormalizedCommand = pending.NormalizedCommand,
             ToolName = pending.ToolName,
-            Candidates = pending.Candidates
+            Candidates = [selected]
         };
+
+        return _confirmations.TryUpdate(pending.ConfirmationId, updated, pending)
+            ? updated
+            : null;
     }
 
     private void RemoveExpired()
@@ -121,5 +143,15 @@ public sealed class ConfirmationService : IConfirmationService
                 _confirmations.TryRemove(confirmation.ConfirmationId, out _);
             }
         }
+    }
+
+    private static string NormalizeName(string value)
+    {
+        return string.Join(
+            ' ',
+            value.Trim()
+                .TrimEnd('.', '!', '?', ';', ':', ',')
+                .ToLowerInvariant()
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries));
     }
 }

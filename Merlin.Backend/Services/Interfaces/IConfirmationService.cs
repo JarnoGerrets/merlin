@@ -23,5 +23,7 @@ public interface IConfirmationService
 
     PendingConfirmation? ConsumeLatestPending();
 
-    PendingConfirmation? ConsumeChoice(int choiceNumber);
+    PendingConfirmation? SelectChoice(int choiceNumber);
+
+    PendingConfirmation? SelectCandidateName(string candidateName);
 }

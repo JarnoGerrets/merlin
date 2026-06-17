@@ -1,0 +1,1 @@
+phraseId,attemptNumber,durationMs,sampleRate,channelCount,rmsLevel,peakLevel,clippingDetected,signalTooQuiet,signalTooLoud,silenceBeforeSpeechMs,silenceAfterSpeechMs,speechDurationMs,audioFilePath

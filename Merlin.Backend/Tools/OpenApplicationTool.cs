@@ -9,22 +9,25 @@ public sealed class OpenApplicationTool : ITool
 {
     private const string IntentName = "open_application";
 
-    private static readonly string[] SupportedVerbs = ["open", "start", "launch"];
+    private static readonly string[] SupportedVerbs = ["open", "start", "launch", "pull up"];
     private readonly IApplicationResolver _applicationResolver;
     private readonly IConfirmationService _confirmationService;
     private readonly ApplicationLaunchOptions _options;
     private readonly IProcessLauncher _processLauncher;
+    private readonly ITrustedUrlStore _trustedUrlStore;
 
     public OpenApplicationTool(
         IOptions<ApplicationLaunchOptions> options,
         IApplicationResolver applicationResolver,
         IConfirmationService confirmationService,
-        IProcessLauncher processLauncher)
+        IProcessLauncher processLauncher,
+        ITrustedUrlStore? trustedUrlStore = null)
     {
         _options = options.Value;
         _applicationResolver = applicationResolver;
         _confirmationService = confirmationService;
         _processLauncher = processLauncher;
+        _trustedUrlStore = trustedUrlStore ?? NullTrustedUrlStore.Instance;
     }
 
     public string Name => "Open Application";
@@ -95,10 +98,57 @@ public sealed class OpenApplicationTool : ITool
             }
         }
 
+        var trustedUrl = _trustedUrlStore.FindByAlias(applicationName);
+        if (trustedUrl is not null)
+        {
+            try
+            {
+                await _processLauncher.LaunchAsync(trustedUrl.Url, cancellationToken);
+                return new ToolResult
+                {
+                    Success = true,
+                    Message = $"Opening {trustedUrl.DisplayName}...",
+                    ToolName = "Open URL",
+                    Intent = "open_url",
+                    ResponseType = "assistant"
+                };
+            }
+            catch (Exception exception)
+            {
+                return new ToolResult
+                {
+                    Success = false,
+                    Message = $"Failed to open URL: {exception.Message}",
+                    ErrorCode = "TOOL_EXECUTION_FAILED",
+                    ToolName = "Open URL",
+                    Intent = "open_url",
+                    ResponseType = "error"
+                };
+            }
+        }
+
         var resolution = await _applicationResolver.ResolveAsync(applicationName, cancellationToken);
         var candidate = resolution.Candidates.OrderByDescending(item => item.Confidence).FirstOrDefault();
         if (!resolution.Found || candidate is null)
         {
+            if (TryCreateBrowserFallbackConfirmation(applicationName, context, out var browserConfirmation))
+            {
+                return new ToolResult
+                {
+                    Success = false,
+                    Message = $"I couldn't find an app called {applicationName}. Should I open {browserConfirmation.DisplayName} as a website instead?",
+                    SpokenText = ToolSpeechTemplates.BrowserFallbackConfirmation,
+                    SpeechCacheKey = "tool.browser.fallback.confirmation",
+                    PreferPhraseCache = true,
+                    IsReplayableSpeech = true,
+                    ErrorCode = "CONFIRMATION_REQUIRED",
+                    ToolName = Name,
+                    Intent = IntentName,
+                    ResponseType = "confirmation",
+                    Confirmation = browserConfirmation
+                };
+            }
+
             return new ToolResult
             {
                 Success = false,
@@ -138,6 +188,9 @@ public sealed class OpenApplicationTool : ITool
 
         if (resolution.IsAmbiguous)
         {
+            var candidateNames = string.Join(
+                ", ",
+                resolution.Candidates.Take(3).Select(candidate => candidate.DisplayName));
             var ambiguousConfirmation = _confirmationService.Create(
                 IntentName,
                 string.Empty,
@@ -152,10 +205,11 @@ public sealed class OpenApplicationTool : ITool
             return new ToolResult
             {
                 Success = false,
-                Message = resolution.Message,
+                Message = $"I found multiple apps matching that description, sir: {candidateNames}. Please choose which app you want to open.",
                 ErrorCode = "AMBIGUOUS_APPLICATION",
                 ToolName = Name,
                 Intent = IntentName,
+                ResponseType = "confirmation",
                 Confirmation = ambiguousConfirmation,
                 ApplicationCandidates = resolution.Candidates.ToArray()
             };
@@ -202,10 +256,11 @@ public sealed class OpenApplicationTool : ITool
         return new ToolResult
         {
             Success = false,
-            Message = $"I found {candidate.DisplayName} installed. Confirm before opening.",
+            Message = $"You asked me to open {applicationName}. I found {candidate.DisplayName}, but I have not handled this specific application before. Please confirm before I open it.",
             ErrorCode = "CONFIRMATION_REQUIRED",
             ToolName = Name,
             Intent = IntentName,
+            ResponseType = "confirmation",
             Confirmation = confirmation,
             ApplicationCandidates = resolution.Candidates.ToArray()
         };
@@ -231,11 +286,42 @@ public sealed class OpenApplicationTool : ITool
                 continue;
             }
 
-            applicationName = normalizedCommand[prefix.Length..].Trim();
+            applicationName = CleanApplicationName(normalizedCommand[prefix.Length..]);
             return !string.IsNullOrWhiteSpace(applicationName);
         }
 
         return false;
+    }
+
+    private static string CleanApplicationName(string applicationName)
+    {
+        var cleaned = applicationName.Trim().TrimEnd('.', '!', '?', ';', ':', ',');
+        foreach (var suffix in new[]
+        {
+            " for me please",
+            " for me sir",
+            " for me",
+            " please",
+            " sir"
+        })
+        {
+            if (cleaned.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                cleaned = cleaned[..^suffix.Length].Trim();
+                break;
+            }
+        }
+
+        foreach (var prefix in new[] { "the ", "my " })
+        {
+            if (cleaned.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                cleaned = cleaned[prefix.Length..].Trim();
+                break;
+            }
+        }
+
+        return cleaned;
     }
 
     private bool TryFindConfiguredApplication(string applicationName, out ApplicationDefinition application)
@@ -265,6 +351,35 @@ public sealed class OpenApplicationTool : ITool
             || value.Contains(':')
             || value.Contains('\\')
             || value.Contains('/');
+    }
+
+    private bool TryCreateBrowserFallbackConfirmation(
+        string applicationName,
+        ToolExecutionContext context,
+        out PendingConfirmation confirmation)
+    {
+        confirmation = null!;
+        if (!OpenUrlTool.TryNormalizeBrowserTarget(applicationName, out var browserTarget, allowBareTarget: true))
+        {
+            return false;
+        }
+
+        var normalizedUrl = OpenUrlTool.NormalizeUrl(browserTarget);
+        if (!normalizedUrl.Success)
+        {
+            return false;
+        }
+
+        confirmation = _confirmationService.Create(
+            "open_url_fallback",
+            normalizedUrl.Url,
+            browserTarget,
+            applicationName,
+            context.OriginalMessage,
+            "open_url",
+            $"open {browserTarget}",
+            "Open URL");
+        return true;
     }
 
     private IReadOnlyCollection<string> BuildExamples()

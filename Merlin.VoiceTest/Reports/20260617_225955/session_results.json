@@ -1,0 +1,103 @@
+{
+  "startedAt": "2026-06-17T22:59:57.1405443+02:00",
+  "finishedAt": "2026-06-17T23:00:00.2797315+02:00",
+  "sessionId": "20260617_225955",
+  "reportDirectory": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Reports\\20260617_225955",
+  "recordingDirectory": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_225955",
+  "config": {
+    "phrases": "default",
+    "maxPhrases": 3,
+    "mode": "fixed",
+    "recordingSeconds": 5,
+    "output": "Reports",
+    "keepAudio": true,
+    "device": null,
+    "deviceType": "cuda",
+    "model": "medium.en",
+    "computeType": "int8_float16",
+    "language": "en",
+    "task": "transcribe",
+    "beamSize": 5,
+    "temperature": 0,
+    "pythonExecutable": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe",
+    "pythonArguments": [],
+    "whisperScriptPath": "..\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py",
+    "initialPrompt": "Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.",
+    "processTimeoutSeconds": 120,
+    "inputSampleRate": 16000,
+    "targetSampleRate": 16000,
+    "channels": 1,
+    "preRollMs": 300,
+    "minSpeechMs": 250,
+    "endSilenceMs": 700,
+    "maxUtteranceMs": 9000,
+    "vadStartRmsThreshold": 0.015,
+    "vadEndRmsThreshold": 0.01
+  },
+  "environment": {
+    "machineName": "LAPTOP-GERRETS",
+    "userName": "jarno",
+    "osVersion": "Microsoft Windows NT 10.0.26200.0",
+    "dotNetVersion": "8.0.23",
+    "selectedInputDevice": "0: Microfoon van hoofdtelefoon (A5 (2 channels)",
+    "inputDevices": [
+      "0: Microfoon van hoofdtelefoon (A5 (2 channels)",
+      "1: Lijn (A50 Stream Out) (2 channels)",
+      "2: Microphone Array (AMD Audio Dev (2 channels)"
+    ],
+    "microphoneDetected": true,
+    "sttScriptExists": true,
+    "pythonExecutableDetected": true,
+    "cudaDetected": true,
+    "cudaDetectionDetail": "True"
+  },
+  "phrases": [
+    {
+      "id": "whisper_beam_001",
+      "category": "WhisperTerms",
+      "expectedText": "What does beam do in Whisper?",
+      "acceptableAlternatives": [
+        "What does beam do in whisper"
+      ],
+      "importantTerms": [
+        "beam",
+        "Whisper"
+      ],
+      "notes": "Tests beam vs bean confusion.",
+      "recommendedRecordingSeconds": 4
+    },
+    {
+      "id": "whisper_beam_002",
+      "category": "WhisperTerms",
+      "expectedText": "Use beam five with medium dot E N.",
+      "acceptableAlternatives": [
+        "Use beam 5 with medium.en",
+        "Use beam five with medium E N"
+      ],
+      "importantTerms": [
+        "beam",
+        "medium.en"
+      ],
+      "notes": "Tests spoken punctuation and number normalization.",
+      "recommendedRecordingSeconds": 5
+    },
+    {
+      "id": "whisper_vram_003",
+      "category": "WhisperTerms",
+      "expectedText": "How much VRAM does Whisper medium dot E N use with beam five?",
+      "acceptableAlternatives": [
+        "How much VRAM does Whisper medium.en use with beam 5"
+      ],
+      "importantTerms": [
+        "VRAM",
+        "Whisper",
+        "medium.en",
+        "beam"
+      ],
+      "notes": "Technical acronym and model phrase.",
+      "recommendedRecordingSeconds": 6
+    }
+  ],
+  "attempts": [],
+  "skippedPhraseIds": []
+}

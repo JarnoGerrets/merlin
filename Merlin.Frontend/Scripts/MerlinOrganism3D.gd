@@ -161,6 +161,19 @@ const DEFAULT_REAL_SPEECH_MOTION_STRENGTH := 0.18
 const DEFAULT_REAL_SPEECH_MOTION_SPEED := 3.2
 const DEFAULT_REAL_SPEECH_MOTION_SMOOTHING := 4.8
 const DEFAULT_REAL_SPEECH_MOTION_REGION_BLEND := 0.34
+const DEFAULT_ENABLE_DEFORMATION_PROTOTYPE := true
+const DEFAULT_DEFORMATION_PROTOTYPE_STRENGTH := 0.8
+const DEFAULT_DEFORMATION_PROTOTYPE_PULSE_STRENGTH := 0.62
+const DEFAULT_DEFORMATION_PROTOTYPE_SMOOTHING := 7.2
+const DEFAULT_DEFORMATION_DEBUG_STATIC_POSE := false
+const DEFAULT_DEFORMATION_DEBUG_STATIC_AMOUNT := 0.0
+const DEFAULT_DEFORMATION_DEBUG_CONNECTIONS_ENABLED := true
+const DEFAULT_DEFORMATION_DEBUG_PARTICLES_ENABLED := true
+const DEFORMATION_DEBUG_ANCHOR_COUNT := 7
+const DEFORMATION_SPEECH_POSE_COUNT := 24
+const DEFORMATION_PROTOTYPE_NORMAL_MAX_RADIUS := 1.14
+const DEFORMATION_PROTOTYPE_LOUD_MAX_RADIUS := 1.18
+const DEFORMATION_PROTOTYPE_EMERGENCY_MAX_RADIUS := 1.22
 const DEFAULT_ENERGY_PULSE_MIN_SPEED := 0.34
 const DEFAULT_ENERGY_PULSE_MAX_SPEED := 1.12
 const DEFAULT_ENERGY_PULSE_SPEED_WOBBLE_AMOUNT := 0.10
@@ -274,7 +287,7 @@ const CYAN := {
 }
 
 const RED := {
-	"hot": Color("#FFDDDD"),
+	"hot": Color("#FF6A6A"),
 	"node": Color("#FF4545"),
 	"line": Color("#FF5050"),
 	"dim": Color("#8A1010"),
@@ -299,6 +312,7 @@ var visual_state := {
 	"speech_energy": 0.0,
 	"thinking_intensity": 0.0,
 	"error_intensity": 0.0,
+	"confirmation_intensity": 0.0,
 	"tool_intensity": 0.0,
 }
 var last_frame_ms := 0.0
@@ -360,6 +374,7 @@ var _node_speech_light := {}
 var _dust_speech_light := {}
 var _connection_speech_light := {}
 var _palette := CYAN.duplicate(true)
+var _base_target_palette := CYAN.duplicate(true)
 var _target_palette := CYAN.duplicate(true)
 var _activity := 0.18
 var _target_activity := 0.18
@@ -395,6 +410,21 @@ var _real_speech_motion_strength := DEFAULT_REAL_SPEECH_MOTION_STRENGTH
 var _real_speech_motion_speed := DEFAULT_REAL_SPEECH_MOTION_SPEED
 var _real_speech_motion_smoothing := DEFAULT_REAL_SPEECH_MOTION_SMOOTHING
 var _real_speech_motion_region_blend := DEFAULT_REAL_SPEECH_MOTION_REGION_BLEND
+var _enable_deformation_prototype := DEFAULT_ENABLE_DEFORMATION_PROTOTYPE
+var _deformation_prototype_strength := DEFAULT_DEFORMATION_PROTOTYPE_STRENGTH
+var _deformation_prototype_pulse_strength := DEFAULT_DEFORMATION_PROTOTYPE_PULSE_STRENGTH
+var _deformation_prototype_smoothing := DEFAULT_DEFORMATION_PROTOTYPE_SMOOTHING
+var _deformation_debug_static_pose := DEFAULT_DEFORMATION_DEBUG_STATIC_POSE
+var _deformation_debug_static_amount := DEFAULT_DEFORMATION_DEBUG_STATIC_AMOUNT
+var _deformation_debug_connections_enabled := DEFAULT_DEFORMATION_DEBUG_CONNECTIONS_ENABLED
+var _deformation_debug_particles_enabled := DEFAULT_DEFORMATION_DEBUG_PARTICLES_ENABLED
+var _deformation_anchor_axes: Array[Vector3] = []
+var _deformation_anchor_strengths: Array[float] = []
+var _deformation_speech_pose_bank: Array[Array] = []
+var _deformation_speech_current_strengths: Array[float] = []
+var _deformation_speech_target_strengths: Array[float] = []
+var _deformation_speech_pose_timer := 0.0
+var _deformation_speech_last_pose_index := -1
 var _cyan_hot := Color(CYAN["hot"])
 var _cyan_node := Color(CYAN["node"])
 var _cyan_line := Color(CYAN["line"])
@@ -455,6 +485,8 @@ var _speech_region_timer := 0.0
 var _speech_global_timer := 0.0
 var _speech_ripple_timer := 0.0
 var _speaking_region_blend := 0.0
+var _deformation_prototype_pulse := 0.0
+var _deformation_prototype_pulse_target := 0.0
 var _speech_region_axes: Array[Vector3] = []
 var _speech_region_targets: Array[Vector3] = []
 var _speech_region_weights: Array[float] = []
@@ -488,6 +520,8 @@ var _pulse_glow_line_mesh_instance: MeshInstance3D
 var _camera: Camera3D
 var _line_material: StandardMaterial3D
 var _glow_line_material: StandardMaterial3D
+var _line_deformation_material: ShaderMaterial
+var _glow_line_deformation_material: ShaderMaterial
 var _thinking_line_material: ShaderMaterial
 var _thinking_glow_line_material: ShaderMaterial
 var _pulse_line_material: StandardMaterial3D
@@ -715,6 +749,7 @@ func _rebuild_generated_orb() -> void:
 	_build_node_cluster_flash_targets()
 	_generate_connections()
 	_build_cluster_halo_indices()
+	_build_deformation_debug_anchors()
 	_setup_multimeshes()
 
 
@@ -762,6 +797,7 @@ func _load_startup_preset() -> bool:
 	_build_node_dust_indices()
 	_build_node_cluster_flash_targets()
 	_build_cluster_halo_indices()
+	_build_deformation_debug_anchors()
 	_apply_startup_cluster_overrides(preset.get("cluster_overrides", []))
 	_apply_startup_connection_overrides(preset.get("connection_overrides", []))
 	_apply_startup_state_features(preset.get("state_features", {}))
@@ -995,6 +1031,11 @@ func start_speaking_startup_profile() -> void:
 func set_speaking() -> void:
 	var started_usec := Time.get_ticks_usec()
 	var state_started_usec := started_usec
+	_enable_deformation_prototype = true
+	_deformation_debug_static_pose = false
+	_deformation_debug_connections_enabled = true
+	_deformation_debug_particles_enabled = true
+	_apply_deformation_prototype_connection_materials()
 	_set_state(OrganismState.SPEAKING, _cyan_palette(), 0.58, 1.00)
 	var state_ms := _elapsed_ms_since_usec(state_started_usec)
 	var activation_started_usec := Time.get_ticks_usec()
@@ -1072,6 +1113,29 @@ func set_visual_state(state: Dictionary) -> void:
 	var speech_energy := float(visual_state.get("speech_energy", -1.0))
 	if speech_energy >= 0.0:
 		set_speech_energy_override(speech_energy)
+	_apply_visual_overlay_to_target_palette()
+
+
+func _apply_visual_overlay_to_target_palette() -> void:
+	var error_strength := clampf(float(visual_state.get("error_intensity", 0.0)), 0.0, 1.0)
+	var confirmation_strength := clampf(float(visual_state.get("confirmation_intensity", 0.0)), 0.0, 1.0)
+	var effective := _base_target_palette.duplicate(true)
+	if error_strength > 0.001:
+		effective = _blend_palette(effective, RED, error_strength)
+	if confirmation_strength > 0.001:
+		effective = _blend_palette(effective, AMBER, confirmation_strength * 0.78)
+	_target_palette = effective
+
+
+func _blend_palette(base: Dictionary, overlay: Dictionary, amount: float) -> Dictionary:
+	var clamped := clampf(amount, 0.0, 1.0)
+	return {
+		"hot": Color(base["hot"]).lerp(Color(overlay["hot"]), clamped),
+		"node": Color(base["node"]).lerp(Color(overlay["node"]), clamped),
+		"line": Color(base["line"]).lerp(Color(overlay["line"]), clamped),
+		"dim": Color(base["dim"]).lerp(Color(overlay["dim"]), clamped),
+		"dust": Color(base["dust"]).lerp(Color(overlay["dust"]), clamped),
+	}
 
 
 func set_manual_rotation_enabled(enabled: bool) -> void:
@@ -1497,6 +1561,14 @@ func get_orb_lab_parameters() -> Array[Dictionary]:
 		_lab_parameter("real_speech_motion_speed", _real_speech_motion_speed, DEFAULT_REAL_SPEECH_MOTION_SPEED, "Motion"),
 		_lab_parameter("real_speech_motion_smoothing", _real_speech_motion_smoothing, DEFAULT_REAL_SPEECH_MOTION_SMOOTHING, "Motion"),
 		_lab_parameter("real_speech_motion_region_blend", _real_speech_motion_region_blend, DEFAULT_REAL_SPEECH_MOTION_REGION_BLEND, "Motion"),
+		_lab_bool_parameter("enable_deformation_prototype", _enable_deformation_prototype, DEFAULT_ENABLE_DEFORMATION_PROTOTYPE, "Motion"),
+		_lab_parameter("deformation_prototype_strength", _deformation_prototype_strength, DEFAULT_DEFORMATION_PROTOTYPE_STRENGTH, "Motion"),
+		_lab_parameter("deformation_prototype_pulse_strength", _deformation_prototype_pulse_strength, DEFAULT_DEFORMATION_PROTOTYPE_PULSE_STRENGTH, "Motion"),
+		_lab_parameter("deformation_prototype_smoothing", _deformation_prototype_smoothing, DEFAULT_DEFORMATION_PROTOTYPE_SMOOTHING, "Motion"),
+		_lab_bool_parameter("deformation_debug_static_pose", _deformation_debug_static_pose, DEFAULT_DEFORMATION_DEBUG_STATIC_POSE, "Motion"),
+		_lab_parameter("deformation_debug_static_amount", _deformation_debug_static_amount, DEFAULT_DEFORMATION_DEBUG_STATIC_AMOUNT, "Motion"),
+		_lab_bool_parameter("deformation_debug_connections_enabled", _deformation_debug_connections_enabled, DEFAULT_DEFORMATION_DEBUG_CONNECTIONS_ENABLED, "Motion"),
+		_lab_bool_parameter("deformation_debug_particles_enabled", _deformation_debug_particles_enabled, DEFAULT_DEFORMATION_DEBUG_PARTICLES_ENABLED, "Motion"),
 		_lab_parameter("energy_pulse_min_speed", _energy_pulse_min_speed, DEFAULT_ENERGY_PULSE_MIN_SPEED, "Motion"),
 		_lab_parameter("energy_pulse_max_speed", _energy_pulse_max_speed, DEFAULT_ENERGY_PULSE_MAX_SPEED, "Motion"),
 		_lab_parameter("energy_pulse_speed_wobble", _energy_pulse_speed_wobble_amount, DEFAULT_ENERGY_PULSE_SPEED_WOBBLE_AMOUNT, "Motion"),
@@ -1643,6 +1715,24 @@ func apply_orb_lab_parameter(parameter_name: String, value) -> bool:
 		_real_speech_motion_smoothing = clampf(float(value), 0.0, 24.0)
 	elif parameter_name == "real_speech_motion_region_blend":
 		_real_speech_motion_region_blend = clampf(float(value), 0.0, 1.0)
+	elif parameter_name == "enable_deformation_prototype":
+		_enable_deformation_prototype = bool(value)
+		_apply_deformation_prototype_connection_materials()
+	elif parameter_name == "deformation_prototype_strength":
+		_deformation_prototype_strength = clampf(float(value), 0.0, 1.5)
+	elif parameter_name == "deformation_prototype_pulse_strength":
+		_deformation_prototype_pulse_strength = clampf(float(value), 0.0, 1.5)
+	elif parameter_name == "deformation_prototype_smoothing":
+		_deformation_prototype_smoothing = clampf(float(value), 1.0, 24.0)
+	elif parameter_name == "deformation_debug_static_pose":
+		_deformation_debug_static_pose = bool(value)
+	elif parameter_name == "deformation_debug_static_amount":
+		_deformation_debug_static_amount = clampf(float(value), 0.0, 1.5)
+	elif parameter_name == "deformation_debug_connections_enabled":
+		_deformation_debug_connections_enabled = bool(value)
+		_apply_deformation_prototype_connection_materials()
+	elif parameter_name == "deformation_debug_particles_enabled":
+		_deformation_debug_particles_enabled = bool(value)
 	elif parameter_name == "energy_pulse_min_speed":
 		_energy_pulse_min_speed = maxf(float(value), 0.01)
 		_energy_pulse_max_speed = maxf(_energy_pulse_max_speed, _energy_pulse_min_speed)
@@ -1874,7 +1964,8 @@ func _cyan_palette() -> Dictionary:
 
 func _refresh_cyan_palette_if_active() -> void:
 	if current_state == OrganismState.IDLE or current_state == OrganismState.THINKING or current_state == OrganismState.LISTENING or current_state == OrganismState.SPEAKING or current_state == OrganismState.EXECUTING:
-		_target_palette = _cyan_palette()
+		_base_target_palette = _cyan_palette()
+		_apply_visual_overlay_to_target_palette()
 
 
 func notify_speech_tick(_character: String = "", delay: float = 0.0, progress: float = 0.0) -> void:
@@ -1894,6 +1985,8 @@ func notify_speech_tick(_character: String = "", delay: float = 0.0, progress: f
 		_speech_energy = clampf(_speech_energy_override, 0.0, 0.96)
 	else:
 		_speech_energy = clampf(_speech_energy + 0.040 + clampf(delay, 0.0, 0.08) * 0.16, 0.0, 0.96)
+	if _enable_deformation_prototype:
+		_deformation_prototype_pulse_target = maxf(_deformation_prototype_pulse_target, clampf(0.48 + progress * 0.52, 0.0, 1.0))
 	if _speech_tick_count % 4 == 0:
 		_spawn_speech_ripple()
 	if _speech_tick_count % 6 == 0:
@@ -1917,7 +2010,8 @@ func notify_speech_tick(_character: String = "", delay: float = 0.0, progress: f
 func _set_state(state: int, palette: Dictionary, activity: float, brightness: float) -> void:
 	var previous_state := current_state
 	current_state = state
-	_target_palette = palette.duplicate(true)
+	_base_target_palette = palette.duplicate(true)
+	_apply_visual_overlay_to_target_palette()
 	_target_activity = activity
 	_target_brightness = brightness
 	if state == OrganismState.THINKING and previous_state != OrganismState.THINKING:
@@ -1966,12 +2060,14 @@ func _build_scene() -> void:
 	_glow_line_mesh_instance = MeshInstance3D.new()
 	_glow_line_mesh_instance.name = "LineGlowMesh"
 	_glow_line_material = _material(CYAN["line"], 0.10, true, true)
+	_glow_line_deformation_material = _connection_deformation_shader_material(CYAN["line"], 0.10)
 	_glow_line_mesh_instance.material_override = _glow_line_material
 	_graph_root.add_child(_glow_line_mesh_instance)
 
 	_line_mesh_instance = MeshInstance3D.new()
 	_line_mesh_instance.name = "LineMesh"
 	_line_material = _material(CYAN["line"], 1.0, true, true)
+	_line_deformation_material = _connection_deformation_shader_material(CYAN["line"], 1.0)
 	_line_mesh_instance.material_override = _line_material
 	_graph_root.add_child(_line_mesh_instance)
 
@@ -2078,6 +2174,186 @@ void fragment() {
 	material.set_shader_parameter("thinking_time", 0.0)
 	material.set_shader_parameter("thinking_intensity", 1.0)
 	material.set_shader_parameter("thinking_fade", 1.0)
+	return material
+
+
+func _connection_deformation_shader_material(color: Color, alpha: float) -> ShaderMaterial:
+	var shader := Shader.new()
+	shader.code = """
+shader_type spatial;
+render_mode unshaded, blend_add, cull_disabled, depth_draw_never, depth_test_disabled;
+
+uniform vec4 line_tint : source_color = vec4(0.24, 0.72, 1.0, 1.0);
+uniform float base_alpha = 1.0;
+uniform float deformation_enabled = 0.0;
+uniform float speech_energy = 0.0;
+uniform float deformation_pulse = 0.0;
+uniform float deformation_strength = 0.0;
+uniform float deformation_pulse_strength = 0.0;
+uniform float deformation_static_pose = 0.0;
+uniform float deformation_static_amount = 0.0;
+uniform float orb_radius = 2.65;
+uniform vec3 front_axis = vec3(0.0, 0.0, 1.0);
+uniform vec3 anchor_axis_0 = vec3(0.45, 0.78, 0.43);
+uniform vec3 anchor_axis_1 = vec3(-0.72, 0.34, 0.61);
+uniform vec3 anchor_axis_2 = vec3(0.80, -0.28, 0.53);
+uniform vec3 anchor_axis_3 = vec3(-0.38, -0.84, 0.39);
+uniform vec3 anchor_axis_4 = vec3(0.18, 0.18, -0.97);
+uniform vec3 anchor_axis_5 = vec3(-0.86, 0.08, -0.50);
+uniform vec3 anchor_axis_6 = vec3(0.72, -0.64, -0.25);
+uniform float anchor_strength_0 = 1.28;
+uniform float anchor_strength_1 = -1.12;
+uniform float anchor_strength_2 = 0.96;
+uniform float anchor_strength_3 = -0.86;
+uniform float anchor_strength_4 = 0.74;
+uniform float anchor_strength_5 = -0.68;
+uniform float anchor_strength_6 = 0.54;
+
+float deformation_lobe(vec3 radial, vec3 axis, float power) {
+	return pow(clamp(dot(radial, normalize(axis)) * 0.5 + 0.5, 0.0, 1.0), power);
+}
+
+vec3 apply_anchor_region(vec3 target, vec3 position, vec3 radial, vec3 axis, float signed_strength, float amount, float shell_weight, float inner_weight, vec3 side, float parity_sign) {
+	float closeness = deformation_lobe(radial, axis, signed_strength > 0.0 ? 10.0 : 8.0);
+	float region_amount = amount * abs(signed_strength) * closeness;
+	float region_shell = mix(0.34, 1.0, shell_weight);
+	vec3 tangent = cross(axis, radial);
+	if (dot(tangent, tangent) > 0.000001) {
+		tangent = normalize(tangent);
+	} else {
+		tangent = side;
+	}
+	if (signed_strength > 0.0) {
+		target += radial * region_amount * 0.225 * region_shell;
+		target += axis * region_amount * 0.165 * inner_weight;
+		target += tangent * region_amount * 0.040 * region_shell * parity_sign;
+	} else {
+		target -= radial * region_amount * 0.205 * region_shell;
+		target -= axis * region_amount * 0.055 * inner_weight;
+		target -= tangent * region_amount * 0.055 * region_shell * parity_sign;
+	}
+	return target;
+}
+
+vec3 deformed_position(vec3 position) {
+	if (deformation_enabled < 0.5 || dot(position, position) <= 0.000001) {
+		return position;
+	}
+	vec3 radial = normalize(position);
+	float radius = length(position);
+	vec3 front = normalize(front_axis);
+	vec3 side = cross(front, vec3(0.0, 1.0, 0.0));
+	if (dot(side, side) <= 0.000001) {
+		side = vec3(1.0, 0.0, 0.0);
+	}
+	side = normalize(side);
+	vec3 up = normalize(cross(side, front));
+	float energy = clamp(mix(speech_energy, deformation_static_amount, deformation_static_pose), 0.0, 1.0);
+	float pulse = mix(clamp(deformation_pulse * deformation_pulse_strength, 0.0, 1.25), 0.0, deformation_static_pose);
+	float syllable = pulse * sin(clamp(pulse, 0.0, 1.0) * 3.14159265);
+	float amount = (energy + syllable * 0.55) * deformation_strength;
+	float shell_t = clamp(radius / max(orb_radius, 0.001), 0.0, 1.22);
+	float shell_weight = smoothstep(0.18, 1.0, shell_t);
+	float inner_weight = mix(0.32, 1.0, shell_weight);
+	if (deformation_static_pose > 0.5 || deformation_enabled > 0.5) {
+		vec3 target = position;
+		target = apply_anchor_region(target, position, radial, normalize(anchor_axis_0), anchor_strength_0, amount, shell_weight, inner_weight, side, 1.0);
+		target = apply_anchor_region(target, position, radial, normalize(anchor_axis_1), anchor_strength_1, amount, shell_weight, inner_weight, side, -1.0);
+		target = apply_anchor_region(target, position, radial, normalize(anchor_axis_2), anchor_strength_2, amount, shell_weight, inner_weight, side, 1.0);
+		target = apply_anchor_region(target, position, radial, normalize(anchor_axis_3), anchor_strength_3, amount, shell_weight, inner_weight, side, -1.0);
+		target = apply_anchor_region(target, position, radial, normalize(anchor_axis_4), anchor_strength_4, amount, shell_weight, inner_weight, side, 1.0);
+		target = apply_anchor_region(target, position, radial, normalize(anchor_axis_5), anchor_strength_5, amount, shell_weight, inner_weight, side, -1.0);
+		target = apply_anchor_region(target, position, radial, normalize(anchor_axis_6), anchor_strength_6, amount, shell_weight, inner_weight, side, 1.0);
+		float front_lobe = pow(clamp(dot(radial, front), 0.0, 1.0), 5.0);
+		float side_lobe = pow(abs(dot(radial, side)), 2.4) * (1.0 - front_lobe * 0.25);
+		float lower_lobe = pow(clamp(-dot(radial, up), 0.0, 1.0), 3.2);
+		target += front * front_lobe * amount * 0.050 * inner_weight;
+		target -= radial * side_lobe * amount * 0.070 * shell_weight;
+		target -= radial * lower_lobe * amount * 0.040 * shell_weight;
+		float normal_max = mix(1.10, 1.14, clamp(amount, 0.0, 1.0));
+		float loud_max = mix(normal_max, 1.18, clamp((amount - 0.85) * 2.2, 0.0, 1.0));
+		float max_radius = min(max(loud_max, normal_max), 1.22);
+		float max_length = orb_radius * max_radius;
+		if (length(target) > max_length) {
+			target = normalize(target) * max_length;
+		}
+		float min_length = radius * 0.78;
+		if (length(target) < min_length) {
+			target = normalize(target) * min_length;
+		}
+		return target;
+	}
+	vec3 front_upper = normalize(front * 0.82 + up * 0.46 - side * 0.34);
+	vec3 front_lower = normalize(front * 0.74 - up * 0.44 + side * 0.42);
+	vec3 cheek_left = normalize(front * 0.36 + side * 0.92 + up * 0.22);
+	vec3 cheek_right = normalize(front * 0.28 - side * 0.96 - up * 0.18);
+	vec3 crown = normalize(front * 0.04 + up * 0.96 - side * 0.28);
+	vec3 lower_pull = normalize(front * 0.10 - up * 0.94 + side * 0.22);
+	vec3 diagonal_push = normalize(front * 0.58 + side * 0.42 + up * 0.70);
+	vec3 diagonal_pull = normalize(front * 0.52 - side * 0.50 - up * 0.66);
+	vec3 side_back_pull = normalize(-front * 0.36 - side * 0.86 + up * 0.18);
+	vec3 opposite_ridge = normalize(-front * 0.22 + side * 0.74 - up * 0.50);
+	vec3 rear_anchor = -front;
+	float front_upper_lobe = deformation_lobe(radial, front_upper, 7.2);
+	float front_lower_lobe = deformation_lobe(radial, front_lower, 8.2);
+	float left_compress_lobe = deformation_lobe(radial, cheek_left, 6.4);
+	float right_compress_lobe = deformation_lobe(radial, cheek_right, 6.8);
+	float crown_lobe = deformation_lobe(radial, crown, 6.0);
+	float lower_lobe = deformation_lobe(radial, lower_pull, 6.2);
+	float diagonal_push_lobe = deformation_lobe(radial, diagonal_push, 8.8);
+	float diagonal_pull_lobe = deformation_lobe(radial, diagonal_pull, 8.4);
+	float side_back_lobe = deformation_lobe(radial, side_back_pull, 5.8);
+	float ridge_lobe = deformation_lobe(radial, opposite_ridge, 7.6);
+	float rear_lobe = deformation_lobe(radial, rear_anchor, 4.2);
+	vec3 front_push = front * (front_upper_lobe * 0.205 + front_lower_lobe * 0.150 + diagonal_push_lobe * 0.112) * amount * inner_weight;
+	vec3 radial_push = radial * (front_upper_lobe * 0.145 + front_lower_lobe * 0.092 + crown_lobe * 0.078 + diagonal_push_lobe * 0.120 + ridge_lobe * 0.070) * amount * shell_weight;
+	vec3 side_compress = radial * (left_compress_lobe * 0.150 + right_compress_lobe * 0.168 + side_back_lobe * 0.095) * amount * shell_weight;
+	vec3 lower_compress = radial * (lower_lobe * 0.112 + diagonal_pull_lobe * 0.124) * amount * shell_weight;
+	vec3 rear_stabilize = radial * rear_lobe * 0.070 * amount * shell_weight;
+	vec3 shear = up * (front_upper_lobe * 0.084 - front_lower_lobe * 0.068 + crown_lobe * 0.048 + diagonal_push_lobe * 0.066 - diagonal_pull_lobe * 0.052) * amount * shell_weight;
+	shear += side * (front_lower_lobe * 0.078 - front_upper_lobe * 0.048 - lower_lobe * 0.042 + ridge_lobe * 0.066 - side_back_lobe * 0.058) * amount * shell_weight;
+	vec3 target = position;
+	target += front_push + radial_push + shear;
+	target -= side_compress + lower_compress + rear_stabilize;
+	float normal_max = mix(1.08, 1.14, clamp(energy + syllable * 0.45, 0.0, 1.0));
+	float loud_max = mix(normal_max, 1.18, clamp((energy + syllable - 1.0) * 1.8, 0.0, 1.0));
+	float max_radius = min(max(loud_max, normal_max), 1.22);
+	float max_length = orb_radius * max_radius;
+	if (length(target) > max_length) {
+		target = normalize(target) * max_length;
+	}
+	float min_length = radius * 0.90;
+	if (length(target) < min_length) {
+		target = normalize(target) * min_length;
+	}
+	return target;
+}
+
+void vertex() {
+	vec3 basis_position = vec3(UV.x, UV.y, UV2.x);
+	vec3 thickness_offset = VERTEX - basis_position;
+	VERTEX = deformed_position(basis_position) + thickness_offset;
+}
+
+void fragment() {
+	ALBEDO = COLOR.rgb * line_tint.rgb;
+	EMISSION = COLOR.rgb * line_tint.rgb * 0.92;
+	ALPHA = clamp(COLOR.a * base_alpha, 0.0, 1.0);
+}
+"""
+	var material := ShaderMaterial.new()
+	material.shader = shader
+	material.set_shader_parameter("line_tint", color)
+	material.set_shader_parameter("base_alpha", alpha)
+	material.set_shader_parameter("deformation_enabled", 0.0)
+	material.set_shader_parameter("speech_energy", 0.0)
+	material.set_shader_parameter("deformation_pulse", 0.0)
+	material.set_shader_parameter("deformation_strength", 0.0)
+	material.set_shader_parameter("deformation_pulse_strength", DEFAULT_DEFORMATION_PROTOTYPE_PULSE_STRENGTH)
+	material.set_shader_parameter("deformation_static_pose", 0.0)
+	material.set_shader_parameter("deformation_static_amount", 0.0)
+	material.set_shader_parameter("orb_radius", DEFAULT_ORB_RADIUS)
+	material.set_shader_parameter("front_axis", Vector3.FORWARD)
 	return material
 
 
@@ -2620,6 +2896,7 @@ func _setup_multimeshes() -> void:
 	_pulse_multimesh.multimesh = _new_multimesh(_node_mesh(1.0), MAX_PULSES)
 	_core_multimesh.multimesh = _new_multimesh(_node_mesh(1.0), 1)
 	_rebuild_static_connection_meshes()
+	_apply_deformation_prototype_connection_materials()
 	_update_nodes(0.0)
 	_update_dust(0.0, 0, 1)
 	_update_cluster_halos()
@@ -2707,10 +2984,11 @@ func _process(delta: float) -> void:
 	_update_cluster_selection_flashes(delta)
 	var speech_motion_ms := _elapsed_ms_since_usec(speech_motion_started_usec)
 
-	var breath := 1.0 + sin(_time * 0.82) * (0.020 + _activity * 0.012) if _state_feature_enabled("breathing") else 1.0
+	var static_deformation_debug := _enable_deformation_prototype and _deformation_debug_static_pose
+	var breath := 1.0 + sin(_time * 0.82) * (0.020 + _activity * 0.012) if _state_feature_enabled("breathing") and not static_deformation_debug else 1.0
 	_graph_root.scale = Vector3.ONE * _display_scale * breath
 	var rotation_started_usec := Time.get_ticks_usec()
-	if _state_feature_enabled("rotation"):
+	if _state_feature_enabled("rotation") and not static_deformation_debug:
 		_update_organic_rotation(delta)
 	var rotation_ms := _elapsed_ms_since_usec(rotation_started_usec)
 
@@ -3848,10 +4126,354 @@ func _update_speaking_region_blend(delta: float) -> void:
 	var target := 1.0 if current_state == OrganismState.SPEAKING else 0.0
 	var speed := SPEAKING_REGION_BLEND_IN_SPEED if target > _speaking_region_blend else SPEAKING_REGION_BLEND_OUT_SPEED
 	_speaking_region_blend = move_toward(_speaking_region_blend, target, delta * speed)
+	_deformation_prototype_pulse = lerpf(_deformation_prototype_pulse, _deformation_prototype_pulse_target, minf(delta * 18.0, 1.0))
+	_deformation_prototype_pulse_target = move_toward(_deformation_prototype_pulse_target, 0.0, delta * 5.8)
+	_update_deformation_speech_pose(delta)
+	if current_state != OrganismState.SPEAKING:
+		_deformation_prototype_pulse = move_toward(_deformation_prototype_pulse, 0.0, delta * 4.4)
 
 
 func _speaking_region_motion_active() -> bool:
 	return _speaking_region_blend > 0.001 or current_state == OrganismState.SPEAKING
+
+
+func _deformation_prototype_active() -> bool:
+	return _enable_deformation_prototype and (_deformation_debug_static_pose or current_state == OrganismState.SPEAKING or _speaking_region_blend > 0.001 or _deformation_prototype_pulse > 0.001)
+
+
+func _deformation_prototype_front_axis() -> Vector3:
+	if _camera == null or _graph_root == null:
+		return Vector3.FORWARD
+	var local_camera_position := _graph_root.global_transform.affine_inverse() * _camera.global_transform.origin
+	if local_camera_position.length_squared() <= 0.001:
+		return Vector3.FORWARD
+	return local_camera_position.normalized()
+
+
+func _build_deformation_debug_anchors() -> void:
+	_deformation_anchor_axes.clear()
+	_deformation_anchor_strengths.clear()
+	var candidates: Array = []
+	for node_index in _cluster_halo_node_indices:
+		if node_index < 0 or node_index >= _nodes.size():
+			continue
+		var node := _nodes[node_index]
+		if node.base_position.length_squared() <= 0.001:
+			continue
+		var dust_count := 0
+		if node_index < _node_dust_indices.size():
+			dust_count = (_node_dust_indices[node_index] as Array).size()
+		var score := node.brightness * 0.58 + clampf(float(dust_count) / 90.0, 0.0, 1.4) * 0.32 + (0.42 if node.hub else 0.0)
+		candidates.append({
+			"axis": node.base_position.normalized(),
+			"score": score,
+		})
+	if candidates.is_empty():
+		for index in range(_nodes.size()):
+			var node := _nodes[index]
+			if not node.hub or node.base_position.length_squared() <= 0.001:
+				continue
+			candidates.append({
+				"axis": node.base_position.normalized(),
+				"score": node.brightness,
+			})
+	candidates.sort_custom(func(left, right): return float(left["score"]) > float(right["score"]))
+	for candidate in candidates:
+		if _deformation_anchor_axes.size() >= DEFORMATION_DEBUG_ANCHOR_COUNT:
+			break
+		var axis: Vector3 = candidate["axis"]
+		var too_close := false
+		for selected_axis in _deformation_anchor_axes:
+			if axis.dot(selected_axis) > 0.78:
+				too_close = true
+				break
+		if too_close:
+			continue
+		_deformation_anchor_axes.append(axis)
+	var fallback_axes := [
+		Vector3(0.45, 0.78, 0.43).normalized(),
+		Vector3(-0.72, 0.34, 0.61).normalized(),
+		Vector3(0.80, -0.28, 0.53).normalized(),
+		Vector3(-0.38, -0.84, 0.39).normalized(),
+		Vector3(0.18, 0.18, -0.97).normalized(),
+		Vector3(-0.86, 0.08, -0.50).normalized(),
+		Vector3(0.72, -0.64, -0.25).normalized(),
+	]
+	var fallback_index := 0
+	while _deformation_anchor_axes.size() < DEFORMATION_DEBUG_ANCHOR_COUNT:
+		_deformation_anchor_axes.append(fallback_axes[fallback_index % fallback_axes.size()])
+		fallback_index += 1
+	var strengths := [1.28, -1.12, 0.96, -0.86, 0.74, -0.68, 0.54]
+	for index in range(DEFORMATION_DEBUG_ANCHOR_COUNT):
+		_deformation_anchor_strengths.append(float(strengths[index]))
+	_build_deformation_speech_pose_bank()
+
+
+func _build_deformation_speech_pose_bank() -> void:
+	_deformation_speech_pose_bank.clear()
+	var poses := [
+		[1.30, -1.08, 0.86, -0.62, 0.42, -0.92, 0.70],
+		[-0.72, 1.22, -0.48, 0.92, -0.86, 0.52, -0.34],
+		[0.44, -0.94, 1.34, -1.04, 0.64, -0.28, 0.82],
+		[-1.10, 0.46, -0.72, 1.26, -0.38, 0.88, -0.56],
+		[0.86, -0.32, 0.42, -0.98, 1.24, -1.06, 0.36],
+		[-0.48, 0.76, -1.18, 0.34, -0.66, 1.30, -0.92],
+		[1.08, -0.78, 0.28, -0.48, -1.16, 0.64, 1.18],
+		[-0.92, 1.06, -0.36, 0.58, 0.98, -1.20, -0.44],
+		[0.70, 0.24, -1.04, -0.72, 1.16, -0.42, 0.96],
+		[-0.36, -1.18, 0.78, 1.08, -0.50, 0.34, -0.86],
+		[1.18, -0.54, -0.82, 0.36, 0.74, -1.10, 0.46],
+		[-0.80, 0.38, 1.12, -0.92, -0.28, 0.96, -0.62],
+		[0.52, -1.26, 0.36, 0.74, -0.96, 1.08, -0.30],
+		[-1.22, 0.66, -0.24, -0.44, 1.02, -0.74, 0.88],
+		[0.94, 0.58, -0.68, 1.14, -1.06, 0.22, -0.48],
+		[-0.52, -0.74, 1.26, -0.30, 0.46, -0.98, 1.04],
+		[1.34, -0.22, 0.62, -1.16, -0.56, 0.82, -0.38],
+		[-0.44, 1.18, -0.96, 0.26, 1.08, -0.34, -0.70],
+		[0.30, -0.58, 1.06, -1.22, 0.92, 0.40, -0.64],
+		[-1.04, 0.82, -0.42, 1.00, -0.78, -0.26, 0.72],
+		[0.78, -1.04, -0.60, 0.48, 1.30, -0.86, 0.24],
+		[-0.66, 0.28, 0.90, -0.76, -1.12, 1.20, -0.40],
+		[1.00, 0.44, -1.24, -0.34, 0.58, -0.70, 1.10],
+		[-0.28, -0.88, 0.54, 1.22, -0.46, 0.72, -1.08],
+	]
+	for pose in poses:
+		_deformation_speech_pose_bank.append(pose)
+	if _deformation_speech_current_strengths.size() != DEFORMATION_DEBUG_ANCHOR_COUNT:
+		_deformation_speech_current_strengths = _copy_deformation_pose(_deformation_anchor_strengths)
+	if _deformation_speech_target_strengths.size() != DEFORMATION_DEBUG_ANCHOR_COUNT:
+		_deformation_speech_target_strengths = _copy_deformation_pose(_deformation_anchor_strengths)
+
+
+func _copy_deformation_pose(source: Array) -> Array[float]:
+	var copied: Array[float] = []
+	for index in range(DEFORMATION_DEBUG_ANCHOR_COUNT):
+		copied.append(float(source[index]) if index < source.size() else 0.0)
+	return copied
+
+
+func _update_deformation_speech_pose(delta: float) -> void:
+	if _deformation_speech_pose_bank.size() < DEFORMATION_SPEECH_POSE_COUNT:
+		_build_deformation_speech_pose_bank()
+	if _deformation_speech_current_strengths.size() < DEFORMATION_DEBUG_ANCHOR_COUNT:
+		_deformation_speech_current_strengths = _copy_deformation_pose(_deformation_anchor_strengths)
+	if _deformation_speech_target_strengths.size() < DEFORMATION_DEBUG_ANCHOR_COUNT:
+		_deformation_speech_target_strengths = _copy_deformation_pose(_deformation_anchor_strengths)
+
+	if current_state != OrganismState.SPEAKING or not _enable_deformation_prototype or _deformation_debug_static_pose:
+		_deformation_speech_pose_timer = 0.0
+		_deformation_speech_target_strengths = _copy_deformation_pose(_deformation_anchor_strengths)
+		_lerp_deformation_speech_pose(delta, 5.0)
+		return
+
+	_deformation_speech_pose_timer -= delta
+	if _deformation_speech_pose_timer <= 0.0:
+		_select_next_deformation_speech_pose()
+		var energy := clampf(_speech_energy, 0.0, 1.0)
+		_deformation_speech_pose_timer = _rng.randf_range(0.12, 0.26) * lerpf(1.18, 0.78, energy)
+	_lerp_deformation_speech_pose(delta, lerpf(7.5, 13.5, clampf(_speech_energy, 0.0, 1.0)))
+
+
+func _select_next_deformation_speech_pose() -> void:
+	if _deformation_speech_pose_bank.is_empty():
+		return
+	var next_index := _rng.randi_range(0, _deformation_speech_pose_bank.size() - 1)
+	if _deformation_speech_pose_bank.size() > 1:
+		var attempts := 0
+		while next_index == _deformation_speech_last_pose_index and attempts < 6:
+			next_index = _rng.randi_range(0, _deformation_speech_pose_bank.size() - 1)
+			attempts += 1
+	_deformation_speech_last_pose_index = next_index
+	_deformation_speech_target_strengths = _copy_deformation_pose(_deformation_speech_pose_bank[next_index])
+
+
+func _lerp_deformation_speech_pose(delta: float, speed: float) -> void:
+	var blend := minf(delta * speed, 1.0)
+	for index in range(DEFORMATION_DEBUG_ANCHOR_COUNT):
+		_deformation_speech_current_strengths[index] = lerpf(
+			float(_deformation_speech_current_strengths[index]),
+			float(_deformation_speech_target_strengths[index]),
+			blend
+		)
+
+
+func _deformation_anchor_strength(index: int) -> float:
+	if _deformation_debug_static_pose or current_state != OrganismState.SPEAKING or _deformation_speech_current_strengths.size() < DEFORMATION_DEBUG_ANCHOR_COUNT:
+		if index >= 0 and index < _deformation_anchor_strengths.size():
+			return float(_deformation_anchor_strengths[index])
+		return 0.0
+	return float(_deformation_speech_current_strengths[index])
+
+
+func _deformation_prototype_offset(position: Vector3, local_weight: float, phase: float) -> Vector3:
+	if not _deformation_debug_particles_enabled or not _deformation_prototype_active() or position.length_squared() <= 0.001:
+		return Vector3.ZERO
+	var radial := position.normalized()
+	var radius := position.length()
+	var energy := clampf(_deformation_debug_static_amount if _deformation_debug_static_pose else _speech_energy, 0.0, 1.0)
+	var pulse := 0.0 if _deformation_debug_static_pose else clampf(_deformation_prototype_pulse * _deformation_prototype_pulse_strength, 0.0, 1.25)
+	var body_weight := lerpf(0.46, 1.0, clampf(local_weight, 0.0, 1.0))
+	var blend := 1.0 if _deformation_debug_static_pose else _speaking_region_blend
+	var strength := _deformation_prototype_strength * blend * body_weight
+	if strength <= 0.0001:
+		return Vector3.ZERO
+	var front_axis := _deformation_prototype_front_axis()
+	var side_axis := front_axis.cross(Vector3.UP)
+	if side_axis.length_squared() <= 0.001:
+		side_axis = Vector3.RIGHT
+	side_axis = side_axis.normalized()
+	var up_axis := side_axis.cross(front_axis).normalized()
+	var syllable := pulse * sin(clampf(pulse, 0.0, 1.0) * PI)
+	var amount := (energy + syllable * 0.55) * strength
+	var shell_t := clampf(radius / maxf(_orb_radius, 0.001), 0.0, 1.22)
+	var shell_weight := smoothstep(0.18, 1.0, shell_t)
+	var inner_weight := lerpf(0.32, 1.0, shell_weight)
+	if _deformation_debug_static_pose or current_state == OrganismState.SPEAKING:
+		return _deformation_anchor_debug_offset(position, radial, amount, shell_weight, inner_weight, front_axis, side_axis, up_axis, radius)
+	var front_upper := (front_axis * 0.82 + up_axis * 0.46 - side_axis * 0.34).normalized()
+	var front_lower := (front_axis * 0.74 - up_axis * 0.44 + side_axis * 0.42).normalized()
+	var cheek_left := (front_axis * 0.36 + side_axis * 0.92 + up_axis * 0.22).normalized()
+	var cheek_right := (front_axis * 0.28 - side_axis * 0.96 - up_axis * 0.18).normalized()
+	var crown := (front_axis * 0.04 + up_axis * 0.96 - side_axis * 0.28).normalized()
+	var lower_pull := (front_axis * 0.10 - up_axis * 0.94 + side_axis * 0.22).normalized()
+	var diagonal_push := (front_axis * 0.58 + side_axis * 0.42 + up_axis * 0.70).normalized()
+	var diagonal_pull := (front_axis * 0.52 - side_axis * 0.50 - up_axis * 0.66).normalized()
+	var side_back_pull := (-front_axis * 0.36 - side_axis * 0.86 + up_axis * 0.18).normalized()
+	var opposite_ridge := (-front_axis * 0.22 + side_axis * 0.74 - up_axis * 0.50).normalized()
+	var rear_anchor := -front_axis
+	var front_upper_lobe := _deformation_lobe(radial, front_upper, 7.2)
+	var front_lower_lobe := _deformation_lobe(radial, front_lower, 8.2)
+	var left_compress_lobe := _deformation_lobe(radial, cheek_left, 6.4)
+	var right_compress_lobe := _deformation_lobe(radial, cheek_right, 6.8)
+	var crown_lobe := _deformation_lobe(radial, crown, 6.0)
+	var lower_lobe := _deformation_lobe(radial, lower_pull, 6.2)
+	var diagonal_push_lobe := _deformation_lobe(radial, diagonal_push, 8.8)
+	var diagonal_pull_lobe := _deformation_lobe(radial, diagonal_pull, 8.4)
+	var side_back_lobe := _deformation_lobe(radial, side_back_pull, 5.8)
+	var ridge_lobe := _deformation_lobe(radial, opposite_ridge, 7.6)
+	var rear_lobe := _deformation_lobe(radial, rear_anchor, 4.2)
+	var front_push := front_axis * (front_upper_lobe * 0.205 + front_lower_lobe * 0.150 + diagonal_push_lobe * 0.112) * amount * inner_weight
+	var radial_push := radial * (front_upper_lobe * 0.145 + front_lower_lobe * 0.092 + crown_lobe * 0.078 + diagonal_push_lobe * 0.120 + ridge_lobe * 0.070) * amount * shell_weight
+	var side_compress := radial * (left_compress_lobe * 0.150 + right_compress_lobe * 0.168 + side_back_lobe * 0.095) * amount * shell_weight
+	var lower_compress := radial * (lower_lobe * 0.112 + diagonal_pull_lobe * 0.124) * amount * shell_weight
+	var rear_stabilize := radial * rear_lobe * 0.070 * amount * shell_weight
+	var shear := up_axis * (front_upper_lobe * 0.084 - front_lower_lobe * 0.068 + crown_lobe * 0.048 + diagonal_push_lobe * 0.066 - diagonal_pull_lobe * 0.052) * amount * shell_weight
+	shear += side_axis * (front_lower_lobe * 0.078 - front_upper_lobe * 0.048 - lower_lobe * 0.042 + ridge_lobe * 0.066 - side_back_lobe * 0.058) * amount * shell_weight
+	var target_position := position
+	target_position += front_push + radial_push + shear
+	target_position -= side_compress + lower_compress + rear_stabilize
+	var normal_max := lerpf(1.08, DEFORMATION_PROTOTYPE_NORMAL_MAX_RADIUS, clampf(energy + syllable * 0.45, 0.0, 1.0))
+	var loud_max := lerpf(normal_max, DEFORMATION_PROTOTYPE_LOUD_MAX_RADIUS, clampf((energy + syllable - 1.0) * 1.8, 0.0, 1.0))
+	var max_radius := minf(maxf(loud_max, normal_max), DEFORMATION_PROTOTYPE_EMERGENCY_MAX_RADIUS)
+	var max_length := _orb_radius * max_radius
+	if target_position.length() > max_length:
+		target_position = target_position.normalized() * max_length
+	var min_length := radius * 0.90
+	if target_position.length() < min_length:
+		target_position = target_position.normalized() * min_length
+	return target_position - position
+
+
+func _deformation_anchor_debug_offset(
+	position: Vector3,
+	radial: Vector3,
+	amount: float,
+	shell_weight: float,
+	inner_weight: float,
+	front_axis: Vector3,
+	side_axis: Vector3,
+	up_axis: Vector3,
+	radius: float
+) -> Vector3:
+	if _deformation_anchor_axes.size() < DEFORMATION_DEBUG_ANCHOR_COUNT:
+		_build_deformation_debug_anchors()
+	var target_position := position
+	var positive_total := 0.0
+	var negative_total := 0.0
+	for index in range(DEFORMATION_DEBUG_ANCHOR_COUNT):
+		var axis: Vector3 = _deformation_anchor_axes[index]
+		var signed_strength := _deformation_anchor_strength(index)
+		var closeness := _deformation_lobe(radial, axis, 10.0 if signed_strength > 0.0 else 8.0)
+		var region_amount := amount * absf(signed_strength) * closeness
+		var region_shell := lerpf(0.34, 1.0, shell_weight)
+		var tangent := axis.cross(radial)
+		if tangent.length_squared() > 0.001:
+			tangent = tangent.normalized()
+		else:
+			tangent = side_axis
+		if signed_strength > 0.0:
+			positive_total += closeness * signed_strength
+			target_position += radial * region_amount * 0.225 * region_shell
+			target_position += axis * region_amount * 0.165 * inner_weight
+			target_position += tangent * region_amount * 0.040 * region_shell * (1.0 if index % 2 == 0 else -1.0)
+		else:
+			negative_total += closeness * absf(signed_strength)
+			target_position -= radial * region_amount * 0.205 * region_shell
+			target_position -= axis * region_amount * 0.055 * inner_weight
+			target_position += tangent * region_amount * 0.055 * region_shell * (-1.0 if index % 2 == 0 else 1.0)
+	var front_lobe := pow(clampf(radial.dot(front_axis), 0.0, 1.0), 5.0)
+	var side_lobe := pow(absf(radial.dot(side_axis)), 2.4) * (1.0 - front_lobe * 0.25)
+	var lower_lobe := pow(clampf(-radial.dot(up_axis), 0.0, 1.0), 3.2)
+	target_position += front_axis * front_lobe * amount * 0.050 * inner_weight
+	target_position -= radial * side_lobe * amount * 0.070 * shell_weight
+	target_position -= radial * lower_lobe * amount * 0.040 * shell_weight
+	var imbalance := clampf(positive_total - negative_total, -1.0, 1.0)
+	target_position += up_axis * imbalance * amount * 0.030 * shell_weight
+	var normal_max := lerpf(1.10, DEFORMATION_PROTOTYPE_NORMAL_MAX_RADIUS, clampf(amount, 0.0, 1.0))
+	var loud_max := lerpf(normal_max, DEFORMATION_PROTOTYPE_LOUD_MAX_RADIUS, clampf((amount - 0.85) * 2.2, 0.0, 1.0))
+	var max_radius := minf(maxf(loud_max, normal_max), DEFORMATION_PROTOTYPE_EMERGENCY_MAX_RADIUS)
+	var max_length := _orb_radius * max_radius
+	if target_position.length() > max_length:
+		target_position = target_position.normalized() * max_length
+	var min_length := radius * 0.78
+	if target_position.length() < min_length:
+		target_position = target_position.normalized() * min_length
+	return target_position - position
+
+
+func _deformation_lobe(radial: Vector3, axis: Vector3, power: float) -> float:
+	return pow(clampf(radial.dot(axis.normalized()) * 0.5 + 0.5, 0.0, 1.0), power)
+
+
+func _apply_deformation_prototype_connection_materials() -> void:
+	var use_deformation_material := _deformation_connection_material_active()
+	if _line_mesh_instance != null:
+		_line_mesh_instance.material_override = _line_deformation_material if use_deformation_material else _line_material
+	if _glow_line_mesh_instance != null:
+		_glow_line_mesh_instance.material_override = _glow_line_deformation_material if use_deformation_material else _glow_line_material
+
+
+func _deformation_connection_material_active() -> bool:
+	return _enable_deformation_prototype and _deformation_debug_connections_enabled and _deformation_prototype_active()
+
+
+func _set_deformation_anchor_uniforms(material: ShaderMaterial) -> void:
+	if _deformation_anchor_axes.size() < DEFORMATION_DEBUG_ANCHOR_COUNT or _deformation_anchor_strengths.size() < DEFORMATION_DEBUG_ANCHOR_COUNT:
+		_build_deformation_debug_anchors()
+	for index in range(DEFORMATION_DEBUG_ANCHOR_COUNT):
+		material.set_shader_parameter("anchor_axis_%s" % index, _deformation_anchor_axes[index])
+		material.set_shader_parameter("anchor_strength_%s" % index, _deformation_anchor_strength(index))
+
+
+func _update_deformation_prototype_connection_materials() -> void:
+	if _line_deformation_material == null or _glow_line_deformation_material == null:
+		return
+	_apply_deformation_prototype_connection_materials()
+	var enabled_value := 1.0 if _enable_deformation_prototype and _deformation_debug_connections_enabled else 0.0
+	var front_axis := _deformation_prototype_front_axis()
+	var strength := _deformation_prototype_strength * (1.0 if _deformation_debug_static_pose else _speaking_region_blend)
+	var static_pose := 1.0 if _deformation_debug_static_pose else 0.0
+	for material in [_line_deformation_material, _glow_line_deformation_material]:
+		material.set_shader_parameter("deformation_enabled", enabled_value)
+		material.set_shader_parameter("speech_energy", clampf(_speech_energy, 0.0, 1.0))
+		material.set_shader_parameter("deformation_pulse", _deformation_prototype_pulse)
+		material.set_shader_parameter("deformation_strength", strength)
+		material.set_shader_parameter("deformation_pulse_strength", _deformation_prototype_pulse_strength)
+		material.set_shader_parameter("deformation_static_pose", static_pose)
+		material.set_shader_parameter("deformation_static_amount", _deformation_debug_static_amount)
+		material.set_shader_parameter("orb_radius", _orb_radius)
+		material.set_shader_parameter("front_axis", front_axis)
+		_set_deformation_anchor_uniforms(material)
 
 
 func _update_autonomous_speech_motion(delta: float) -> void:
@@ -4343,10 +4965,17 @@ func _update_nodes(_delta: float, start_index: int = 0, stride: int = 1) -> void
 		var speech_morph: Vector3 = _speaking_region_node_morph(index, node.phase) if _speaking_region_motion_active() else Vector3.ZERO
 		if profile_active:
 			_speaking_profile_frame_node_morph_ms += _elapsed_ms_since_usec(morph_started_usec)
+		if _enable_deformation_prototype and _deformation_debug_static_pose:
+			drift = Vector3.ZERO
+			local_breath = Vector3.ZERO
+			speech_morph = Vector3.ZERO
 		var previous_position := node.current_position
 		position_started_usec = Time.get_ticks_usec() if profile_active else 0
-		var target_position := node.base_position + drift + local_breath + speech_morph + (_real_node_speech_motion(index, node.phase) if motion_enabled else Vector3.ZERO)
-		if _real_speech_motion_enabled and current_state == OrganismState.SPEAKING:
+		var deformation_morph := _deformation_prototype_offset(node.base_position, _node_speech_local_weights[index] if index < _node_speech_local_weights.size() else 1.0, node.phase)
+		var target_position := node.base_position + drift + local_breath + speech_morph + deformation_morph + (_real_node_speech_motion(index, node.phase) if motion_enabled and not _deformation_debug_static_pose else Vector3.ZERO)
+		if _deformation_prototype_active():
+			node.current_position = node.current_position.lerp(target_position, minf(_delta * _deformation_prototype_smoothing, 1.0))
+		elif _real_speech_motion_enabled and current_state == OrganismState.SPEAKING:
 			node.current_position = node.current_position.lerp(target_position, minf(_delta * _real_speech_motion_smoothing, 1.0))
 		elif _speaking_region_motion_active():
 			node.current_position = node.current_position.lerp(target_position, minf(_delta * SPEAKING_NODE_POSITION_SMOOTHING, 1.0))
@@ -4361,7 +4990,7 @@ func _update_nodes(_delta: float, start_index: int = 0, stride: int = 1) -> void
 		var center_t := _center_visual_t(node.current_position)
 		var depth_t := _balanced_depth_light(node.current_position, 0.94, 1.16)
 		var pulse := 0.0
-		if node.hub:
+		if node.hub and not _deformation_debug_static_pose:
 			pulse = pow(maxf(0.0, sin(_time * (0.95 + node.phase * 0.02) + node.phase)), 8.0) * 0.75
 		if profile_active:
 			_speaking_profile_frame_node_position_ms += _elapsed_ms_since_usec(position_started_usec)
@@ -4457,10 +5086,16 @@ func _update_dust(_delta: float, start_index: int = 0, stride: int = 1) -> void:
 		var speech_morph: Vector3 = _speaking_region_dust_morph(index, dust.phase) if _speaking_region_motion_active() and can_morph else Vector3.ZERO
 		if profile_active:
 			_speaking_profile_frame_dust_morph_ms += _elapsed_ms_since_usec(morph_started_usec)
+		if _enable_deformation_prototype and _deformation_debug_static_pose:
+			orbit = Vector3.ZERO
+			speech_morph = Vector3.ZERO
 		var previous_position := dust.current_position
 		position_started_usec = Time.get_ticks_usec() if profile_active else 0
-		var target_position := dust.base_position + orbit + speech_morph + (_real_dust_speech_motion(index, dust.phase) if motion_enabled else Vector3.ZERO)
-		if _real_speech_motion_enabled and current_state == OrganismState.SPEAKING:
+		var deformation_morph := _deformation_prototype_offset(dust.base_position, (_dust_speech_local_weights[index] if index < _dust_speech_local_weights.size() else 1.0) * 0.72, dust.phase)
+		var target_position := dust.base_position + orbit + speech_morph + deformation_morph + (_real_dust_speech_motion(index, dust.phase) if motion_enabled and not _deformation_debug_static_pose else Vector3.ZERO)
+		if _deformation_prototype_active():
+			dust.current_position = dust.current_position.lerp(target_position, minf(_delta * _deformation_prototype_smoothing, 1.0))
+		elif _real_speech_motion_enabled and current_state == OrganismState.SPEAKING:
 			dust.current_position = dust.current_position.lerp(target_position, minf(_delta * _real_speech_motion_smoothing, 1.0))
 		elif _speaking_region_motion_active():
 			dust.current_position = dust.current_position.lerp(target_position, minf(_delta * SPEAKING_DUST_POSITION_SMOOTHING, 1.0))
@@ -4468,7 +5103,7 @@ func _update_dust(_delta: float, start_index: int = 0, stride: int = 1) -> void:
 			dust.current_position = target_position
 		var depth_t := _balanced_depth_light(dust.current_position, 0.82, 1.06)
 		var cluster_pulse := 0.0
-		if dust.hub:
+		if dust.hub and not _deformation_debug_static_pose:
 			cluster_pulse = pow(maxf(0.0, sin(_time * 1.05 + dust.phase)), 5.0) * 0.45
 		if profile_active:
 			var displacement := previous_position.distance_to(dust.current_position)
@@ -4519,9 +5154,11 @@ func _rebuild_static_connection_meshes() -> void:
 	if _debug_disable_static_connections or _debug_freeze_connection_updates:
 		return
 	var core_vertices := PackedVector3Array()
+	var core_deformation_basis := PackedVector3Array()
 	var core_colors := PackedColorArray()
 	var core_indices := PackedInt32Array()
 	var glow_vertices := PackedVector3Array()
+	var glow_deformation_basis := PackedVector3Array()
 	var glow_colors := PackedColorArray()
 	var glow_indices := PackedInt32Array()
 	var live_positions := _connection_mesh_uses_live_positions()
@@ -4561,11 +5198,11 @@ func _rebuild_static_connection_meshes() -> void:
 		glow_color.a = alpha * (0.040 + center_t * 0.018 + shell_band * 0.028 + route_t * 0.030 + selection_flash * 0.18) * glow_alpha_scale * glow_scale
 		var glow_width := connection.width * width_scale * (1.75 + route_t * 0.40 + selection_flash * 1.30) * (1.0 + route_t * (_route_connection_glow_width_scale - 1.0))
 		var core_width := connection.width * width_scale * (1.08 + route_t * 0.12 + selection_flash * 0.65) * (1.0 + route_t * (_route_connection_core_width_scale - 1.0))
-		_add_line_quad_3d(glow_vertices, glow_colors, glow_indices, a_position, b_position, glow_width, glow_color, local_camera_forward, local_camera_up)
-		_add_line_quad_3d(core_vertices, core_colors, core_indices, a_position, b_position, core_width, color, local_camera_forward, local_camera_up)
+		_add_line_quad_3d(glow_vertices, glow_colors, glow_indices, a_position, b_position, glow_width, glow_color, local_camera_forward, local_camera_up, glow_deformation_basis)
+		_add_line_quad_3d(core_vertices, core_colors, core_indices, a_position, b_position, core_width, color, local_camera_forward, local_camera_up, core_deformation_basis)
 
-	_line_mesh_instance.mesh = _mesh_from_arrays(core_vertices, core_colors, core_indices)
-	_glow_line_mesh_instance.mesh = _mesh_from_arrays(glow_vertices, glow_colors, glow_indices)
+	_line_mesh_instance.mesh = _mesh_from_arrays(core_vertices, core_colors, core_indices, core_deformation_basis)
+	_glow_line_mesh_instance.mesh = _mesh_from_arrays(glow_vertices, glow_colors, glow_indices, glow_deformation_basis)
 
 
 func _start_thinking_connection_layer() -> void:
@@ -5025,7 +5662,8 @@ func _add_line_quad_3d(
 	width: float,
 	color: Color,
 	local_camera_forward: Vector3,
-	local_camera_up: Vector3
+	local_camera_up: Vector3,
+	deformation_basis: PackedVector3Array = PackedVector3Array()
 ) -> void:
 	var direction := b - a
 	if direction.length_squared() < 0.0001:
@@ -5044,6 +5682,10 @@ func _add_line_quad_3d(
 	vertices.append(a + normal)
 	vertices.append(b + normal)
 	vertices.append(b - normal)
+	deformation_basis.append(a)
+	deformation_basis.append(a)
+	deformation_basis.append(b)
+	deformation_basis.append(b)
 	for _i in range(4):
 		colors.append(color)
 	indices.append(start)
@@ -5054,13 +5696,21 @@ func _add_line_quad_3d(
 	indices.append(start + 3)
 
 
-func _mesh_from_arrays(vertices: PackedVector3Array, colors: PackedColorArray, indices: PackedInt32Array) -> ArrayMesh:
+func _mesh_from_arrays(vertices: PackedVector3Array, colors: PackedColorArray, indices: PackedInt32Array, deformation_basis: PackedVector3Array = PackedVector3Array()) -> ArrayMesh:
 	var mesh := ArrayMesh.new()
 	if vertices.is_empty():
 		return mesh
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = vertices
+	if deformation_basis.size() == vertices.size():
+		var basis_uv := PackedVector2Array()
+		var basis_uv2 := PackedVector2Array()
+		for basis in deformation_basis:
+			basis_uv.append(Vector2(basis.x, basis.y))
+			basis_uv2.append(Vector2(basis.z, 0.0))
+		arrays[Mesh.ARRAY_TEX_UV] = basis_uv
+		arrays[Mesh.ARRAY_TEX_UV2] = basis_uv2
 	arrays[Mesh.ARRAY_COLOR] = colors
 	arrays[Mesh.ARRAY_INDEX] = indices
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
@@ -5651,6 +6301,9 @@ func _update_cluster_halos() -> void:
 func _update_materials() -> void:
 	_update_material_color(_line_material, _palette["line"], 1.0)
 	_update_material_color(_glow_line_material, _palette["line"], 0.10)
+	_update_material_color(_line_deformation_material, _palette["line"], 1.0)
+	_update_material_color(_glow_line_deformation_material, _palette["line"], 0.10)
+	_update_deformation_prototype_connection_materials()
 	if current_state != OrganismState.THINKING:
 		_update_material_color(_thinking_line_material, _palette["hot"], 0.92)
 		_update_material_color(_thinking_glow_line_material, _palette["hot"], 0.30)

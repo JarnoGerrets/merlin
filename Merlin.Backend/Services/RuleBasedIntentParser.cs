@@ -1,5 +1,6 @@
 using Merlin.Backend.Configuration;
 using Merlin.Backend.Models;
+using Merlin.Backend.Tools;
 using Microsoft.Extensions.Options;
 
 namespace Merlin.Backend.Services;
@@ -9,9 +10,17 @@ public sealed class RuleBasedIntentParser : IIntentParser
     private static readonly string[] UrlPrefixes =
     [
         "take me to ",
+        "please take me to ",
         "go to ",
+        "goto ",
+        "please go to ",
+        "please goto ",
+        "pull up ",
+        "please pull up ",
         "open ",
+        "please open ",
         "browse ",
+        "please browse ",
         "visit "
     ];
 
@@ -73,6 +82,25 @@ public sealed class RuleBasedIntentParser : IIntentParser
         "explain merlin"
     ];
 
+    private static readonly string[] WakePhrases =
+    [
+        "are you awake",
+        "you awake",
+        "are you there",
+        "you there",
+        "are you listening",
+        "you listening",
+        "hello merlin",
+        "hey merlin",
+        "hi merlin",
+        "merlin are you awake",
+        "merlin are you there",
+        "merlin wake up",
+        "wake up merlin",
+        "hey merlin are you awake",
+        "ok merlin are you awake"
+    ];
+
     private static readonly string[] MissingCapabilityPhrases =
     [
         "can you check my folders",
@@ -102,10 +130,14 @@ public sealed class RuleBasedIntentParser : IIntentParser
     ];
 
     private readonly ApplicationLaunchOptions _applicationLaunchOptions;
+    private readonly ITrustedUrlStore _trustedUrlStore;
 
-    public RuleBasedIntentParser(IOptions<ApplicationLaunchOptions> applicationLaunchOptions)
+    public RuleBasedIntentParser(
+        IOptions<ApplicationLaunchOptions> applicationLaunchOptions,
+        ITrustedUrlStore? trustedUrlStore = null)
     {
         _applicationLaunchOptions = applicationLaunchOptions.Value;
+        _trustedUrlStore = trustedUrlStore ?? NullTrustedUrlStore.Instance;
     }
 
     public Task<IntentParseResult> ParseAsync(
@@ -140,6 +172,31 @@ public sealed class RuleBasedIntentParser : IIntentParser
         if (TryParseConfirmation(normalizedMessage, originalMessage, out var confirmationResult))
         {
             return Task.FromResult(confirmationResult);
+        }
+
+        if (TryParseDevVisualState(normalizedMessage, originalMessage, out var devVisualStateResult))
+        {
+            return Task.FromResult(devVisualStateResult);
+        }
+
+        if (TryParseDeleteBrowserMapping(normalizedMessage, originalMessage, out var deleteBrowserMappingResult))
+        {
+            return Task.FromResult(deleteBrowserMappingResult);
+        }
+
+        if (TryParseEditBrowserMapping(normalizedMessage, originalMessage, out var editBrowserMappingResult))
+        {
+            return Task.FromResult(editBrowserMappingResult);
+        }
+
+        if (TryParseTrustedUrl(normalizedMessage, originalMessage, out var trustedUrlResult))
+        {
+            return Task.FromResult(trustedUrlResult);
+        }
+
+        if (TryParseWakeMerlin(normalizedMessage, originalMessage, out var wakeResult))
+        {
+            return Task.FromResult(wakeResult);
         }
 
         if (TryParseGeneralConversation(normalizedMessage, originalMessage, out var conversationResult))
@@ -185,6 +242,30 @@ public sealed class RuleBasedIntentParser : IIntentParser
                 OriginalMessage = originalMessage,
                 CapabilityId = "general_conversation",
                 CapabilityName = "General Conversation"
+            };
+
+            return true;
+        }
+
+        result = Unknown(originalMessage, normalizedMessage);
+        return false;
+    }
+
+    private static bool TryParseWakeMerlin(
+        string normalizedMessage,
+        string originalMessage,
+        out IntentParseResult result)
+    {
+        if (WakePhrases.Any(phrase => string.Equals(normalizedMessage, phrase, StringComparison.OrdinalIgnoreCase)))
+        {
+            result = new IntentParseResult
+            {
+                Intent = "wake_merlin",
+                NormalizedCommand = "wake_merlin",
+                Confidence = 0.98,
+                OriginalMessage = originalMessage,
+                CapabilityId = "wake_merlin",
+                CapabilityName = "Wake Merlin"
             };
 
             return true;
@@ -364,12 +445,9 @@ public sealed class RuleBasedIntentParser : IIntentParser
         string originalMessage,
         out IntentParseResult result)
     {
-        if (string.Equals(normalizedMessage, "confirm", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(normalizedMessage, "yes", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(normalizedMessage, "approve", StringComparison.OrdinalIgnoreCase)
-            || normalizedMessage.StartsWith("choose ", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(normalizedMessage, "first one", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(normalizedMessage, "second one", StringComparison.OrdinalIgnoreCase))
+        if (ConfirmationCommandMatcher.IsExplicitConfirmation(normalizedMessage)
+            || ConfirmationCommandMatcher.IsCancellationCommand(normalizedMessage)
+            || ConfirmationCommandMatcher.IsChoiceCommand(normalizedMessage))
         {
             result = new IntentParseResult
             {
@@ -388,6 +466,29 @@ public sealed class RuleBasedIntentParser : IIntentParser
         return false;
     }
 
+    private static bool TryParseDevVisualState(
+        string normalizedMessage,
+        string originalMessage,
+        out IntentParseResult result)
+    {
+        result = Unknown(originalMessage, normalizedMessage);
+        if (!DevVisualStateTool.TryParse(normalizedMessage, out _))
+        {
+            return false;
+        }
+
+        result = new IntentParseResult
+        {
+            Intent = "dev_visual_state",
+            NormalizedCommand = normalizedMessage,
+            Confidence = 0.99,
+            OriginalMessage = originalMessage,
+            CapabilityId = "dev_visual_state",
+            CapabilityName = "Dev Visual State"
+        };
+        return true;
+    }
+
     private bool TryParseApplication(
         string normalizedMessage,
         string originalMessage,
@@ -401,7 +502,7 @@ public sealed class RuleBasedIntentParser : IIntentParser
                 continue;
             }
 
-            if (!ContainsAny(normalizedMessage, ["open", "start", "launch"]))
+            if (!ContainsAny(normalizedMessage, ["open", "start", "launch", "pull up"]))
             {
                 continue;
             }
@@ -410,7 +511,7 @@ public sealed class RuleBasedIntentParser : IIntentParser
             {
                 Intent = "open_application",
                 NormalizedCommand = $"open {application.Key}",
-                Confidence = StartsWithAny(normalizedMessage, ["open ", "start ", "launch "]) ? 0.98 : 0.95,
+                Confidence = StartsWithAny(normalizedMessage, ["open ", "start ", "launch ", "pull up "]) ? 0.98 : 0.95,
                 OriginalMessage = originalMessage,
                 CapabilityId = "application_launch",
                 CapabilityName = "Application Launch"
@@ -419,9 +520,8 @@ public sealed class RuleBasedIntentParser : IIntentParser
             return true;
         }
 
-        if (StartsWithAny(normalizedMessage, ["open ", "start ", "launch "]))
+        if (TryExtractOpenApplicationTarget(normalizedMessage, out var target))
         {
-            var target = normalizedMessage.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries).ElementAtOrDefault(1);
             if (!string.IsNullOrWhiteSpace(target) && !LooksLikeUrlInput(target))
             {
                 result = new IntentParseResult
@@ -440,6 +540,130 @@ public sealed class RuleBasedIntentParser : IIntentParser
 
         result = Unknown(originalMessage, normalizedMessage);
         return false;
+    }
+
+    private bool TryParseTrustedUrl(
+        string normalizedMessage,
+        string originalMessage,
+        out IntentParseResult result)
+    {
+        result = Unknown(originalMessage, normalizedMessage);
+
+        foreach (var prefix in UrlPrefixes)
+        {
+            if (!normalizedMessage.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var target = normalizedMessage[prefix.Length..].Trim();
+            var mapping = _trustedUrlStore.FindByAlias(target);
+            if (mapping is null)
+            {
+                return false;
+            }
+
+            result = new IntentParseResult
+            {
+                Intent = "open_url",
+                NormalizedCommand = $"open {mapping.Url}",
+                Confidence = 1.0,
+                OriginalMessage = originalMessage,
+                CapabilityId = "url_opening",
+                CapabilityName = "URL Opening"
+            };
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryParseDeleteBrowserMapping(
+        string normalizedMessage,
+        string originalMessage,
+        out IntentParseResult result)
+    {
+        result = Unknown(originalMessage, normalizedMessage);
+        foreach (var prefix in new[]
+        {
+            "delete browser mapping ",
+            "please delete browser mapping ",
+            "delete the browser mapping ",
+            "please delete the browser mapping ",
+            "delete the mapping of ",
+            "please delete the mapping of ",
+            "remove browser mapping ",
+            "please remove browser mapping ",
+            "remove the browser mapping ",
+            "please remove the browser mapping ",
+            "remove the mapping of ",
+            "please remove the mapping of ",
+            "forget ",
+            "please forget ",
+            "stop opening "
+        })
+        {
+            if (!normalizedMessage.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var alias = TrustedUrlStore.NormalizeAlias(normalizedMessage[prefix.Length..]);
+            if (string.IsNullOrWhiteSpace(alias))
+            {
+                return false;
+            }
+
+            result = new IntentParseResult
+            {
+                Intent = "delete_browser_mapping",
+                NormalizedCommand = $"delete browser mapping {alias}",
+                Confidence = 0.98,
+                OriginalMessage = originalMessage,
+                CapabilityId = "browser_mapping",
+                CapabilityName = "Browser Mapping"
+            };
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryParseEditBrowserMapping(
+        string normalizedMessage,
+        string originalMessage,
+        out IntentParseResult result)
+    {
+        result = Unknown(originalMessage, normalizedMessage);
+        if (EditBrowserMappingTool.TryExtractEdit(normalizedMessage, out var alias, out var target))
+        {
+            result = new IntentParseResult
+            {
+                Intent = "edit_browser_mapping",
+                NormalizedCommand = $"edit browser mapping {alias} to {target}",
+                Confidence = 0.98,
+                OriginalMessage = originalMessage,
+                CapabilityId = "browser_mapping",
+                CapabilityName = "Browser Mapping"
+            };
+            return true;
+        }
+
+        if (!EditBrowserMappingTool.TryExtractPendingEditAlias(normalizedMessage, out alias))
+        {
+            return false;
+        }
+
+        result = new IntentParseResult
+        {
+            Intent = "edit_browser_mapping",
+            NormalizedCommand = $"edit browser mapping {alias}",
+            Confidence = 0.98,
+            OriginalMessage = originalMessage,
+            CapabilityId = "browser_mapping",
+            CapabilityName = "Browser Mapping"
+        };
+        return true;
     }
 
     private static string? GetMatchingApplicationAlias(
@@ -493,6 +717,85 @@ public sealed class RuleBasedIntentParser : IIntentParser
 
         result = Unknown(originalMessage, normalizedMessage);
         return false;
+    }
+
+    private static bool TryExtractOpenApplicationTarget(string normalizedMessage, out string target)
+    {
+        target = string.Empty;
+        foreach (var prefix in new[]
+        {
+            "open ",
+            "start ",
+            "launch ",
+            "pull up ",
+            "please open ",
+            "please start ",
+            "please launch ",
+            "please pull up ",
+            "can you open ",
+            "can you start ",
+            "can you launch ",
+            "can you pull up ",
+            "can you please open ",
+            "can you please start ",
+            "can you please launch ",
+            "can you please pull up ",
+            "could you open ",
+            "could you start ",
+            "could you launch ",
+            "could you pull up ",
+            "could you please open ",
+            "could you please start ",
+            "could you please launch ",
+            "could you please pull up "
+        })
+        {
+            if (!normalizedMessage.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            target = CleanPoliteTarget(normalizedMessage[prefix.Length..]);
+            return !string.IsNullOrWhiteSpace(target) && !IsInformationFeedTarget(target);
+        }
+
+        return false;
+    }
+
+    private static bool IsInformationFeedTarget(string target)
+    {
+        return ContainsAny(target, ["newsfeed", "news feed"]);
+    }
+
+    private static string CleanPoliteTarget(string target)
+    {
+        var cleaned = target.Trim().TrimEnd('.', '!', '?', ';', ':', ',');
+        foreach (var suffix in new[]
+        {
+            " for me please",
+            " for me sir",
+            " for me",
+            " please",
+            " sir"
+        })
+        {
+            if (cleaned.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                cleaned = cleaned[..^suffix.Length].Trim();
+                break;
+            }
+        }
+
+        foreach (var prefix in new[] { "the ", "my " })
+        {
+            if (cleaned.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                cleaned = cleaned[prefix.Length..].Trim();
+                break;
+            }
+        }
+
+        return cleaned;
     }
 
     private static IntentParseResult Unknown(string originalMessage, string normalizedMessage)

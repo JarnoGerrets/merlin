@@ -1,0 +1,1989 @@
+{
+  "startedAt": "2026-06-17T23:00:09.2700887+02:00",
+  "finishedAt": "2026-06-17T23:09:45.4732621+02:00",
+  "sessionId": "20260617_230007",
+  "reportDirectory": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Reports\\20260617_230007",
+  "recordingDirectory": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007",
+  "config": {
+    "phrases": "default",
+    "maxPhrases": 25,
+    "mode": "fixed",
+    "recordingSeconds": 5,
+    "output": "Reports",
+    "keepAudio": true,
+    "device": null,
+    "deviceType": "cuda",
+    "model": "medium.en",
+    "computeType": "int8_float16",
+    "language": "en",
+    "task": "transcribe",
+    "beamSize": 5,
+    "temperature": 0,
+    "pythonExecutable": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe",
+    "pythonArguments": [],
+    "whisperScriptPath": "..\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py",
+    "initialPrompt": "Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.",
+    "processTimeoutSeconds": 120,
+    "inputSampleRate": 16000,
+    "targetSampleRate": 16000,
+    "channels": 1,
+    "preRollMs": 300,
+    "minSpeechMs": 250,
+    "endSilenceMs": 700,
+    "maxUtteranceMs": 9000,
+    "vadStartRmsThreshold": 0.015,
+    "vadEndRmsThreshold": 0.01
+  },
+  "environment": {
+    "machineName": "LAPTOP-GERRETS",
+    "userName": "jarno",
+    "osVersion": "Microsoft Windows NT 10.0.26200.0",
+    "dotNetVersion": "8.0.23",
+    "selectedInputDevice": "0: Microfoon van hoofdtelefoon (A5 (2 channels)",
+    "inputDevices": [
+      "0: Microfoon van hoofdtelefoon (A5 (2 channels)",
+      "1: Lijn (A50 Stream Out) (2 channels)",
+      "2: Microphone Array (AMD Audio Dev (2 channels)"
+    ],
+    "microphoneDetected": true,
+    "sttScriptExists": true,
+    "pythonExecutableDetected": true,
+    "cudaDetected": true,
+    "cudaDetectionDetail": "True"
+  },
+  "phrases": [
+    {
+      "id": "whisper_beam_001",
+      "category": "WhisperTerms",
+      "expectedText": "What does beam do in Whisper?",
+      "acceptableAlternatives": [
+        "What does beam do in whisper"
+      ],
+      "importantTerms": [
+        "beam",
+        "Whisper"
+      ],
+      "notes": "Tests beam vs bean confusion.",
+      "recommendedRecordingSeconds": 4
+    },
+    {
+      "id": "whisper_beam_002",
+      "category": "WhisperTerms",
+      "expectedText": "Use beam five with medium dot E N.",
+      "acceptableAlternatives": [
+        "Use beam 5 with medium.en",
+        "Use beam five with medium E N"
+      ],
+      "importantTerms": [
+        "beam",
+        "medium.en"
+      ],
+      "notes": "Tests spoken punctuation and number normalization.",
+      "recommendedRecordingSeconds": 5
+    },
+    {
+      "id": "whisper_vram_003",
+      "category": "WhisperTerms",
+      "expectedText": "How much VRAM does Whisper medium dot E N use with beam five?",
+      "acceptableAlternatives": [
+        "How much VRAM does Whisper medium.en use with beam 5"
+      ],
+      "importantTerms": [
+        "VRAM",
+        "Whisper",
+        "medium.en",
+        "beam"
+      ],
+      "notes": "Technical acronym and model phrase.",
+      "recommendedRecordingSeconds": 6
+    },
+    {
+      "id": "whisper_large_004",
+      "category": "WhisperTerms",
+      "expectedText": "Is large V three better than medium dot E N?",
+      "acceptableAlternatives": [
+        "Is large v3 better than medium.en"
+      ],
+      "importantTerms": [
+        "large v3",
+        "medium.en"
+      ],
+      "notes": "Tests model name normalization.",
+      "recommendedRecordingSeconds": 5
+    },
+    {
+      "id": "whisper_cuda_005",
+      "category": "WhisperTerms",
+      "expectedText": "Run speech to text with CUDA.",
+      "acceptableAlternatives": [
+        "Run speech-to-text with CUDA"
+      ],
+      "importantTerms": [
+        "speech to text",
+        "CUDA"
+      ],
+      "notes": "Tests CUDA recognition.",
+      "recommendedRecordingSeconds": 4
+    },
+    {
+      "id": "whisper_bean_006",
+      "category": "WhisperTerms",
+      "expectedText": "Whisper heard beam as bean.",
+      "acceptableAlternatives": [],
+      "importantTerms": [
+        "Whisper",
+        "beam",
+        "bean"
+      ],
+      "notes": "Contains both confusion words intentionally.",
+      "recommendedRecordingSeconds": 4
+    },
+    {
+      "id": "whisper_medium_007",
+      "category": "WhisperTerms",
+      "expectedText": "Transcribe this with medium English.",
+      "acceptableAlternatives": [],
+      "importantTerms": [
+        "Transcribe",
+        "medium English"
+      ],
+      "notes": "Natural model description.",
+      "recommendedRecordingSeconds": 4
+    },
+    {
+      "id": "merlin_sqlite_001",
+      "category": "MerlinVocabulary",
+      "expectedText": "Merlin should prefer SQLite for local memory storage.",
+      "acceptableAlternatives": [
+        "Merlin should prefer SQL lite for local memory storage"
+      ],
+      "importantTerms": [
+        "Merlin",
+        "SQLite",
+        "local memory"
+      ],
+      "notes": "Core Merlin memory vocabulary.",
+      "recommendedRecordingSeconds": 5
+    },
+    {
+      "id": "merlin_sqlite_002",
+      "category": "MerlinVocabulary",
+      "expectedText": "Please save into long-term memory that Merlin should prefer SQLite.",
+      "acceptableAlternatives": [
+        "Please save into long term memory that Merlin should prefer SQLite"
+      ],
+      "importantTerms": [
+        "long-term memory",
+        "Merlin",
+        "SQLite"
+      ],
+      "notes": "Memory write command.",
+      "recommendedRecordingSeconds": 6
+    },
+    {
+      "id": "merlin_deepinfra_003",
+      "category": "MerlinVocabulary",
+      "expectedText": "What did we decide about DeepInfra context?",
+      "acceptableAlternatives": [
+        "What did we decide about deep infra context"
+      ],
+      "importantTerms": [
+        "DeepInfra",
+        "context"
+      ],
+      "notes": "DeepInfra brand split test.",
+      "recommendedRecordingSeconds": 5
+    },
+    {
+      "id": "merlin_deepinfra_004",
+      "category": "MerlinVocabulary",
+      "expectedText": "DeepInfra should only receive compact prompts.",
+      "acceptableAlternatives": [
+        "Deep infra should only receive compact prompts"
+      ],
+      "importantTerms": [
+        "DeepInfra",
+        "compact prompts"
+      ],
+      "notes": "DeepInfra routing vocabulary.",
+      "recommendedRecordingSeconds": 5
+    },
+    {
+      "id": "merlin_memory_005",
+      "category": "MerlinVocabulary",
+      "expectedText": "The memory compiler should reduce token usage.",
+      "acceptableAlternatives": [],
+      "importantTerms": [
+        "memory compiler",
+        "token usage"
+      ],
+      "notes": "Memory layer terminology.",
+      "recommendedRecordingSeconds": 5
+    },
+    {
+      "id": "merlin_brain_006",
+      "category": "MerlinVocabulary",
+      "expectedText": "Use the brain-like memory system.",
+      "acceptableAlternatives": [
+        "Use the brain like memory system"
+      ],
+      "importantTerms": [
+        "brain-like memory"
+      ],
+      "notes": "Hyphenated phrase test.",
+      "recommendedRecordingSeconds": 4
+    },
+    {
+      "id": "merlin_medium_memory_007",
+      "category": "MerlinVocabulary",
+      "expectedText": "The current conversation should become medium memory.",
+      "acceptableAlternatives": [],
+      "importantTerms": [
+        "current conversation",
+        "medium memory"
+      ],
+      "notes": "Memory tier phrase.",
+      "recommendedRecordingSeconds": 5
+    },
+    {
+      "id": "merlin_decision_008",
+      "category": "MerlinVocabulary",
+      "expectedText": "Store this as a project decision.",
+      "acceptableAlternatives": [],
+      "importantTerms": [
+        "project decision"
+      ],
+      "notes": "Intent phrase.",
+      "recommendedRecordingSeconds": 4
+    },
+    {
+      "id": "routing_time_001",
+      "category": "ToolsAndRouting",
+      "expectedText": "What time is it?",
+      "acceptableAlternatives": [],
+      "importantTerms": [
+        "time"
+      ],
+      "notes": "Short command.",
+      "recommendedRecordingSeconds": 3
+    },
+    {
+      "id": "routing_spotify_002",
+      "category": "ToolsAndRouting",
+      "expectedText": "What is the current volume of Spotify?",
+      "acceptableAlternatives": [],
+      "importantTerms": [
+        "current volume",
+        "Spotify"
+      ],
+      "notes": "Tool routing phrase.",
+      "recommendedRecordingSeconds": 5
+    },
+    {
+      "id": "routing_ram_003",
+      "category": "ToolsAndRouting",
+      "expectedText": "How much RAM is free?",
+      "acceptableAlternatives": [],
+      "importantTerms": [
+        "RAM",
+        "free"
+      ],
+      "notes": "System resource phrase.",
+      "recommendedRecordingSeconds": 4
+    },
+    {
+      "id": "routing_discord_004",
+      "category": "ToolsAndRouting",
+      "expectedText": "Open Discord.",
+      "acceptableAlternatives": [],
+      "importantTerms": [
+        "Open",
+        "Discord"
+      ],
+      "notes": "Application launch phrase.",
+      "recommendedRecordingSeconds": 3
+    },
+    {
+      "id": "routing_gpu_005",
+      "category": "ToolsAndRouting",
+      "expectedText": "Check GPU usage.",
+      "acceptableAlternatives": [],
+      "importantTerms": [
+        "GPU usage"
+      ],
+      "notes": "System resource phrase.",
+      "recommendedRecordingSeconds": 4
+    },
+    {
+      "id": "routing_memory_usage_006",
+      "category": "ToolsAndRouting",
+      "expectedText": "What is the current memory usage of my PC?",
+      "acceptableAlternatives": [],
+      "importantTerms": [
+        "current memory usage",
+        "PC"
+      ],
+      "notes": "Memory usage wording.",
+      "recommendedRecordingSeconds": 5
+    },
+    {
+      "id": "routing_memory_size_007",
+      "category": "ToolsAndRouting",
+      "expectedText": "What is the current size of memory of my PC?",
+      "acceptableAlternatives": [],
+      "importantTerms": [
+        "current size of memory",
+        "PC"
+      ],
+      "notes": "Similar to previous phrase.",
+      "recommendedRecordingSeconds": 5
+    },
+    {
+      "id": "sentence_sqlite_001",
+      "category": "SentenceRegression",
+      "expectedText": "Please remember that SQLite is the preferred local database for Merlin.",
+      "acceptableAlternatives": [
+        "Please remember that SQL lite is the preferred local database for Merlin"
+      ],
+      "importantTerms": [
+        "SQLite",
+        "local database",
+        "Merlin"
+      ],
+      "notes": "Full sentence covering SQLite and Merlin memory wording.",
+      "recommendedRecordingSeconds": 6
+    },
+    {
+      "id": "sentence_deepinfra_002",
+      "category": "SentenceRegression",
+      "expectedText": "DeepInfra should receive compact context instead of full raw conversation history.",
+      "acceptableAlternatives": [
+        "Deep infra should receive compact context instead of full raw conversation history"
+      ],
+      "importantTerms": [
+        "DeepInfra",
+        "compact context",
+        "full raw conversation history"
+      ],
+      "notes": "Full sentence covering DeepInfra context policy.",
+      "recommendedRecordingSeconds": 7
+    },
+    {
+      "id": "sentence_codex_cuda_003",
+      "category": "SentenceRegression",
+      "expectedText": "Codex CLI should check whether CUDA is available before running Whisper.",
+      "acceptableAlternatives": [
+        "Code X C L I should check whether CUDA is available before running Whisper"
+      ],
+      "importantTerms": [
+        "Codex CLI",
+        "CUDA",
+        "Whisper"
+      ],
+      "notes": "Full sentence covering tool and GPU vocabulary.",
+      "recommendedRecordingSeconds": 6
+    }
+  ],
+  "attempts": [
+    {
+      "phraseId": "whisper_beam_001",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:00:15.8762779+02:00",
+      "finishedAt": "2026-06-17T23:00:27.4773369+02:00",
+      "expectedText": "What does beam do in Whisper?",
+      "actualTranscript": "What does beam do in Whisper?",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 3998.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.026748775552218714,
+        "peakLevel": 0.221832275390625,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 683.75,
+        "silenceAfterSpeechMs": 58.1875,
+        "speechDurationMs": 3256.125,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\whisper_beam_001_attempt1.wav",
+        "wavFileSize": 127984,
+        "transcriptionLatencyMs": 7505.7706,
+        "totalAttemptMs": 11591.8837,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "What does beam do in Whisper?",
+        "language": "en",
+        "audioDurationSeconds": 3.9980625,
+        "latencyMs": 7505.7706,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\whisper_beam_001_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 29,
+        "normalizedExpected": "what does beam do in whisper",
+        "normalizedActual": "what does beam do in whisper"
+      },
+      "normalizerPreview": {
+        "rawTranscript": "What does beam do in Whisper?",
+        "previewTranscript": "What does beam do in Whisper?",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "whisper_beam_002",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:00:43.6824953+02:00",
+      "finishedAt": "2026-06-17T23:00:56.0400171+02:00",
+      "expectedText": "Use beam five with medium dot E N.",
+      "actualTranscript": "Use beam 5 with medium.",
+      "userRating": "retry",
+      "audioDiagnostics": {
+        "durationMs": 4998.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.03356312754977939,
+        "peakLevel": 0.274810791015625,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 3354.4375,
+        "silenceAfterSpeechMs": 0.5625,
+        "speechDurationMs": 1643.0625,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\whisper_beam_002_attempt1.wav",
+        "wavFileSize": 159984,
+        "transcriptionLatencyMs": 7302.132,
+        "totalAttemptMs": 12357.0244,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "Use beam 5 with medium.",
+        "language": "en",
+        "audioDurationSeconds": 4.9980625,
+        "latencyMs": 7302.132,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\whisper_beam_002_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": false,
+        "wordErrorRate": 0.2,
+        "characterErrorRate": 0.11538461538461539,
+        "missingImportantTerms": [
+          "medium.en"
+        ],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 23,
+        "normalizedExpected": "use beam 5 with medium.en.",
+        "normalizedActual": "use beam 5 with medium."
+      },
+      "normalizerPreview": {
+        "rawTranscript": "Use beam 5 with medium.",
+        "previewTranscript": "Use beam 5 with medium.",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "whisper_beam_002",
+      "attemptNumber": 2,
+      "startedAt": "2026-06-17T23:01:02.4165191+02:00",
+      "finishedAt": "2026-06-17T23:01:15.0365332+02:00",
+      "expectedText": "Use beam five with medium dot E N.",
+      "actualTranscript": "Use beam 5 with medium.en.",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 4998.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.03965326889686898,
+        "peakLevel": 0.27374267578125,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 578.25,
+        "silenceAfterSpeechMs": 2411.25,
+        "speechDurationMs": 2008.5625,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\whisper_beam_002_attempt2.wav",
+        "wavFileSize": 159984,
+        "transcriptionLatencyMs": 7563.2169,
+        "totalAttemptMs": 12619.6802,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "Use beam 5 with medium.en.",
+        "language": "en",
+        "audioDurationSeconds": 4.9980625,
+        "latencyMs": 7563.2169,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\whisper_beam_002_attempt2.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 26,
+        "normalizedExpected": "use beam 5 with medium.en.",
+        "normalizedActual": "use beam 5 with medium.en."
+      },
+      "normalizerPreview": {
+        "rawTranscript": "Use beam 5 with medium.en.",
+        "previewTranscript": "Use beam 5 with medium.en.",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "whisper_vram_003",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:01:23.0980051+02:00",
+      "finishedAt": "2026-06-17T23:01:36.8265602+02:00",
+      "expectedText": "How much VRAM does Whisper medium dot E N use with beam five?",
+      "actualTranscript": "How much VRAM does Whisper, medium.en, use with beam 5?",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 5978.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.03452285332770417,
+        "peakLevel": 0.2039794921875,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 926.1875,
+        "silenceAfterSpeechMs": 968.6875,
+        "speechDurationMs": 4083.1875,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\whisper_vram_003_attempt1.wav",
+        "wavFileSize": 191344,
+        "transcriptionLatencyMs": 7682.6687,
+        "totalAttemptMs": 13728.3621,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "How much VRAM does Whisper, medium.en, use with beam 5?",
+        "language": "en",
+        "audioDurationSeconds": 5.9780625,
+        "latencyMs": 7682.6687,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\whisper_vram_003_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 55,
+        "normalizedExpected": "how much vram does whisper medium.en use with beam 5",
+        "normalizedActual": "how much vram does whisper medium.en use with beam 5"
+      },
+      "normalizerPreview": {
+        "rawTranscript": "How much VRAM does Whisper, medium.en, use with beam 5?",
+        "previewTranscript": "How much VRAM does Whisper, medium.en, use with beam 5?",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "whisper_large_004",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:01:54.0940049+02:00",
+      "finishedAt": "2026-06-17T23:02:06.6873159+02:00",
+      "expectedText": "Is large V three better than medium dot E N?",
+      "actualTranscript": "Is large v3 better than medium.en?",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 4988.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.03639200742257365,
+        "peakLevel": 0.288177490234375,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 906,
+        "silenceAfterSpeechMs": 787,
+        "speechDurationMs": 3295.0625,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\whisper_large_004_attempt1.wav",
+        "wavFileSize": 159664,
+        "transcriptionLatencyMs": 7546.9078,
+        "totalAttemptMs": 12593.1936,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "Is large v3 better than medium.en?",
+        "language": "en",
+        "audioDurationSeconds": 4.9880625,
+        "latencyMs": 7546.9078,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\whisper_large_004_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 34,
+        "normalizedExpected": "is large v3 better than medium.en",
+        "normalizedActual": "is large v3 better than medium.en"
+      },
+      "normalizerPreview": {
+        "rawTranscript": "Is large v3 better than medium.en?",
+        "previewTranscript": "Is large v3 better than medium.en?",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "whisper_cuda_005",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:02:16.9041475+02:00",
+      "finishedAt": "2026-06-17T23:02:28.486725+02:00",
+      "expectedText": "Run speech to text with CUDA.",
+      "actualTranscript": "Run speech to text with CUDA.",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 3998.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.03707842875159677,
+        "peakLevel": 0.385772705078125,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 1029.5,
+        "silenceAfterSpeechMs": 1072.25,
+        "speechDurationMs": 1896.3125,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\whisper_cuda_005_attempt1.wav",
+        "wavFileSize": 127984,
+        "transcriptionLatencyMs": 7526.1118,
+        "totalAttemptMs": 11582.4709,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "Run speech to text with CUDA.",
+        "language": "en",
+        "audioDurationSeconds": 3.9980625,
+        "latencyMs": 7526.1118,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\whisper_cuda_005_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 29,
+        "normalizedExpected": "run speech to text with cuda.",
+        "normalizedActual": "run speech to text with cuda."
+      },
+      "normalizerPreview": {
+        "rawTranscript": "Run speech to text with CUDA.",
+        "previewTranscript": "Run speech to text with CUDA.",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "whisper_bean_006",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:02:35.7931534+02:00",
+      "finishedAt": "2026-06-17T23:02:47.3563006+02:00",
+      "expectedText": "Whisper heard beam as bean.",
+      "actualTranscript": "Whisper heard, beam is beamed.",
+      "userRating": "wrong",
+      "audioDiagnostics": {
+        "durationMs": 3998.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.02848828916266287,
+        "peakLevel": 0.27294921875,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 949.0625,
+        "silenceAfterSpeechMs": 1618.875,
+        "speechDurationMs": 1430.125,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\whisper_bean_006_attempt1.wav",
+        "wavFileSize": 127984,
+        "transcriptionLatencyMs": 7507.5255,
+        "totalAttemptMs": 11563.0308,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "Whisper heard, beam is beamed.",
+        "language": "en",
+        "audioDurationSeconds": 3.9980625,
+        "latencyMs": 7507.5255,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\whisper_bean_006_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": false,
+        "wordErrorRate": 0.4,
+        "characterErrorRate": 0.14814814814814814,
+        "missingImportantTerms": [
+          "bean"
+        ],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 30,
+        "normalizedExpected": "whisper heard beam as bean.",
+        "normalizedActual": "whisper heard beam is beamed."
+      },
+      "normalizerPreview": {
+        "rawTranscript": "Whisper heard, beam is beamed.",
+        "previewTranscript": "Whisper heard, beam is beamed.",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "whisper_medium_007",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:03:04.4385216+02:00",
+      "finishedAt": "2026-06-17T23:03:15.9800657+02:00",
+      "expectedText": "Transcribe this with medium English.",
+      "actualTranscript": "Transcribe this with medium English.",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 3998.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.03199193143201006,
+        "peakLevel": 0.25958251953125,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 1078.6875,
+        "silenceAfterSpeechMs": 912.5,
+        "speechDurationMs": 2006.875,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\whisper_medium_007_attempt1.wav",
+        "wavFileSize": 127984,
+        "transcriptionLatencyMs": 7487.152,
+        "totalAttemptMs": 11541.3474,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "Transcribe this with medium English.",
+        "language": "en",
+        "audioDurationSeconds": 3.9980625,
+        "latencyMs": 7487.152,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\whisper_medium_007_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 36,
+        "normalizedExpected": "transcribe this with medium english.",
+        "normalizedActual": "transcribe this with medium english."
+      },
+      "normalizerPreview": {
+        "rawTranscript": "Transcribe this with medium English.",
+        "previewTranscript": "Transcribe this with medium English.",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "merlin_sqlite_001",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:03:25.0120016+02:00",
+      "finishedAt": "2026-06-17T23:03:37.6472883+02:00",
+      "expectedText": "Merlin should prefer SQLite for local memory storage.",
+      "actualTranscript": "Merlin should prefer SQLite for local memory storage.",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 4988.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.03195797534910811,
+        "peakLevel": 0.20135498046875,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 838.375,
+        "silenceAfterSpeechMs": 1111.375,
+        "speechDurationMs": 3038.3125,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\merlin_sqlite_001_attempt1.wav",
+        "wavFileSize": 159664,
+        "transcriptionLatencyMs": 7592.1911,
+        "totalAttemptMs": 12635.1607,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "Merlin should prefer SQLite for local memory storage.",
+        "language": "en",
+        "audioDurationSeconds": 4.9880625,
+        "latencyMs": 7592.1911,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\merlin_sqlite_001_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 53,
+        "normalizedExpected": "merlin should prefer sqlite for local memory storage.",
+        "normalizedActual": "merlin should prefer sqlite for local memory storage."
+      },
+      "normalizerPreview": {
+        "rawTranscript": "Merlin should prefer SQLite for local memory storage.",
+        "previewTranscript": "Merlin should prefer SQLite for local memory storage.",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "merlin_sqlite_002",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:03:44.3558713+02:00",
+      "finishedAt": "2026-06-17T23:03:57.9684319+02:00",
+      "expectedText": "Please save into long-term memory that Merlin should prefer SQLite.",
+      "actualTranscript": "Please save into long-term memory that Merlin should prefer SQLite.",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 5998.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.02760738754603544,
+        "peakLevel": 0.193389892578125,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 703.3125,
+        "silenceAfterSpeechMs": 1865,
+        "speechDurationMs": 3429.75,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\merlin_sqlite_002_attempt1.wav",
+        "wavFileSize": 191984,
+        "transcriptionLatencyMs": 7556.6448,
+        "totalAttemptMs": 13612.4171,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "Please save into long-term memory that Merlin should prefer SQLite.",
+        "language": "en",
+        "audioDurationSeconds": 5.9980625,
+        "latencyMs": 7556.6448,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\merlin_sqlite_002_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 67,
+        "normalizedExpected": "please save into long term memory that merlin should prefer sqlite.",
+        "normalizedActual": "please save into long term memory that merlin should prefer sqlite."
+      },
+      "normalizerPreview": {
+        "rawTranscript": "Please save into long-term memory that Merlin should prefer SQLite.",
+        "previewTranscript": "Please save into long-term memory that Merlin should prefer SQLite.",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "merlin_deepinfra_003",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:04:07.0468693+02:00",
+      "finishedAt": "2026-06-17T23:04:19.6063927+02:00",
+      "expectedText": "What did we decide about DeepInfra context?",
+      "actualTranscript": "What did we decide about DeepInfra context?",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 4988.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.026455605658653007,
+        "peakLevel": 0.308929443359375,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 966.3125,
+        "silenceAfterSpeechMs": 1945.6875,
+        "speechDurationMs": 2076.0625,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\merlin_deepinfra_003_attempt1.wav",
+        "wavFileSize": 159664,
+        "transcriptionLatencyMs": 7514.6017,
+        "totalAttemptMs": 12559.3467,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "What did we decide about DeepInfra context?",
+        "language": "en",
+        "audioDurationSeconds": 4.9880625,
+        "latencyMs": 7514.6017,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\merlin_deepinfra_003_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 43,
+        "normalizedExpected": "what did we decide about deepinfra context",
+        "normalizedActual": "what did we decide about deepinfra context"
+      },
+      "normalizerPreview": {
+        "rawTranscript": "What did we decide about DeepInfra context?",
+        "previewTranscript": "What did we decide about DeepInfra context?",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "merlin_deepinfra_004",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:04:25.9563585+02:00",
+      "finishedAt": "2026-06-17T23:04:38.5911549+02:00",
+      "expectedText": "DeepInfra should only receive compact prompts.",
+      "actualTranscript": "DeepInfra should only receive compact prompts.",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 4988.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.032680674116274254,
+        "peakLevel": 0.332916259765625,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 673.1875,
+        "silenceAfterSpeechMs": 1988.5625,
+        "speechDurationMs": 2326.3125,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\merlin_deepinfra_004_attempt1.wav",
+        "wavFileSize": 159664,
+        "transcriptionLatencyMs": 7587.4495,
+        "totalAttemptMs": 12634.5904,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "DeepInfra should only receive compact prompts.",
+        "language": "en",
+        "audioDurationSeconds": 4.9880625,
+        "latencyMs": 7587.4495,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\merlin_deepinfra_004_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 46,
+        "normalizedExpected": "deepinfra should only receive compact prompts.",
+        "normalizedActual": "deepinfra should only receive compact prompts."
+      },
+      "normalizerPreview": {
+        "rawTranscript": "DeepInfra should only receive compact prompts.",
+        "previewTranscript": "DeepInfra should only receive compact prompts.",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "merlin_memory_005",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:04:46.2373642+02:00",
+      "finishedAt": "2026-06-17T23:04:58.8052007+02:00",
+      "expectedText": "The memory compiler should reduce token usage.",
+      "actualTranscript": "The memory compilers should reduce token usage.",
+      "userRating": "minor mistake",
+      "audioDiagnostics": {
+        "durationMs": 4988.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.027820329071694943,
+        "peakLevel": 0.226348876953125,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 511.25,
+        "silenceAfterSpeechMs": 2024.6875,
+        "speechDurationMs": 2452.125,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\merlin_memory_005_attempt1.wav",
+        "wavFileSize": 159664,
+        "transcriptionLatencyMs": 7522.1861,
+        "totalAttemptMs": 12567.7369,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "The memory compilers should reduce token usage.",
+        "language": "en",
+        "audioDurationSeconds": 4.9880625,
+        "latencyMs": 7522.1861,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\merlin_memory_005_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": false,
+        "wordErrorRate": 0.14285714285714285,
+        "characterErrorRate": 0.021739130434782608,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 47,
+        "normalizedExpected": "the memory compiler should reduce token usage.",
+        "normalizedActual": "the memory compilers should reduce token usage."
+      },
+      "normalizerPreview": {
+        "rawTranscript": "The memory compilers should reduce token usage.",
+        "previewTranscript": "The memory compilers should reduce token usage.",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "merlin_brain_006",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:05:10.7190605+02:00",
+      "finishedAt": "2026-06-17T23:05:22.2933521+02:00",
+      "expectedText": "Use the brain-like memory system.",
+      "actualTranscript": "Use the brain-like memory system.",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 3988.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.03404608930084666,
+        "peakLevel": 0.231964111328125,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 822.0625,
+        "silenceAfterSpeechMs": 1163.625,
+        "speechDurationMs": 2002.375,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\merlin_brain_006_attempt1.wav",
+        "wavFileSize": 127664,
+        "transcriptionLatencyMs": 7528.3317,
+        "totalAttemptMs": 11574.1421,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "Use the brain-like memory system.",
+        "language": "en",
+        "audioDurationSeconds": 3.9880625,
+        "latencyMs": 7528.3317,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\merlin_brain_006_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 33,
+        "normalizedExpected": "use the brain like memory system.",
+        "normalizedActual": "use the brain like memory system."
+      },
+      "normalizerPreview": {
+        "rawTranscript": "Use the brain-like memory system.",
+        "previewTranscript": "Use the brain-like memory system.",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "merlin_medium_memory_007",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:05:31.2556232+02:00",
+      "finishedAt": "2026-06-17T23:05:43.8206942+02:00",
+      "expectedText": "The current conversation should become medium memory.",
+      "actualTranscript": "The current conversation should become medium memory.",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 4998.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.03455523932124528,
+        "peakLevel": 0.314208984375,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 512,
+        "silenceAfterSpeechMs": 1893.6875,
+        "speechDurationMs": 2592.375,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\merlin_medium_memory_007_attempt1.wav",
+        "wavFileSize": 159984,
+        "transcriptionLatencyMs": 7512.5109,
+        "totalAttemptMs": 12564.8455,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "The current conversation should become medium memory.",
+        "language": "en",
+        "audioDurationSeconds": 4.9980625,
+        "latencyMs": 7512.5109,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\merlin_medium_memory_007_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 53,
+        "normalizedExpected": "the current conversation should become medium memory.",
+        "normalizedActual": "the current conversation should become medium memory."
+      },
+      "normalizerPreview": {
+        "rawTranscript": "The current conversation should become medium memory.",
+        "previewTranscript": "The current conversation should become medium memory.",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "merlin_decision_008",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:05:53.1118048+02:00",
+      "finishedAt": "2026-06-17T23:06:04.6201237+02:00",
+      "expectedText": "Store this as a project decision.",
+      "actualTranscript": "Store this as a project decision.",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 3988.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.02204505796472849,
+        "peakLevel": 0.213348388671875,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 692.9375,
+        "silenceAfterSpeechMs": 1588.875,
+        "speechDurationMs": 1706.25,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\merlin_decision_008_attempt1.wav",
+        "wavFileSize": 127664,
+        "transcriptionLatencyMs": 7458.2652,
+        "totalAttemptMs": 11508.247,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "Store this as a project decision.",
+        "language": "en",
+        "audioDurationSeconds": 3.9880625,
+        "latencyMs": 7458.2652,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\merlin_decision_008_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 33,
+        "normalizedExpected": "store this as a project decision.",
+        "normalizedActual": "store this as a project decision."
+      },
+      "normalizerPreview": {
+        "rawTranscript": "Store this as a project decision.",
+        "previewTranscript": "Store this as a project decision.",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "routing_time_001",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:06:09.5856473+02:00",
+      "finishedAt": "2026-06-17T23:06:20.0992599+02:00",
+      "expectedText": "What time is it?",
+      "actualTranscript": "What time is it?",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 2998.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.017046220038108708,
+        "peakLevel": 0.18975830078125,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 691.4375,
+        "silenceAfterSpeechMs": 1743.4375,
+        "speechDurationMs": 563.1875,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\routing_time_001_attempt1.wav",
+        "wavFileSize": 95984,
+        "transcriptionLatencyMs": 7458.2665,
+        "totalAttemptMs": 10513.4948,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "What time is it?",
+        "language": "en",
+        "audioDurationSeconds": 2.9980625,
+        "latencyMs": 7458.2665,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\routing_time_001_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 16,
+        "normalizedExpected": "what time is it",
+        "normalizedActual": "what time is it"
+      },
+      "normalizerPreview": {
+        "rawTranscript": "What time is it?",
+        "previewTranscript": "What time is it?",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "routing_spotify_002",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:06:24.8645379+02:00",
+      "finishedAt": "2026-06-17T23:06:37.5128201+02:00",
+      "expectedText": "What is the current volume of Spotify?",
+      "actualTranscript": "What is the current volume of Sotify?",
+      "userRating": "retry",
+      "audioDiagnostics": {
+        "durationMs": 4988.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.03036288741776672,
+        "peakLevel": 0.228057861328125,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 444.5625,
+        "silenceAfterSpeechMs": 2575.9375,
+        "speechDurationMs": 1967.5625,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\routing_spotify_002_attempt1.wav",
+        "wavFileSize": 159664,
+        "transcriptionLatencyMs": 7601.4582,
+        "totalAttemptMs": 12648.0533,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "What is the current volume of Sotify?",
+        "language": "en",
+        "audioDurationSeconds": 4.9880625,
+        "latencyMs": 7601.4582,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\routing_spotify_002_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": false,
+        "wordErrorRate": 0.14285714285714285,
+        "characterErrorRate": 0.02702702702702703,
+        "missingImportantTerms": [
+          "Spotify"
+        ],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 37,
+        "normalizedExpected": "what is the current volume of spotify",
+        "normalizedActual": "what is the current volume of sotify"
+      },
+      "normalizerPreview": {
+        "rawTranscript": "What is the current volume of Sotify?",
+        "previewTranscript": "What is the current volume of Sotify?",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "routing_spotify_002",
+      "attemptNumber": 2,
+      "startedAt": "2026-06-17T23:06:44.3838305+02:00",
+      "finishedAt": "2026-06-17T23:06:56.9617861+02:00",
+      "expectedText": "What is the current volume of Spotify?",
+      "actualTranscript": "What is the current volume of Spotify?",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 4998.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.026293149394412994,
+        "peakLevel": 0.261474609375,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 459.5,
+        "silenceAfterSpeechMs": 2911.1875,
+        "speechDurationMs": 1627.375,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\routing_spotify_002_attempt2.wav",
+        "wavFileSize": 159984,
+        "transcriptionLatencyMs": 7524.128,
+        "totalAttemptMs": 12577.7475,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "What is the current volume of Spotify?",
+        "language": "en",
+        "audioDurationSeconds": 4.9980625,
+        "latencyMs": 7524.128,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\routing_spotify_002_attempt2.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 38,
+        "normalizedExpected": "what is the current volume of spotify",
+        "normalizedActual": "what is the current volume of spotify"
+      },
+      "normalizerPreview": {
+        "rawTranscript": "What is the current volume of Spotify?",
+        "previewTranscript": "What is the current volume of Spotify?",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "routing_ram_003",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:07:01.9586267+02:00",
+      "finishedAt": "2026-06-17T23:07:13.6767497+02:00",
+      "expectedText": "How much RAM is free?",
+      "actualTranscript": "How much RAM is free?",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 3988.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.022194838222256395,
+        "peakLevel": 0.224029541015625,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 622.875,
+        "silenceAfterSpeechMs": 2331.5,
+        "speechDurationMs": 1033.6875,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\routing_ram_003_attempt1.wav",
+        "wavFileSize": 127664,
+        "transcriptionLatencyMs": 7672.7496,
+        "totalAttemptMs": 11718.0381,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "How much RAM is free?",
+        "language": "en",
+        "audioDurationSeconds": 3.9880625,
+        "latencyMs": 7672.7496,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\routing_ram_003_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 21,
+        "normalizedExpected": "how much ram is free",
+        "normalizedActual": "how much ram is free"
+      },
+      "normalizerPreview": {
+        "rawTranscript": "How much RAM is free?",
+        "previewTranscript": "How much RAM is free?",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "routing_discord_004",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:07:19.15896+02:00",
+      "finishedAt": "2026-06-17T23:07:29.7029647+02:00",
+      "expectedText": "Open Discord.",
+      "actualTranscript": "Open Discord.",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 2988.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.02794315165140638,
+        "peakLevel": 0.30010986328125,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 1097.5625,
+        "silenceAfterSpeechMs": 1154,
+        "speechDurationMs": 736.5,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\routing_discord_004_attempt1.wav",
+        "wavFileSize": 95664,
+        "transcriptionLatencyMs": 7488.5983,
+        "totalAttemptMs": 10543.9194,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "Open Discord.",
+        "language": "en",
+        "audioDurationSeconds": 2.9880625,
+        "latencyMs": 7488.5983,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\routing_discord_004_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 13,
+        "normalizedExpected": "open discord.",
+        "normalizedActual": "open discord."
+      },
+      "normalizerPreview": {
+        "rawTranscript": "Open Discord.",
+        "previewTranscript": "Open Discord.",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "routing_gpu_005",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:07:35.2897037+02:00",
+      "finishedAt": "2026-06-17T23:07:46.7456133+02:00",
+      "expectedText": "Check GPU usage.",
+      "actualTranscript": "Check GPU usage.",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 3988.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.027948741824213055,
+        "peakLevel": 0.264739990234375,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 1184.0625,
+        "silenceAfterSpeechMs": 1492.625,
+        "speechDurationMs": 1311.375,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\routing_gpu_005_attempt1.wav",
+        "wavFileSize": 127664,
+        "transcriptionLatencyMs": 7412.3963,
+        "totalAttemptMs": 11455.7733,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "Check GPU usage.",
+        "language": "en",
+        "audioDurationSeconds": 3.9880625,
+        "latencyMs": 7412.3963,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\routing_gpu_005_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 16,
+        "normalizedExpected": "check gpu usage.",
+        "normalizedActual": "check gpu usage."
+      },
+      "normalizerPreview": {
+        "rawTranscript": "Check GPU usage.",
+        "previewTranscript": "Check GPU usage.",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "routing_memory_usage_006",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:07:52.2139062+02:00",
+      "finishedAt": "2026-06-17T23:08:04.788032+02:00",
+      "expectedText": "What is the current memory usage of my PC?",
+      "actualTranscript": "What is the current memory usage of my PC?",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 4998.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.03277653807456568,
+        "peakLevel": 0.307525634765625,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 965.125,
+        "silenceAfterSpeechMs": 1714.5625,
+        "speechDurationMs": 2318.375,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\routing_memory_usage_006_attempt1.wav",
+        "wavFileSize": 159984,
+        "transcriptionLatencyMs": 7515.8806,
+        "totalAttemptMs": 12574.0277,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "What is the current memory usage of my PC?",
+        "language": "en",
+        "audioDurationSeconds": 4.9980625,
+        "latencyMs": 7515.8806,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\routing_memory_usage_006_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 42,
+        "normalizedExpected": "what is the current memory usage of my pc",
+        "normalizedActual": "what is the current memory usage of my pc"
+      },
+      "normalizerPreview": {
+        "rawTranscript": "What is the current memory usage of my PC?",
+        "previewTranscript": "What is the current memory usage of my PC?",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "routing_memory_size_007",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:08:16.7830262+02:00",
+      "finishedAt": "2026-06-17T23:08:29.3855205+02:00",
+      "expectedText": "What is the current size of memory of my PC?",
+      "actualTranscript": "What is the current size of memory of my PC?",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 4998.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.03541000833859522,
+        "peakLevel": 0.283721923828125,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 542.3125,
+        "silenceAfterSpeechMs": 2205.75,
+        "speechDurationMs": 2250,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\routing_memory_size_007_attempt1.wav",
+        "wavFileSize": 159984,
+        "transcriptionLatencyMs": 7547.2249,
+        "totalAttemptMs": 12602.3814,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "What is the current size of memory of my PC?",
+        "language": "en",
+        "audioDurationSeconds": 4.9980625,
+        "latencyMs": 7547.2249,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\routing_memory_size_007_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 44,
+        "normalizedExpected": "what is the current size of memory of my pc",
+        "normalizedActual": "what is the current size of memory of my pc"
+      },
+      "normalizerPreview": {
+        "rawTranscript": "What is the current size of memory of my PC?",
+        "previewTranscript": "What is the current size of memory of my PC?",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "sentence_sqlite_001",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:08:37.563593+02:00",
+      "finishedAt": "2026-06-17T23:08:51.013609+02:00",
+      "expectedText": "Please remember that SQLite is the preferred local database for Merlin.",
+      "actualTranscript": "Please remember that SQLite is a preferred local database for Merlin.",
+      "userRating": "minor mistake",
+      "audioDiagnostics": {
+        "durationMs": 5988.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.037165523636305764,
+        "peakLevel": 0.237762451171875,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 570.1875,
+        "silenceAfterSpeechMs": 1674.875,
+        "speechDurationMs": 3743,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\sentence_sqlite_001_attempt1.wav",
+        "wavFileSize": 191664,
+        "transcriptionLatencyMs": 7404.9962,
+        "totalAttemptMs": 13449.7678,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "Please remember that SQLite is a preferred local database for Merlin.",
+        "language": "en",
+        "audioDurationSeconds": 5.9880625,
+        "latencyMs": 7404.9962,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\sentence_sqlite_001_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": false,
+        "wordErrorRate": 0.09090909090909091,
+        "characterErrorRate": 0.04225352112676056,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 69,
+        "normalizedExpected": "please remember that sqlite is the preferred local database for merlin.",
+        "normalizedActual": "please remember that sqlite is a preferred local database for merlin."
+      },
+      "normalizerPreview": {
+        "rawTranscript": "Please remember that SQLite is a preferred local database for Merlin.",
+        "previewTranscript": "Please remember that SQLite is a preferred local database for Merlin.",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "sentence_deepinfra_002",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:09:03.4290102+02:00",
+      "finishedAt": "2026-06-17T23:09:18.061331+02:00",
+      "expectedText": "DeepInfra should receive compact context instead of full raw conversation history.",
+      "actualTranscript": "DeepInfra should receive compact context instead of full raw conversation history.",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 6988.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.03382512817702995,
+        "peakLevel": 0.240081787109375,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 502.4375,
+        "silenceAfterSpeechMs": 2093.6875,
+        "speechDurationMs": 4391.9375,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\sentence_deepinfra_002_attempt1.wav",
+        "wavFileSize": 223664,
+        "transcriptionLatencyMs": 7588.3961,
+        "totalAttemptMs": 14632.1327,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "DeepInfra should receive compact context instead of full raw conversation history.",
+        "language": "en",
+        "audioDurationSeconds": 6.9880625,
+        "latencyMs": 7588.3961,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\sentence_deepinfra_002_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 82,
+        "normalizedExpected": "deepinfra should receive compact context instead of full raw conversation history.",
+        "normalizedActual": "deepinfra should receive compact context instead of full raw conversation history."
+      },
+      "normalizerPreview": {
+        "rawTranscript": "DeepInfra should receive compact context instead of full raw conversation history.",
+        "previewTranscript": "DeepInfra should receive compact context instead of full raw conversation history.",
+        "reasons": [],
+        "changed": false
+      }
+    },
+    {
+      "phraseId": "sentence_codex_cuda_003",
+      "attemptNumber": 1,
+      "startedAt": "2026-06-17T23:09:27.6083494+02:00",
+      "finishedAt": "2026-06-17T23:09:41.2744754+02:00",
+      "expectedText": "Codex CLI should check whether CUDA is available before running Whisper.",
+      "actualTranscript": "Codex CLI should check whether CUDA is available before running Whisper.",
+      "userRating": "correct",
+      "audioDiagnostics": {
+        "durationMs": 5998.0625,
+        "sampleRate": 16000,
+        "channelCount": 1,
+        "rmsLevel": 0.04115717934221024,
+        "peakLevel": 0.28680419921875,
+        "clippingDetected": false,
+        "silenceBeforeSpeechMs": 928,
+        "silenceAfterSpeechMs": 636.4375,
+        "speechDurationMs": 4433.625,
+        "signalTooQuiet": false,
+        "signalTooLoud": false,
+        "possibleClipping": false,
+        "audioFilePath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\sentence_codex_cuda_003_attempt1.wav",
+        "wavFileSize": 191984,
+        "transcriptionLatencyMs": 7613.2654,
+        "totalAttemptMs": 13665.9828,
+        "vadSpeechStartMs": null,
+        "vadSpeechEndMs": null,
+        "vadTriggered": false,
+        "vadReason": "Fixed-window mode.",
+        "endSilenceMs": null
+      },
+      "transcription": {
+        "text": "Codex CLI should check whether CUDA is available before running Whisper.",
+        "language": "en",
+        "audioDurationSeconds": 5.9980625,
+        "latencyMs": 7613.2654,
+        "commandLine": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend\\VoiceScripts\\transcribe_faster_whisper.py --input C:\\Users\\jarno\\Source\\Merlin\\Merlin.VoiceTest\\Recordings\\20260617_230007\\sentence_codex_cuda_003_attempt1.wav --model-size medium.en --device cuda --compute-type int8_float16 --language en --beam-size 5 --vad-min-silence-duration-ms 700 --initial-prompt \u0022Merlin voice commands may include Whisper, beam search, SQLite, DeepInfra, Chatterbox, Codex CLI, CUDA, AppData, medium.en, beam=5, speech to text, local-first memory, long-term memory, token usage, and compact prompts.\u0022",
+        "standardErrorTail": "",
+        "succeeded": true,
+        "error": ""
+      },
+      "evaluation": {
+        "exactMatchAfterNormalization": true,
+        "wordErrorRate": 0,
+        "characterErrorRate": 0,
+        "missingImportantTerms": [],
+        "substitutedImportantTerms": [],
+        "suspectedConfusionPairs": [],
+        "transcriptLength": 72,
+        "normalizedExpected": "codex cli should check whether cuda is available before running whisper.",
+        "normalizedActual": "codex cli should check whether cuda is available before running whisper."
+      },
+      "normalizerPreview": {
+        "rawTranscript": "Codex CLI should check whether CUDA is available before running Whisper.",
+        "previewTranscript": "Codex CLI should check whether CUDA is available before running Whisper.",
+        "reasons": [],
+        "changed": false
+      }
+    }
+  ],
+  "skippedPhraseIds": []
+}

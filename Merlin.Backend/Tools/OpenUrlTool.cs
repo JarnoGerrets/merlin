@@ -12,7 +12,8 @@ public sealed class OpenUrlTool : ITool
         "go to ",
         "open ",
         "browse ",
-        "visit "
+        "visit ",
+        "pull up "
     ];
 
     private static readonly HashSet<string> BlockedSchemes = new(StringComparer.OrdinalIgnoreCase)
@@ -40,7 +41,9 @@ public sealed class OpenUrlTool : ITool
         "open https://google.com",
         "go to google.com",
         "browse google.com",
-        "visit google.com"
+        "visit google.com",
+        "pull up facebook.com",
+        "open facebook in the browser"
     ];
 
     public bool CanHandle(string command)
@@ -50,7 +53,7 @@ public sealed class OpenUrlTool : ITool
             return false;
         }
 
-        return LooksLikeUrlInput(target);
+        return LooksLikeUrlInput(target) || TryNormalizeBrowserTarget(target, out _, allowBareTarget: false);
     }
 
     public async Task<ToolResult> ExecuteAsync(string command, CancellationToken cancellationToken = default)
@@ -120,6 +123,12 @@ public sealed class OpenUrlTool : ITool
         }
         else
         {
+            if (!trimmedTarget.Contains('.', StringComparison.Ordinal)
+                && TryNormalizeBrowserTarget(trimmedTarget, out var browserTarget, allowBareTarget: false))
+            {
+                trimmedTarget = browserTarget;
+            }
+
             trimmedTarget = $"https://{trimmedTarget}";
         }
 
@@ -165,6 +174,62 @@ public sealed class OpenUrlTool : ITool
         }
 
         return false;
+    }
+
+    internal static bool TryNormalizeBrowserTarget(
+        string target,
+        out string normalizedTarget,
+        bool allowBareTarget = true)
+    {
+        normalizedTarget = string.Empty;
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return false;
+        }
+
+        var cleaned = target.Trim().TrimEnd('.', '!', '?', ';', ':', ',');
+        var hadBrowserSuffix = false;
+        foreach (var suffix in new[]
+        {
+            " in the browser",
+            " in browser",
+            " on the web",
+            " as a website",
+            " website",
+            " web site"
+        })
+        {
+            if (cleaned.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                cleaned = cleaned[..^suffix.Length].Trim();
+                hadBrowserSuffix = true;
+                break;
+            }
+        }
+
+        if (!hadBrowserSuffix && !allowBareTarget)
+        {
+            return false;
+        }
+
+        if (cleaned.Contains(' ')
+            || cleaned.Contains('.')
+            || cleaned.Contains("://", StringComparison.Ordinal)
+            || cleaned.Contains('\\')
+            || cleaned.Contains('/'))
+        {
+            return false;
+        }
+
+        if (!cleaned.All(character => char.IsLetterOrDigit(character) || character == '-')
+            || cleaned.StartsWith("-" , StringComparison.Ordinal)
+            || cleaned.EndsWith("-", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        normalizedTarget = $"{cleaned.ToLowerInvariant()}.com";
+        return true;
     }
 
     private static bool LooksLikeUrlInput(string target)

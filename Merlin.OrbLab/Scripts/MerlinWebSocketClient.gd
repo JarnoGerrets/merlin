@@ -4,6 +4,7 @@ class_name MerlinWebSocketClient
 signal connection_state_changed(state: String, detail: String)
 signal visual_state_received(state: Dictionary)
 signal response_received(response: Dictionary)
+signal voice_transcript_received(transcript: Dictionary)
 signal visual_event_received(event: Dictionary)
 signal malformed_response(raw_message: String, detail: String)
 signal socket_closed(code: int, reason: String)
@@ -87,6 +88,55 @@ func send_message(
 
 	var json := JSON.stringify(payload)
 	var error := _socket.send_text(json)
+	if error != OK:
+		_set_state("error", "Failed to send WebSocket message. Error code: %s" % error)
+		return false
+
+	return true
+
+
+func send_voice_stream_start(correlation_id: String, sample_rate: int, channels: int, client_mode: String = "orb") -> bool:
+	return _send_json({
+		"type": "voice_stream_start",
+		"correlationId": correlation_id,
+		"sampleRate": sample_rate,
+		"channels": channels,
+		"format": "pcm_s16le",
+		"clientMode": client_mode
+	})
+
+
+func send_voice_stream_chunk(correlation_id: String, pcm_bytes: PackedByteArray) -> bool:
+	if pcm_bytes.is_empty():
+		return true
+	return _send_json({
+		"type": "voice_stream_chunk",
+		"correlationId": correlation_id,
+		"data": Marshalls.raw_to_base64(pcm_bytes)
+	})
+
+
+func send_voice_stream_end(correlation_id: String, client_mode: String = "orb") -> bool:
+	return _send_json({
+		"type": "voice_stream_end",
+		"correlationId": correlation_id,
+		"clientMode": client_mode
+	})
+
+
+func send_voice_stream_cancel(correlation_id: String) -> bool:
+	return _send_json({
+		"type": "voice_stream_cancel",
+		"correlationId": correlation_id
+	})
+
+
+func _send_json(payload: Dictionary) -> bool:
+	if _socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		_set_state("error", "Cannot send message because Merlin.Backend is not connected.")
+		return false
+
+	var error := _socket.send_text(JSON.stringify(payload))
 	if error != OK:
 		_set_state("error", "Failed to send WebSocket message. Error code: %s" % error)
 		return false
@@ -203,7 +253,7 @@ func _read_available_packets(metrics: Dictionary) -> void:
 
 
 func _route_raw_message(raw_message: String, packet_size: int, metrics: Dictionary) -> void:
-	if _looks_like_visual_packet(raw_message, packet_size):
+	if _looks_like_control_packet(raw_message, packet_size):
 		var parse_started_usec := Time.get_ticks_usec()
 		var parsed = JSON.parse_string(raw_message)
 		var parse_ms := _elapsed_ms_since(parse_started_usec)
@@ -216,6 +266,11 @@ func _route_raw_message(raw_message: String, packet_size: int, metrics: Dictiona
 		var packet: Dictionary = parsed
 		if _is_visual_state_packet(packet):
 			_emit_timed("visual_state_received", [_extract_visual_state(packet)], packet_size, metrics)
+			return
+		if String(packet.get("type", "")) == "voice_transcript":
+			_emit_timed("voice_transcript_received", [packet], packet_size, metrics)
+			return
+		if String(packet.get("type", "")) == "voice_stream_ack":
 			return
 		if packet.has("event"):
 			_emit_timed("visual_event_received", [packet], packet_size, metrics)
@@ -258,6 +313,8 @@ func _emit_timed(signal_name: String, args: Array, packet_size: int, metrics: Di
 			visual_event_received.emit(args[0])
 		"response_received":
 			response_received.emit(args[0])
+		"voice_transcript_received":
+			voice_transcript_received.emit(args[0])
 		"malformed_response":
 			malformed_response.emit(args[0], args[1])
 		"socket_closed":
@@ -270,12 +327,20 @@ func _emit_timed(signal_name: String, args: Array, packet_size: int, metrics: Di
 		print("WebSocketPerf slow signal_emit=%.2fms signal=%s packet_size=%s" % [elapsed_ms, signal_name, packet_size])
 
 
-func _looks_like_visual_packet(raw_message: String, packet_size: int) -> bool:
+func _looks_like_control_packet(raw_message: String, packet_size: int) -> bool:
 	if packet_size > VISUAL_PACKET_MAX_BYTES:
 		return false
 	if raw_message.find("\"type\":\"visual_state\"") >= 0:
 		return true
 	if raw_message.find("\"type\": \"visual_state\"") >= 0:
+		return true
+	if raw_message.find("\"type\":\"voice_transcript\"") >= 0:
+		return true
+	if raw_message.find("\"type\": \"voice_transcript\"") >= 0:
+		return true
+	if raw_message.find("\"type\":\"voice_stream_ack\"") >= 0:
+		return true
+	if raw_message.find("\"type\": \"voice_stream_ack\"") >= 0:
 		return true
 	if raw_message.find("\"event\"") >= 0:
 		return true
@@ -293,6 +358,7 @@ func _extract_visual_state(packet: Dictionary) -> Dictionary:
 		"speech_energy",
 		"thinking_intensity",
 		"error_intensity",
+		"confirmation_intensity",
 		"tool_intensity",
 		"connection_state",
 	]

@@ -28,7 +28,7 @@ public sealed class ResponsePolisher : IResponsePolisher
                 response.CapabilityId,
                 "I understand the request, but Merlin does not support that action."),
             "UNKNOWN_INPUT" => "I couldn't understand that request.",
-            "UNKNOWN_COMMAND" => "I couldn't determine a supported action from your request.",
+            "UNKNOWN_COMMAND" => GetUnknownCommandMessage(response),
             "BLOCKED_URL_SCHEME" => "I can only open HTTP and HTTPS links. Other URL schemes are blocked for safety.",
             "LOCAL_AI_UNAVAILABLE" when IsCurrentInformationQuestion(response.OriginalMessage) => GetCurrentInformationMessage(response.OriginalMessage),
             _ => response.Message
@@ -45,6 +45,21 @@ public sealed class ResponsePolisher : IResponsePolisher
         return string.IsNullOrWhiteSpace(domain?.MissingMessage)
             ? fallbackMessage
             : domain.MissingMessage;
+    }
+
+    private static string GetUnknownCommandMessage(AssistantResponse response)
+    {
+        if (string.Equals(response.Intent, "open_url", StringComparison.OrdinalIgnoreCase))
+        {
+            return "I understood that as a request to open a website, but I could not turn the target into a valid HTTP or HTTPS address.";
+        }
+
+        if (string.Equals(response.Intent, "open_application", StringComparison.OrdinalIgnoreCase))
+        {
+            return "I understood that as a request to open an application, but I could not find a supported application target.";
+        }
+
+        return "I couldn't determine a supported action from your request.";
     }
 
     private static bool IsCurrentInformationQuestion(string? message)

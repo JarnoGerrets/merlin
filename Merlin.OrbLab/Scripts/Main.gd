@@ -30,6 +30,26 @@ const RECORD_BUS_NAME := "MerlinRecord"
 const FRAME_PROFILER_ENABLED := false
 const FRAME_PROFILER_REPORT_SECONDS := 1.0
 const FRAME_PROFILER_SPIKE_MS := 33.0
+const WAKE_RECORD_IDLE_WINDOW_SECONDS := 4.2
+const WAKE_RECORD_POLL_SECONDS := 0.20
+const WAKE_RECORD_MIN_ACTIVE_SECONDS := 1.2
+const WAKE_RECORD_END_SILENCE_SECONDS := 1.4
+const WAKE_RECORD_SLEEP_MAX_ACTIVE_SECONDS := 16.0
+const WAKE_RECORD_RESTART_DELAY_SECONDS := 0.08
+const WAKE_ARMED_LISTEN_SECONDS := 5.0
+const WAKE_MIN_AUDIO_BYTES := 4096
+const WAKE_MIN_RMS := 0.010
+const WAKE_SPEECH_RMS := 0.010
+const WAKE_SPEECH_PEAK := 0.045
+const WAKE_RECENT_WINDOW_SECONDS := 0.35
+const VOICE_STREAM_CHUNK_FRAMES := 2048
+const VOICE_STREAM_PREROLL_SECONDS := 0.50
+const WAKE_CLAP_RMS_THRESHOLD := 0.080
+const WAKE_CLAP_PEAK_THRESHOLD := 0.18
+const WAKE_CLAP_PEAK_TO_RMS_RATIO := 2.2
+const WAKE_CLAP_MIN_GAP_SECONDS := 0.12
+const WAKE_CLAP_MAX_GAP_SECONDS := 1.35
+const MERLIN_AWAKE_TIMEOUT_SECONDS := 600.0
 
 const COLOR_BACKGROUND := Color(0.000, 0.008, 0.026, 1.0)
 const COLOR_PANEL := Color(0.002, 0.024, 0.070, 0.40)
@@ -40,6 +60,9 @@ const COLOR_WHITE := Color(0.88, 0.96, 1.0, 1.0)
 const COLOR_MUTED := Color(0.50, 0.62, 0.70, 1.0)
 const COLOR_AMBER := Color(1.0, 0.68, 0.28, 1.0)
 const COLOR_RED := Color(1.0, 0.28, 0.34, 1.0)
+const VISUAL_OVERLAY_FADE_SECONDS := 1.2
+const VISUAL_OVERLAY_CONFIRMATION_HOLD_SECONDS := 2.0
+const VOICE_ACKNOWLEDGEMENT_MAX_WORDS := 36
 
 @onready var web_socket_client: MerlinWebSocketClient = $MerlinWebSocketClient
 @onready var voice_transcribe_request: HTTPRequest = $VoiceTranscribeRequest
@@ -56,6 +79,7 @@ const COLOR_RED := Color(1.0, 0.28, 0.34, 1.0)
 @onready var activity_label: Label = $ActivityPanel/ActivityMargin/ActivityLabel
 @onready var notification_panel: PanelContainer = $NotificationPanel
 @onready var notification_list: VBoxContainer = $NotificationPanel/NotificationMargin/NotificationList
+@onready var overlay_container: Control = $OverlayContainer
 @onready var error_label: Label = $OverlayContainer/ErrorLabel
 @onready var chat_panel: PanelContainer = $ChatPanel
 @onready var history_panel: PanelContainer = $ChatPanel/Content/ChatColumn/HistoryPanel
@@ -72,13 +96,33 @@ var _pending_requests := {}
 var _merlin_state: int = MerlinState.IDLE
 var _focus_request_id := 0
 var _record_effect: AudioEffectRecord
+var _capture_effect: AudioEffectCapture
 var _is_recording := false
+var _wake_listening_enabled := false
+var _wake_cycle_active := false
+var _merlin_awake := false
+var _last_merlin_activity_usec := 0
+var _sleep_clap_times: Array[float] = []
+var _last_sleep_capture_debug_usec := 0
 var _record_bus_index := -1
 var _speech_turn_active := false
 var _speaking_startup_profile_started_usec := 0
 var _speaking_startup_profile_energy_count := 0
 var _speaking_startup_profile_first_energy_logged := false
+var _visual_overlay_kind := ""
+var _visual_overlay_strength := 0.0
+var _visual_overlay_target := 0.0
+var _visual_overlay_hold_until_usec := 0
+var _visual_overlay_hold_until_speech_end := false
+var _visual_overlay_waiting_for_confirmation := false
+var _application_choice_panel: PanelContainer
 var _voice_turn_started_usec := 0
+var _voice_stream_active := false
+var _voice_stream_correlation_id := ""
+var _voice_stream_sample_rate := 48000
+var _voice_stream_chunks_sent := 0
+var _voice_stream_bytes_sent := 0
+var _voice_stream_preroll_frames := PackedVector2Array()
 var _llm_response_received_usec := 0
 var _stream_poc_client: HTTPClient
 var _stream_poc_active := false
@@ -138,6 +182,7 @@ func _ready() -> void:
 	web_socket_client.connection_state_changed.connect(_profiled_connection_state_changed)
 	web_socket_client.visual_state_received.connect(_profiled_visual_state_received)
 	web_socket_client.response_received.connect(_profiled_response_received)
+	web_socket_client.voice_transcript_received.connect(_profiled_voice_transcript_received)
 	web_socket_client.visual_event_received.connect(_profiled_visual_event_received)
 	web_socket_client.malformed_response.connect(_profiled_malformed_response)
 	web_socket_client.socket_closed.connect(_profiled_socket_closed)
@@ -159,6 +204,8 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _process(delta: float) -> void:
 	_frame_profile_begin_frame()
+	_update_merlin_awake_timeout()
+	_update_visual_overlay(delta)
 	if _stream_poc_active:
 		_poll_streaming_pcm_poc()
 	_frame_profile_end_frame(delta)
@@ -212,10 +259,12 @@ func _send_backend_message(message: String, show_user_message: bool) -> void:
 
 	var correlation_id := _generate_correlation_id()
 	_pending_requests[correlation_id] = message
+	_mark_merlin_activity()
 	if show_user_message:
 		_add_user_message(message)
 		message_input.clear()
 
+	_clear_transient_visual_overlay()
 	_update_pending_state()
 	_set_merlin_state(MerlinState.THINKING)
 	_clear_error()
@@ -235,12 +284,21 @@ func _send_backend_message(message: String, show_user_message: bool) -> void:
 	_focus_message_input()
 
 
+func _send_application_choice(display_name: String) -> void:
+	var choice := display_name.strip_edges()
+	if choice.is_empty():
+		return
+	_hide_application_choice_panel()
+	_send_backend_message(choice, true)
+
+
 func _setup_voice_mode() -> void:
 	chat_panel.visible = false
 	command_input_panel.visible = false
 	voice_control.visible = true
 	voice_playback.bus = "Master"
 	voice_playback.volume_db = 0.0
+	voice_button.text = "Wake Merlin"
 	voice_control.add_theme_stylebox_override("panel", _panel_style(Color(0.010, 0.052, 0.125, 0.64), COLOR_CYAN, 1.0, 10))
 	_style_button(voice_button)
 	_setup_microphone_recording()
@@ -256,6 +314,8 @@ func _setup_microphone_recording() -> void:
 
 	_record_effect = AudioEffectRecord.new()
 	AudioServer.add_bus_effect(_record_bus_index, _record_effect)
+	_capture_effect = AudioEffectCapture.new()
+	AudioServer.add_bus_effect(_record_bus_index, _capture_effect)
 	AudioServer.set_bus_mute(_record_bus_index, false)
 	AudioServer.set_bus_volume_db(_record_bus_index, -80.0)
 
@@ -269,17 +329,18 @@ func _on_voice_button_down() -> void:
 		_show_error("Cannot listen: Merlin.Backend is not connected.")
 		_add_notification("Backend offline", "error")
 		return
-	if _is_recording or _record_effect == null:
+	if _record_effect == null:
 		return
 
-	_is_recording = true
-	voice_button.text = "Listening..."
-	_set_voice_phase("recording")
-	_set_merlin_state(MerlinState.LISTENING)
-	_record_effect.set_recording_active(true)
+	if _wake_listening_enabled:
+		_stop_wake_listening()
+	else:
+		_start_wake_listening()
 
 
 func _on_voice_button_up() -> void:
+	if _wake_listening_enabled:
+		return
 	if not _is_recording or _record_effect == null:
 		return
 
@@ -402,7 +463,677 @@ func _send_recording_for_transcription(recording: AudioStreamWAV) -> void:
 
 func _reset_voice_button() -> void:
 	voice_button.disabled = false
-	voice_button.text = "Hold to talk"
+	if _wake_listening_enabled:
+		voice_button.text = "Awake: listening" if _merlin_awake else "Sleeping: wake ready"
+	else:
+		voice_button.text = "Wake Merlin"
+
+
+func _start_wake_listening() -> void:
+	if _wake_listening_enabled:
+		return
+	_clear_transient_visual_overlay()
+	_hide_application_choice_panel()
+	_wake_listening_enabled = true
+	_merlin_awake = false
+	_last_merlin_activity_usec = 0
+	_sleep_clap_times.clear()
+	_reset_voice_button()
+	_add_notification("Wake listening enabled. Merlin is asleep.", "system")
+	_set_voice_phase("wake_listening")
+	_set_merlin_state(MerlinState.LISTENING)
+	call_deferred("_wake_listen_loop")
+
+
+func _stop_wake_listening() -> void:
+	_cancel_voice_stream()
+	_wake_listening_enabled = false
+	_merlin_awake = false
+	_last_merlin_activity_usec = 0
+	_sleep_clap_times.clear()
+	if _record_effect != null:
+		_record_effect.set_recording_active(false)
+	_is_recording = false
+	_set_voice_phase("idle")
+	_reset_voice_button()
+	if _pending_requests.is_empty() and not _speech_turn_active:
+		_set_merlin_state(MerlinState.IDLE)
+	_add_notification("Wake listening disabled", "system")
+
+
+func _wake_listen_loop() -> void:
+	if _wake_cycle_active:
+		return
+	_wake_cycle_active = true
+	while _wake_listening_enabled:
+		if not web_socket_client.is_backend_connected() or _speech_turn_active or not _pending_requests.is_empty():
+			await get_tree().create_timer(0.25).timeout
+			continue
+		if _record_effect == null:
+			break
+
+		if _merlin_awake:
+			_is_recording = true
+			_set_voice_phase("wake_listening")
+			if _merlin_state != MerlinState.LISTENING:
+				_set_merlin_state(MerlinState.LISTENING)
+			_record_effect.set_recording_active(false)
+			_record_effect.set_recording_active(true)
+			await _wait_for_wake_recording_turn()
+			if not _wake_listening_enabled or _record_effect == null:
+				break
+
+			_record_effect.set_recording_active(false)
+			_is_recording = false
+			if not _finish_voice_stream():
+				var recording := _record_effect.get_recording()
+				await _process_wake_recording(recording, true)
+		else:
+			var armed := await _wait_for_sleep_double_clap()
+			if not armed:
+				continue
+			if not _wake_listening_enabled or _record_effect == null:
+				break
+			await _record_armed_wake_phrase()
+		if _wake_listening_enabled and _pending_requests.is_empty() and not _speech_turn_active:
+			_set_voice_phase("idle")
+			_set_merlin_state(MerlinState.IDLE)
+		await get_tree().create_timer(WAKE_RECORD_RESTART_DELAY_SECONDS).timeout
+
+	_wake_cycle_active = false
+	_is_recording = false
+	if _record_effect != null:
+		_record_effect.set_recording_active(false)
+	_reset_voice_button()
+
+
+func _wait_for_wake_recording_turn() -> void:
+	var started_usec := Time.get_ticks_usec()
+	var first_speech_usec := 0
+	var last_speech_usec := 0
+	var allow_active_cap := not _merlin_awake
+	_voice_stream_preroll_frames = PackedVector2Array()
+	if _capture_effect != null and _capture_effect.has_method("clear_buffer"):
+		_capture_effect.call("clear_buffer")
+	while _wake_listening_enabled and _record_effect != null:
+		await get_tree().create_timer(WAKE_RECORD_POLL_SECONDS).timeout
+		if not _wake_listening_enabled or _record_effect == null:
+			return
+
+		var elapsed_seconds := float(Time.get_ticks_usec() - started_usec) / 1000000.0
+		var recording := _record_effect.get_recording()
+		var recent_features := _analyze_recording_recent_audio(recording)
+		var has_recent_speech := _is_recent_wake_speech(recent_features)
+		if not _voice_stream_active:
+			_capture_voice_stream_preroll()
+		if has_recent_speech:
+			last_speech_usec = Time.get_ticks_usec()
+			if first_speech_usec <= 0:
+				first_speech_usec = last_speech_usec
+				if _merlin_awake:
+					_start_voice_stream()
+
+		if _voice_stream_active:
+			_send_available_voice_stream_chunks()
+
+		if first_speech_usec <= 0:
+			if elapsed_seconds >= WAKE_RECORD_IDLE_WINDOW_SECONDS:
+				return
+			continue
+
+		var active_seconds := float(Time.get_ticks_usec() - first_speech_usec) / 1000000.0
+		var silent_seconds := float(Time.get_ticks_usec() - last_speech_usec) / 1000000.0
+		if active_seconds >= WAKE_RECORD_MIN_ACTIVE_SECONDS and silent_seconds >= WAKE_RECORD_END_SILENCE_SECONDS:
+			print("Wake listening: end-of-speech detected. ActiveSeconds: %.2f SilenceSeconds: %.2f" % [active_seconds, silent_seconds])
+			return
+
+		if allow_active_cap and active_seconds >= WAKE_RECORD_SLEEP_MAX_ACTIVE_SECONDS:
+			print("Wake listening: sleep max active recording reached. ActiveSeconds: %.2f" % active_seconds)
+			return
+
+
+func _wait_for_sleep_double_clap() -> bool:
+	if _capture_effect != null and _capture_effect.has_method("clear_buffer"):
+		_capture_effect.call("clear_buffer")
+
+	_set_voice_phase("wake_listening")
+	if _merlin_state != MerlinState.LISTENING:
+		_set_merlin_state(MerlinState.LISTENING)
+
+	while _wake_listening_enabled and not _merlin_awake and _capture_effect != null:
+		await get_tree().create_timer(WAKE_RECORD_POLL_SECONDS).timeout
+		if not _wake_listening_enabled or _merlin_awake or _capture_effect == null:
+			return false
+
+		var frames_available := int(_capture_effect.get_frames_available())
+		if frames_available > 0 and Time.get_ticks_usec() - _last_sleep_capture_debug_usec >= 2000000:
+			_last_sleep_capture_debug_usec = Time.get_ticks_usec()
+			print("Wake listening: capture active. FramesAvailable: %s" % frames_available)
+		if frames_available <= 0:
+			continue
+
+		var frames: PackedVector2Array = _capture_effect.get_buffer(frames_available)
+		if _detect_sleep_double_clap(frames):
+			print("Wake listening: double clap armed. WindowSeconds: %.1f" % WAKE_ARMED_LISTEN_SECONDS)
+			_add_notification("Wake armed", "system")
+			return true
+
+	return false
+
+
+func _record_armed_wake_phrase() -> void:
+	_is_recording = true
+	_record_effect.set_recording_active(false)
+	_record_effect.set_recording_active(true)
+	_set_voice_phase("wake_armed")
+	await get_tree().create_timer(WAKE_ARMED_LISTEN_SECONDS).timeout
+	if not _wake_listening_enabled or _record_effect == null:
+		return
+
+	_record_effect.set_recording_active(false)
+	var recording := _record_effect.get_recording()
+	_is_recording = false
+	await _process_wake_recording(recording, false)
+
+
+func _start_voice_stream() -> void:
+	if _voice_stream_active or _capture_effect == null or not web_socket_client.is_backend_connected():
+		return
+
+	_voice_stream_correlation_id = _generate_correlation_id()
+	_voice_stream_sample_rate = int(AudioServer.get_mix_rate())
+	_voice_stream_chunks_sent = 0
+	_voice_stream_bytes_sent = 0
+
+	var client_mode := "chat" if chat_panel.visible else "orb"
+	if not web_socket_client.send_voice_stream_start(_voice_stream_correlation_id, _voice_stream_sample_rate, 1, client_mode):
+		_voice_stream_correlation_id = ""
+		return
+
+	_voice_stream_active = true
+	_pending_requests[_voice_stream_correlation_id] = "voice stream"
+	_voice_turn_started_usec = Time.get_ticks_usec()
+	_update_pending_state()
+	_set_voice_phase("streaming_stt")
+	_send_voice_stream_preroll()
+	print("Voice stream: started. CorrelationId: %s SampleRate: %s" % [_voice_stream_correlation_id, _voice_stream_sample_rate])
+
+
+func _finish_voice_stream() -> bool:
+	if not _voice_stream_active:
+		return false
+
+	_send_available_voice_stream_chunks()
+	var correlation_id := _voice_stream_correlation_id
+	var client_mode := "chat" if chat_panel.visible else "orb"
+	_voice_stream_active = false
+	_voice_stream_correlation_id = ""
+	_set_voice_phase("waiting_stt")
+	print("Voice stream: finished. CorrelationId: %s Chunks: %s Bytes: %s" % [correlation_id, _voice_stream_chunks_sent, _voice_stream_bytes_sent])
+	var sent := web_socket_client.send_voice_stream_end(correlation_id, client_mode)
+	if not sent:
+		_pending_requests.erase(correlation_id)
+		_update_pending_state()
+	return sent
+
+
+func _cancel_voice_stream() -> void:
+	if not _voice_stream_active:
+		return
+
+	var correlation_id := _voice_stream_correlation_id
+	_voice_stream_active = false
+	_voice_stream_correlation_id = ""
+	_voice_stream_preroll_frames = PackedVector2Array()
+	_pending_requests.erase(correlation_id)
+	web_socket_client.send_voice_stream_cancel(correlation_id)
+	_update_pending_state()
+
+
+func _send_available_voice_stream_chunks() -> void:
+	if not _voice_stream_active or _capture_effect == null:
+		return
+
+	var frames_available := int(_capture_effect.get_frames_available())
+	while frames_available >= VOICE_STREAM_CHUNK_FRAMES:
+		var frames: PackedVector2Array = _capture_effect.get_buffer(VOICE_STREAM_CHUNK_FRAMES)
+		if not _send_voice_stream_frames(frames):
+			return
+		frames_available = int(_capture_effect.get_frames_available())
+
+
+func _capture_voice_stream_preroll() -> void:
+	if _capture_effect == null:
+		return
+
+	var frames_available := int(_capture_effect.get_frames_available())
+	if frames_available <= 0:
+		return
+
+	var frames: PackedVector2Array = _capture_effect.get_buffer(frames_available)
+	if frames.is_empty():
+		return
+
+	_voice_stream_preroll_frames.append_array(frames)
+	var max_frames := int(float(AudioServer.get_mix_rate()) * VOICE_STREAM_PREROLL_SECONDS)
+	if _voice_stream_preroll_frames.size() > max_frames:
+		_voice_stream_preroll_frames = _voice_stream_preroll_frames.slice(_voice_stream_preroll_frames.size() - max_frames, _voice_stream_preroll_frames.size())
+
+
+func _send_voice_stream_preroll() -> void:
+	if _voice_stream_preroll_frames.is_empty():
+		return
+
+	var frames := _voice_stream_preroll_frames
+	_voice_stream_preroll_frames = PackedVector2Array()
+	var sent := _send_voice_stream_frames(frames)
+	if sent:
+		print("Voice stream: pre-roll sent. Frames: %s DurationMs: %.1f" % [frames.size(), float(frames.size()) * 1000.0 / float(maxi(_voice_stream_sample_rate, 1))])
+
+
+func _send_voice_stream_frames(frames: PackedVector2Array) -> bool:
+	var offset := 0
+	while offset < frames.size():
+		var end := mini(offset + VOICE_STREAM_CHUNK_FRAMES, frames.size())
+		var chunk := frames.slice(offset, end)
+		var pcm_bytes := _frames_to_mono_pcm16(chunk)
+		if not web_socket_client.send_voice_stream_chunk(_voice_stream_correlation_id, pcm_bytes):
+			_cancel_voice_stream()
+			return false
+		_voice_stream_chunks_sent += 1
+		_voice_stream_bytes_sent += pcm_bytes.size()
+		offset = end
+	return true
+
+
+func _frames_to_mono_pcm16(frames: PackedVector2Array) -> PackedByteArray:
+	var bytes := PackedByteArray()
+	bytes.resize(frames.size() * 2)
+	var offset := 0
+	for frame in frames:
+		var mono := clampf((frame.x + frame.y) * 0.5, -1.0, 1.0)
+		var sample := int(round(mono * 32767.0))
+		if sample < 0:
+			sample += 65536
+		bytes[offset] = sample & 0xff
+		bytes[offset + 1] = (sample >> 8) & 0xff
+		offset += 2
+	return bytes
+
+
+func _process_wake_recording(recording: AudioStreamWAV, already_awake: bool = false) -> void:
+	if recording == null:
+		return
+
+	var path := "user://merlin-wake-recording.wav"
+	var save_error := recording.save_to_wav(path)
+	if save_error != OK:
+		print("Wake listening: could not save recording. Error: %s" % save_error)
+		return
+
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		print("Wake listening: could not read recording.")
+		return
+
+	var audio_bytes := file.get_buffer(file.get_length())
+	file.close()
+	if audio_bytes.size() < WAKE_MIN_AUDIO_BYTES:
+		return
+
+	var features := _analyze_wake_audio(audio_bytes)
+	if float(features.get("rms", 0.0)) < WAKE_MIN_RMS and not bool(features.get("double_clap", false)):
+		return
+
+	var transcript := await _transcribe_wake_audio_bytes(audio_bytes)
+	if transcript.is_empty():
+		return
+
+	var clap_accepted := bool(features.get("double_clap", false)) or (not _merlin_awake and not already_awake)
+	var wake_request := _extract_active_voice_request(transcript, clap_accepted)
+	if wake_request.is_empty():
+		print("Wake listening: rejected transcript='%s' awake=%s doubleClap=%s clapAccepted=%s" % [transcript, str(_merlin_awake), str(features.get("double_clap", false)), str(clap_accepted)])
+		return
+
+	var was_awake := _merlin_awake
+	print("Wake listening: accepted transcript='%s' request='%s' awake=%s doubleClap=%s" % [transcript, wake_request, str(was_awake), str(features.get("double_clap", false))])
+	_add_notification(("Heard: %s" if was_awake else "Wake: %s") % wake_request, "system")
+	_mark_merlin_awake()
+	_voice_turn_started_usec = Time.get_ticks_usec()
+	_send_backend_message(wake_request, false)
+	_set_voice_phase("waiting_llm")
+	_show_question_acknowledgement(wake_request)
+
+
+func _transcribe_wake_audio_bytes(audio_bytes: PackedByteArray) -> String:
+	_set_voice_phase("wake_transcribing")
+	var request_error := voice_transcribe_request.request_raw(
+		VOICE_TRANSCRIBE_URL,
+		PackedStringArray(["Content-Type: audio/wav"]),
+		HTTPClient.METHOD_POST,
+		audio_bytes
+	)
+	if request_error != OK:
+		print("Wake listening: transcription request failed. Error: %s" % request_error)
+		return ""
+
+	var result = await voice_transcribe_request.request_completed
+	var request_result: int = int(result[0])
+	var response_code: int = int(result[1])
+	var body: PackedByteArray = result[3]
+	if request_result != HTTPRequest.RESULT_SUCCESS or response_code < 200 or response_code >= 300:
+		print("Wake listening: transcription failed. Result: %s HTTP: %s" % [request_result, response_code])
+		return ""
+
+	var parsed = JSON.parse_string(body.get_string_from_utf8())
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return ""
+
+	return str(parsed.get("text", "")).strip_edges()
+
+
+func _extract_active_voice_request(transcript: String, has_double_clap: bool) -> String:
+	if _merlin_awake:
+		return _extract_awake_request(transcript)
+	return _extract_wake_request(transcript, has_double_clap)
+
+
+func _extract_wake_request(transcript: String, has_double_clap: bool) -> String:
+	var normalized := _normalize_wake_text(transcript)
+	if normalized.is_empty():
+		return ""
+
+	var merlin_index := normalized.find("merlin")
+	if merlin_index < 0:
+		return ""
+	if not _has_wake_greeting_before_merlin(normalized, merlin_index):
+		return ""
+
+	var after_merlin := normalized.substr(merlin_index + "merlin".length()).strip_edges()
+	if not has_double_clap:
+		return ""
+
+	if after_merlin.is_empty():
+		return "are you there?"
+	return _clean_wake_connection_text(after_merlin)
+
+
+func _extract_awake_request(transcript: String) -> String:
+	var text := transcript.strip_edges()
+	if text.is_empty():
+		return ""
+
+	var wake_request := _extract_wake_request(text, true)
+	if not wake_request.is_empty():
+		return wake_request
+
+	return text
+
+
+func _normalize_wake_text(text: String) -> String:
+	var normalized := text.to_lower()
+	for character in [".", ",", "?", "!", ":", ";", "\"", "'", "(", ")", "[", "]", "{", "}", "\n", "\r", "\t"]:
+		normalized = normalized.replace(character, " ")
+	return " ".join(normalized.split(" ", false))
+
+
+func _has_wake_greeting_before_merlin(normalized: String, merlin_index: int) -> bool:
+	var before := normalized.substr(0, merlin_index).strip_edges()
+	var greetings := [
+		"hey",
+		"hi",
+		"hello",
+		"howdy",
+		"hola",
+		"yo",
+		"hiya",
+		"heya",
+		"morning",
+		"evening",
+		"good morning",
+		"good afternoon",
+		"good evening",
+		"hey there",
+		"hi there",
+		"hello there"
+	]
+	for greeting in greetings:
+		if before == greeting or before.ends_with(" " + greeting):
+			return true
+	return false
+
+
+func _clean_wake_connection_text(text: String) -> String:
+	var cleaned := text.strip_edges()
+	if cleaned.is_empty():
+		return "are you there?"
+	return cleaned + ("?" if cleaned.begins_with("are you ") else "")
+
+
+func _mark_merlin_activity() -> void:
+	if _merlin_awake:
+		_last_merlin_activity_usec = Time.get_ticks_usec()
+		_reset_voice_button()
+
+
+func _mark_merlin_awake() -> void:
+	if not _merlin_awake:
+		_add_notification("Merlin is awake", "system")
+	_merlin_awake = true
+	_last_merlin_activity_usec = Time.get_ticks_usec()
+	_reset_voice_button()
+
+
+func _sleep_merlin_due_to_inactivity() -> void:
+	if not _merlin_awake:
+		return
+	_merlin_awake = false
+	_last_merlin_activity_usec = 0
+	_reset_voice_button()
+	_add_notification("Merlin went back to sleep", "system")
+	if _wake_listening_enabled and _pending_requests.is_empty() and not _speech_turn_active:
+		_set_voice_phase("wake_listening")
+
+
+func _update_merlin_awake_timeout() -> void:
+	if not _wake_listening_enabled or not _merlin_awake or _last_merlin_activity_usec <= 0:
+		return
+	if _pending_requests.is_empty() and not _speech_turn_active:
+		var inactive_seconds := float(Time.get_ticks_usec() - _last_merlin_activity_usec) / 1000000.0
+		if inactive_seconds >= MERLIN_AWAKE_TIMEOUT_SECONDS:
+			_sleep_merlin_due_to_inactivity()
+
+
+func _analyze_wake_audio(bytes: PackedByteArray) -> Dictionary:
+	if bytes.size() < 44:
+		return { "rms": 0.0, "peak": 0.0, "double_clap": false }
+
+	var channels := maxi(1, _read_le_u16(bytes, 22))
+	var sample_rate := maxi(8000, _read_le_u32(bytes, 24))
+	var bits_per_sample := _read_le_u16(bytes, 34)
+	var data := _find_wav_data_chunk(bytes)
+	var data_offset := int(data.get("offset", 44))
+	var data_size := int(data.get("size", bytes.size() - data_offset))
+	if bits_per_sample != 16 or data_offset >= bytes.size() or data_size <= 0:
+		return { "rms": 0.0, "peak": 0.0, "double_clap": false }
+
+	var frame_bytes := channels * 2
+	var data_end := mini(bytes.size(), data_offset + data_size)
+	var sum_squares := 0.0
+	var sample_count := 0
+	var peak := 0.0
+	var window_frames := maxi(1, int(float(sample_rate) * 0.018))
+	var window_sum := 0.0
+	var window_peak := 0.0
+	var window_count := 0
+	var frame_index := 0
+	var clap_times: Array[float] = []
+
+	for offset in range(data_offset, data_end - frame_bytes + 1, frame_bytes):
+		var mixed := 0.0
+		for channel in range(channels):
+			mixed += float(_read_le_i16(bytes, offset + channel * 2)) / 32768.0
+		var sample := mixed / float(channels)
+		var abs_sample := absf(sample)
+		peak = maxf(peak, abs_sample)
+		sum_squares += sample * sample
+		sample_count += 1
+		window_sum += sample * sample
+		window_count += 1
+		frame_index += 1
+
+		if window_count >= window_frames:
+			var window_rms := sqrt(window_sum / float(window_count))
+			if window_rms >= WAKE_CLAP_RMS_THRESHOLD:
+				var clap_time := float(frame_index) / float(sample_rate)
+				if clap_times.is_empty() or clap_time - clap_times[clap_times.size() - 1] >= WAKE_CLAP_MIN_GAP_SECONDS:
+					clap_times.append(clap_time)
+			window_sum = 0.0
+			window_count = 0
+
+	var rms := sqrt(sum_squares / float(maxi(1, sample_count)))
+	var double_clap := false
+	for index in range(1, clap_times.size()):
+		var gap := clap_times[index] - clap_times[index - 1]
+		if gap >= WAKE_CLAP_MIN_GAP_SECONDS and gap <= WAKE_CLAP_MAX_GAP_SECONDS:
+			double_clap = true
+			break
+
+	return { "rms": rms, "peak": peak, "double_clap": double_clap }
+
+
+func _detect_sleep_double_clap(frames: PackedVector2Array) -> bool:
+	if frames.is_empty():
+		return false
+
+	var sample_rate := maxi(8000, int(AudioServer.get_mix_rate()))
+	var window_frames := maxi(1, int(float(sample_rate) * 0.018))
+	var window_sum := 0.0
+	var window_peak := 0.0
+	var window_count := 0
+	var frame_index := 0
+	var now_seconds := float(Time.get_ticks_usec()) / 1000000.0
+	var frames_duration := float(frames.size()) / float(sample_rate)
+	var buffer_started_seconds := now_seconds - frames_duration
+
+	for frame in frames:
+		var sample := (frame.x + frame.y) * 0.5
+		window_peak = maxf(window_peak, absf(sample))
+		window_sum += sample * sample
+		window_count += 1
+		frame_index += 1
+
+		if window_count >= window_frames:
+			var window_rms := sqrt(window_sum / float(window_count))
+			var peak_to_rms := window_peak / maxf(window_rms, 0.0001)
+			var is_clap_candidate := window_rms >= WAKE_CLAP_RMS_THRESHOLD or (window_peak >= WAKE_CLAP_PEAK_THRESHOLD and peak_to_rms >= WAKE_CLAP_PEAK_TO_RMS_RATIO)
+			if is_clap_candidate:
+				var clap_time := buffer_started_seconds + (float(frame_index) / float(sample_rate))
+				if _sleep_clap_times.is_empty() or clap_time - _sleep_clap_times[_sleep_clap_times.size() - 1] >= WAKE_CLAP_MIN_GAP_SECONDS:
+					_sleep_clap_times.append(clap_time)
+					print("Wake listening: clap candidate. rms=%.3f peak=%.3f ratio=%.2f stored=%s" % [window_rms, window_peak, peak_to_rms, _sleep_clap_times.size()])
+			window_sum = 0.0
+			window_peak = 0.0
+			window_count = 0
+
+	while not _sleep_clap_times.is_empty() and now_seconds - _sleep_clap_times[0] > WAKE_CLAP_MAX_GAP_SECONDS:
+		_sleep_clap_times.remove_at(0)
+
+	for index in range(1, _sleep_clap_times.size()):
+		var gap := _sleep_clap_times[index] - _sleep_clap_times[index - 1]
+		if gap >= WAKE_CLAP_MIN_GAP_SECONDS and gap <= WAKE_CLAP_MAX_GAP_SECONDS:
+			print("Wake listening: double clap detected. GapSeconds: %.3f" % gap)
+			_sleep_clap_times.clear()
+			return true
+
+	return false
+
+
+func _analyze_recording_recent_audio(recording: AudioStreamWAV) -> Dictionary:
+	if recording == null:
+		return { "rms": 0.0, "peak": 0.0 }
+
+	var path := "user://merlin-wake-monitor.wav"
+	var save_error := recording.save_to_wav(path)
+	if save_error != OK:
+		return { "rms": 0.0, "peak": 0.0 }
+
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return { "rms": 0.0, "peak": 0.0 }
+
+	var bytes := file.get_buffer(file.get_length())
+	file.close()
+	return _analyze_recent_wav_audio(bytes, WAKE_RECENT_WINDOW_SECONDS)
+
+
+func _analyze_recent_wav_audio(bytes: PackedByteArray, recent_seconds: float) -> Dictionary:
+	if bytes.size() < 44:
+		return { "rms": 0.0, "peak": 0.0 }
+
+	var channels := maxi(1, _read_le_u16(bytes, 22))
+	var sample_rate := maxi(8000, _read_le_u32(bytes, 24))
+	var bits_per_sample := _read_le_u16(bytes, 34)
+	var data := _find_wav_data_chunk(bytes)
+	var data_offset := int(data.get("offset", 44))
+	var data_size := int(data.get("size", bytes.size() - data_offset))
+	if bits_per_sample != 16 or data_offset >= bytes.size() or data_size <= 0:
+		return { "rms": 0.0, "peak": 0.0 }
+
+	var frame_bytes := channels * 2
+	var data_end := mini(bytes.size(), data_offset + data_size)
+	var recent_frames := maxi(1, int(float(sample_rate) * recent_seconds))
+	var recent_bytes := recent_frames * frame_bytes
+	var start_offset := maxi(data_offset, data_end - recent_bytes)
+	var sum_squares := 0.0
+	var sample_count := 0
+	var peak := 0.0
+
+	for offset in range(start_offset, data_end - frame_bytes + 1, frame_bytes):
+		var mixed := 0.0
+		for channel in range(channels):
+			mixed += float(_read_le_i16(bytes, offset + channel * 2)) / 32768.0
+		var sample := mixed / float(channels)
+		var abs_sample := absf(sample)
+		peak = maxf(peak, abs_sample)
+		sum_squares += sample * sample
+		sample_count += 1
+
+	var rms := sqrt(sum_squares / float(maxi(1, sample_count)))
+	return { "rms": rms, "peak": peak }
+
+
+func _is_recent_wake_speech(features: Dictionary) -> bool:
+	return float(features.get("rms", 0.0)) >= WAKE_SPEECH_RMS or float(features.get("peak", 0.0)) >= WAKE_SPEECH_PEAK
+
+
+func _find_wav_data_chunk(bytes: PackedByteArray) -> Dictionary:
+	var offset := 12
+	while offset + 8 <= bytes.size():
+		var chunk_size := _read_le_u32(bytes, offset + 4)
+		if int(bytes[offset]) == 100 and int(bytes[offset + 1]) == 97 and int(bytes[offset + 2]) == 116 and int(bytes[offset + 3]) == 97:
+			return { "offset": offset + 8, "size": chunk_size }
+		offset += 8 + chunk_size + (chunk_size % 2)
+	return { "offset": 44, "size": bytes.size() - 44 }
+
+
+func _read_le_u16(bytes: PackedByteArray, offset: int) -> int:
+	if offset + 1 >= bytes.size():
+		return 0
+	return int(bytes[offset]) | (int(bytes[offset + 1]) << 8)
+
+
+func _read_le_u32(bytes: PackedByteArray, offset: int) -> int:
+	if offset + 3 >= bytes.size():
+		return 0
+	return int(bytes[offset]) | (int(bytes[offset + 1]) << 8) | (int(bytes[offset + 2]) << 16) | (int(bytes[offset + 3]) << 24)
+
+
+func _read_le_i16(bytes: PackedByteArray, offset: int) -> int:
+	var value := _read_le_u16(bytes, offset)
+	if value >= 32768:
+		value -= 65536
+	return value
 
 
 func _start_streaming_pcm_poc() -> void:
@@ -630,13 +1361,13 @@ func _summarize_transcript_for_acknowledgement(transcript: String) -> String:
 			break
 
 	var words := text.split(" ", false)
-	if words.size() <= 18:
+	if words.size() <= VOICE_ACKNOWLEDGEMENT_MAX_WORDS:
 		return text
 
 	var summary_words := PackedStringArray()
-	for index in range(18):
+	for index in range(VOICE_ACKNOWLEDGEMENT_MAX_WORDS):
 		summary_words.append(words[index])
-	return " ".join(summary_words)
+	return "%s..." % " ".join(summary_words)
 
 
 func _profiled_connection_state_changed(state: String, detail: String) -> void:
@@ -649,6 +1380,10 @@ func _profiled_visual_state_received(state: Dictionary) -> void:
 
 func _profiled_response_received(response: Dictionary) -> void:
 	_profile_signal_handler("_on_response_received", Callable(self, "_on_response_received"), [response])
+
+
+func _profiled_voice_transcript_received(transcript: Dictionary) -> void:
+	_profile_signal_handler("_on_voice_transcript_received", Callable(self, "_on_voice_transcript_received"), [transcript])
 
 
 func _profiled_visual_event_received(event: Dictionary) -> void:
@@ -707,6 +1442,11 @@ func _on_connection_state_changed(state: String, detail: String) -> void:
 
 
 func _on_visual_state_received(state: Dictionary) -> void:
+	if not _pending_requests.is_empty():
+		var mode := String(state.get("mode", ""))
+		if mode.is_empty() or mode == "idle":
+			core_orb.set_thinking()
+			return
 	if core_orb != null and core_orb.has_method("update_visual_state"):
 		core_orb.update_visual_state(state)
 
@@ -734,6 +1474,8 @@ func _on_response_received(response: Dictionary) -> void:
 	if prepare_ms >= 2.0:
 		print("SignalHandlerPerf slow handler=_on_response_received.prepare ms=%.2f" % prepare_ms)
 
+	if success:
+		_release_visual_overlay()
 	_update_pending_state()
 	_update_send_button()
 	_set_voice_phase("display_response")
@@ -750,6 +1492,19 @@ func _on_response_received(response: Dictionary) -> void:
 		debug_text
 	)
 	_focus_message_input()
+
+
+func _on_voice_transcript_received(transcript: Dictionary) -> void:
+	var correlation_id := str(transcript.get("correlationId", ""))
+	var text := str(transcript.get("text", "")).strip_edges()
+	if text.is_empty():
+		return
+
+	if not correlation_id.is_empty() and _pending_requests.has(correlation_id):
+		_pending_requests[correlation_id] = text
+
+	_add_notification("Heard: %s" % text, "system")
+	_show_question_acknowledgement(text)
 
 
 func _on_malformed_response(raw_message: String, detail: String) -> void:
@@ -815,6 +1570,8 @@ func _on_visual_event_received(event: Dictionary) -> void:
 				_speaking_startup_profile_energy_count
 			])
 			_speech_turn_active = false
+			if _visual_overlay_hold_until_speech_end:
+				_release_visual_overlay(_visual_overlay_kind)
 			_set_voice_phase("backend_playback_complete")
 			print("Voice timing: backend playback complete. TotalVoiceTurnMs: %.1f" % _voice_elapsed_ms())
 			_settle_orb_after_response()
@@ -827,6 +1584,8 @@ func _on_visual_event_received(event: Dictionary) -> void:
 				_speaking_startup_profile_energy_count
 			])
 			_speech_turn_active = false
+			if _visual_overlay_hold_until_speech_end:
+				_release_visual_overlay(_visual_overlay_kind)
 			_set_voice_phase("backend_playback_cancelled")
 			_settle_orb_after_response()
 
@@ -978,7 +1737,7 @@ func _format_confirmation(message: String, confirmation: Dictionary, application
 		message,
 		"",
 		"Confirmation required",
-		"Action: %s" % str(confirmation.get("action", "")),
+		"Requested: %s" % str(confirmation.get("originalUserCommand", "")),
 		"Target: %s" % str(confirmation.get("displayName", "")),
 		"Expires: %s" % str(confirmation.get("expiresAtUtc", "")),
 		"Type confirm to approve."
@@ -986,15 +1745,24 @@ func _format_confirmation(message: String, confirmation: Dictionary, application
 
 	if typeof(application_candidates) == TYPE_ARRAY and application_candidates.size() > 1:
 		lines.append("")
-		lines.append("Candidates:")
-		var index := 1
+		lines.append("Application choices:")
 		for candidate in application_candidates:
 			if typeof(candidate) == TYPE_DICTIONARY:
-				lines.append("%s. %s" % [index, str(candidate.get("displayName", ""))])
-				index += 1
-		lines.append("Type choose 1, choose 2, or confirm to approve the first option.")
+				lines.append("- %s" % str(candidate.get("displayName", "")))
+		lines.append("Say the full application name shown, or select it from the choices.")
 
 	return "\n".join(lines).strip_edges()
+
+
+func _spoken_confirmation_prompt(message: String, confirmation: Dictionary, application_candidates = null) -> String:
+	if typeof(application_candidates) == TYPE_ARRAY and application_candidates.size() > 1:
+		return "I found multiple apps matching that description, sir. Please choose which app you want to open."
+
+	var display_name := str(confirmation.get("displayName", "")).strip_edges()
+	if not display_name.is_empty():
+		return "I found %s, but I have not handled this specific application before. Please confirm before I open it." % display_name
+
+	return message
 
 
 func _format_error_response(error_code, message: String) -> String:
@@ -1019,13 +1787,17 @@ func _display_backend_response(
 ) -> void:
 	await _prepare_orb_for_response(response, success, response_type)
 	_focus_message_input()
+	var has_application_choices: bool = typeof(confirmation) == TYPE_DICTIONARY and typeof(application_candidates) == TYPE_ARRAY and application_candidates.size() > 1
+	if has_application_choices:
+		_show_application_choice_panel(confirmation, application_candidates)
+	elif response_type == "confirmation" or typeof(confirmation) != TYPE_DICTIONARY:
+		_hide_application_choice_panel()
 
 	if success:
+		_release_visual_overlay()
 		var spoken_message := _format_success_response(message, available_tools, diagnostics, confirmation)
 		if chat_panel.visible:
 			await _add_typed_chat_line("Merlin", spoken_message, debug_text, _response_kind(response, success, response_type))
-		else:
-			await _speak_text(spoken_message)
 		_clear_error()
 	else:
 		var formatted_error := _format_error_response(error_code, message)
@@ -1033,35 +1805,32 @@ func _display_backend_response(
 			var confirmation_message := _format_confirmation(message, confirmation, application_candidates)
 			if chat_panel.visible:
 				await _add_typed_chat_line("Merlin", confirmation_message, debug_text, "confirmation")
-			else:
-				await _speak_text(confirmation_message)
 			_add_notification("Confirmation required", "confirmation")
 			_clear_error()
 			activity_label.text = "Waiting for confirmation"
-			core_orb.play_confirmation()
+			_start_visual_overlay("confirmation", 0.0, false, true)
+			if has_application_choices:
+				_show_application_choice_panel(confirmation, application_candidates)
 			_focus_message_input()
 			return
 		elif response_type == "limitation" or response_type == "safety":
 			var kind := _response_kind(response, success, response_type)
 			if chat_panel.visible:
 				await _add_typed_chat_line("Merlin", message, debug_text, kind)
-			else:
-				await _speak_text(message)
 			_add_notification("Capability unavailable" if kind == "limitation" else "Safety boundary", kind)
 			_clear_error()
 		elif response_type == "system":
 			_add_system_message(message)
 			_add_notification(message, "system")
-			if not chat_panel.visible:
-				await _speak_text(message)
 			_clear_error()
 		else:
 			if chat_panel.visible:
 				await _add_typed_chat_line("Error", formatted_error, debug_text, "error")
-			else:
-				await _speak_text(formatted_error)
 			_add_notification("Error", "error")
 			_clear_error()
+
+	if chat_panel.visible and _visual_overlay_hold_until_speech_end:
+		_release_visual_overlay(_visual_overlay_kind)
 
 	if not _speech_turn_active:
 		_settle_orb_after_response()
@@ -1075,6 +1844,7 @@ func _speak_text(text: String) -> void:
 
 	_set_voice_phase("backend_tts_queued")
 	await get_tree().process_frame
+	await _speak_text_unlocked(spoken_text)
 
 
 func _speak_text_unlocked(spoken_text: String) -> void:
@@ -1544,14 +2314,28 @@ func _merlin_state_name(state: int) -> String:
 
 func _prepare_orb_for_response(response: Dictionary, success: bool, response_type: String) -> void:
 	var has_confirmation := typeof(response.get("confirmation", null)) == TYPE_DICTIONARY
+	var application_candidates = response.get("applicationCandidates", null)
+	var has_application_choices: bool = has_confirmation and typeof(application_candidates) == TYPE_ARRAY and application_candidates.size() > 1
 	if has_confirmation:
 		activity_label.text = "Waiting for confirmation"
-		core_orb.play_confirmation()
+		_start_visual_overlay("confirmation", 0.0, false, true)
 		await get_tree().create_timer(0.28).timeout
 		return
 
-	if response_type == "error" or (not success and not has_confirmation and response_type != "limitation" and response_type != "safety"):
-		_set_merlin_state(MerlinState.ERROR)
+	if response_type == "confirmation":
+		_hide_application_choice_panel()
+		_start_visual_overlay("confirmation", VISUAL_OVERLAY_CONFIRMATION_HOLD_SECONDS)
+		await get_tree().create_timer(0.28).timeout
+		return
+
+	if not has_application_choices:
+		_hide_application_choice_panel()
+
+	if _visual_overlay_waiting_for_confirmation:
+		_release_visual_overlay("confirmation")
+
+	if response_type == "error" or response_type == "limitation" or response_type == "safety" or (not success and not has_confirmation):
+		_start_visual_overlay("error", 0.0, true)
 		await get_tree().create_timer(0.28).timeout
 		return
 
@@ -1561,6 +2345,8 @@ func _prepare_orb_for_response(response: Dictionary, success: bool, response_typ
 
 
 func _settle_orb_after_response() -> void:
+	if _visual_overlay_hold_until_speech_end:
+		_release_visual_overlay(_visual_overlay_kind)
 	if _pending_requests.is_empty():
 		_set_merlin_state(MerlinState.IDLE)
 		_set_voice_phase("idle")
@@ -1574,6 +2360,8 @@ func _response_kind(response: Dictionary, success: bool, response_type: String) 
 		return "confirmation"
 
 	match response_type:
+		"confirmation":
+			return "confirmation"
 		"limitation":
 			return "limitation"
 		"safety":
@@ -1677,6 +2465,127 @@ func _add_notification(message: String, kind: String = "system") -> void:
 		var oldest := notification_list.get_child(0)
 		notification_list.remove_child(oldest)
 		oldest.queue_free()
+
+
+func _show_application_choice_panel(confirmation: Dictionary, application_candidates: Array) -> void:
+	_hide_application_choice_panel()
+	if overlay_container == null or application_candidates.size() <= 1:
+		return
+
+	var panel := PanelContainer.new()
+	_application_choice_panel = panel
+	panel.name = "ApplicationChoicePanel"
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.custom_minimum_size = Vector2(430, 0)
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = 0.12
+	panel.anchor_bottom = 0.12
+	panel.offset_left = -215
+	panel.offset_right = 215
+	panel.offset_top = 0
+	panel.offset_bottom = 0
+	panel.add_theme_stylebox_override("panel", _floating_choice_panel_style())
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 14)
+	margin.add_theme_constant_override("margin_top", 12)
+	margin.add_theme_constant_override("margin_right", 14)
+	margin.add_theme_constant_override("margin_bottom", 12)
+	panel.add_child(margin)
+
+	var stack := VBoxContainer.new()
+	stack.add_theme_constant_override("separation", 8)
+	margin.add_child(stack)
+
+	var title := Label.new()
+	title.text = "Choose application"
+	title.add_theme_color_override("font_color", COLOR_WHITE)
+	title.add_theme_font_size_override("font_size", 16)
+	stack.add_child(title)
+
+	var requested := str(confirmation.get("originalUserCommand", "")).strip_edges()
+	var subtitle := Label.new()
+	subtitle.text = "Say the full name shown, or select one."
+	if not requested.is_empty():
+		subtitle.text = "For: %s" % requested
+	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	subtitle.add_theme_color_override("font_color", COLOR_MUTED)
+	subtitle.add_theme_font_size_override("font_size", 12)
+	stack.add_child(subtitle)
+
+	for candidate in application_candidates:
+		if typeof(candidate) != TYPE_DICTIONARY:
+			continue
+		var display_name := str(candidate.get("displayName", "")).strip_edges()
+		if display_name.is_empty():
+			continue
+		stack.add_child(_create_application_choice_row(display_name, str(candidate.get("source", ""))))
+
+	overlay_container.add_child(panel)
+	panel.modulate = Color(1, 1, 1, 0)
+	var tween := create_tween()
+	tween.tween_property(panel, "modulate:a", 1.0, 0.16)
+
+
+func _hide_application_choice_panel() -> void:
+	if not is_instance_valid(_application_choice_panel):
+		_application_choice_panel = null
+		return
+
+	var panel := _application_choice_panel
+	_application_choice_panel = null
+	var tween := create_tween()
+	tween.tween_property(panel, "modulate:a", 0.0, 0.12)
+	tween.tween_callback(panel.queue_free)
+
+
+func _create_application_choice_row(display_name: String, source: String) -> Button:
+	var button := Button.new()
+	button.focus_mode = Control.FOCUS_ALL
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.custom_minimum_size = Vector2(0, 48)
+	button.text = "%s    %s" % [_application_icon_letters(display_name), display_name]
+	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	button.tooltip_text = "Select %s" % display_name
+	button.add_theme_stylebox_override("normal", _choice_row_style(Color(0.004, 0.034, 0.088, 0.62), Color(COLOR_CYAN.r, COLOR_CYAN.g, COLOR_CYAN.b, 0.30)))
+	button.add_theme_stylebox_override("hover", _choice_row_style(Color(0.010, 0.062, 0.130, 0.78), COLOR_CYAN))
+	button.add_theme_stylebox_override("pressed", _choice_row_style(Color(0.020, 0.082, 0.160, 0.86), COLOR_AMBER))
+	button.add_theme_color_override("font_color", COLOR_WHITE)
+	button.add_theme_color_override("font_hover_color", COLOR_WHITE)
+	button.add_theme_color_override("font_pressed_color", COLOR_WHITE)
+	if not source.strip_edges().is_empty():
+		button.tooltip_text = "%s - %s" % [display_name, source]
+	button.pressed.connect(func(): _send_application_choice(display_name))
+	return button
+
+
+func _floating_choice_panel_style() -> StyleBoxFlat:
+	var style := _panel_style(Color(0.002, 0.015, 0.046, 0.88), Color(COLOR_AMBER.r, COLOR_AMBER.g, COLOR_AMBER.b, 0.82), 1.0, 8)
+	style.shadow_color = Color(COLOR_AMBER.r, COLOR_AMBER.g, COLOR_AMBER.b, 0.30)
+	style.shadow_size = 18
+	style.shadow_offset = Vector2(0, 0)
+	return style
+
+
+func _choice_row_style(fill: Color, border: Color) -> StyleBoxFlat:
+	var style := _panel_style(fill, border, 1.0, 6)
+	style.content_margin_left = 12
+	style.content_margin_top = 8
+	style.content_margin_right = 12
+	style.content_margin_bottom = 8
+	return style
+
+
+func _application_icon_letters(display_name: String) -> String:
+	var words := display_name.strip_edges().split(" ", false)
+	var letters := ""
+	for word in words:
+		if letters.length() >= 2:
+			break
+		if not word.is_empty():
+			letters += word.substr(0, 1).to_upper()
+	return letters if not letters.is_empty() else "APP"
 
 
 func _add_chat_line(author: String, message: String, debug_text: String, kind: String) -> void:
@@ -1786,6 +2695,9 @@ func _update_pending_state() -> void:
 	var has_pending_requests := not _pending_requests.is_empty()
 	thinking_label.visible = has_pending_requests
 	_update_send_button()
+	if has_pending_requests and _merlin_state != MerlinState.LISTENING and _merlin_state != MerlinState.SPEAKING:
+		_set_merlin_state(MerlinState.THINKING)
+		return
 	if not has_pending_requests and web_socket_client.is_backend_connected():
 		_focus_message_input()
 
@@ -1803,6 +2715,60 @@ func _update_orb_from_response(response: Dictionary, success: bool, response_typ
 		_set_merlin_state(MerlinState.IDLE)
 	else:
 		_set_merlin_state(MerlinState.THINKING)
+
+
+func _start_visual_overlay(kind: String, hold_seconds: float = 0.0, hold_until_speech_end: bool = false, waiting_for_confirmation: bool = false) -> void:
+	_visual_overlay_kind = kind
+	_visual_overlay_target = 1.0
+	_visual_overlay_strength = maxf(_visual_overlay_strength, 0.18)
+	_visual_overlay_hold_until_usec = Time.get_ticks_usec() + int(maxf(hold_seconds, 0.0) * 1000000.0)
+	_visual_overlay_hold_until_speech_end = hold_until_speech_end
+	_visual_overlay_waiting_for_confirmation = waiting_for_confirmation
+	_apply_visual_overlay()
+
+
+func _release_visual_overlay(kind: String = "") -> void:
+	if not kind.is_empty() and _visual_overlay_kind != kind:
+		return
+	_visual_overlay_target = 0.0
+	_visual_overlay_hold_until_usec = 0
+	_visual_overlay_hold_until_speech_end = false
+	_visual_overlay_waiting_for_confirmation = false
+
+
+func _clear_transient_visual_overlay() -> void:
+	_visual_overlay_kind = ""
+	_visual_overlay_strength = 0.0
+	_visual_overlay_target = 0.0
+	_visual_overlay_hold_until_usec = 0
+	_visual_overlay_hold_until_speech_end = false
+	_visual_overlay_waiting_for_confirmation = false
+	_apply_visual_overlay()
+
+
+func _update_visual_overlay(delta: float) -> void:
+	if _visual_overlay_kind.is_empty():
+		return
+
+	if _visual_overlay_target > 0.0 and not _visual_overlay_hold_until_speech_end and not _visual_overlay_waiting_for_confirmation:
+		if _visual_overlay_hold_until_usec > 0 and Time.get_ticks_usec() >= _visual_overlay_hold_until_usec:
+			_visual_overlay_target = 0.0
+
+	var speed := 5.8 if _visual_overlay_target > _visual_overlay_strength else 1.0 / VISUAL_OVERLAY_FADE_SECONDS
+	_visual_overlay_strength = move_toward(_visual_overlay_strength, _visual_overlay_target, delta * speed)
+	_apply_visual_overlay()
+
+	if _visual_overlay_target <= 0.0 and _visual_overlay_strength <= 0.001:
+		_visual_overlay_kind = ""
+		_visual_overlay_strength = 0.0
+		_apply_visual_overlay()
+
+
+func _apply_visual_overlay() -> void:
+	if core_orb == null or not core_orb.has_method("set_overlay_intensity"):
+		return
+	core_orb.set_overlay_intensity("error", _visual_overlay_strength if _visual_overlay_kind == "error" else 0.0)
+	core_orb.set_overlay_intensity("confirmation", _visual_overlay_strength if _visual_overlay_kind == "confirmation" else 0.0)
 
 
 func _is_tool_execution_response(response: Dictionary) -> bool:
@@ -1855,7 +2821,9 @@ func _activity_text_for_state(state: int) -> String:
 func _update_send_button() -> void:
 	var connected := web_socket_client.is_backend_connected()
 	send_button.disabled = not connected
-	voice_button.disabled = not connected or _is_recording
+	voice_button.disabled = not connected
+	if connected:
+		_reset_voice_button()
 	reconnect_button.disabled = web_socket_client.get_connection_state() == "connecting"
 
 

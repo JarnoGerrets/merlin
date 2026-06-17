@@ -1,0 +1,425 @@
+[
+  {
+    "id": "whisper_beam_001",
+    "category": "WhisperTerms",
+    "expectedText": "What does beam do in Whisper?",
+    "acceptableAlternatives": ["What does beam do in whisper"],
+    "importantTerms": ["beam", "Whisper"],
+    "notes": "Tests beam vs bean confusion.",
+    "recommendedRecordingSeconds": 4
+  },
+  {
+    "id": "whisper_beam_002",
+    "category": "WhisperTerms",
+    "expectedText": "Use beam five with medium dot E N.",
+    "acceptableAlternatives": ["Use beam 5 with medium.en", "Use beam five with medium E N"],
+    "importantTerms": ["beam", "medium.en"],
+    "notes": "Tests spoken punctuation and number normalization.",
+    "recommendedRecordingSeconds": 5
+  },
+  {
+    "id": "whisper_vram_003",
+    "category": "WhisperTerms",
+    "expectedText": "How much VRAM does Whisper medium dot E N use with beam five?",
+    "acceptableAlternatives": ["How much VRAM does Whisper medium.en use with beam 5"],
+    "importantTerms": ["VRAM", "Whisper", "medium.en", "beam"],
+    "notes": "Technical acronym and model phrase.",
+    "recommendedRecordingSeconds": 6
+  },
+  {
+    "id": "whisper_large_004",
+    "category": "WhisperTerms",
+    "expectedText": "Is large V three better than medium dot E N?",
+    "acceptableAlternatives": ["Is large v3 better than medium.en"],
+    "importantTerms": ["large v3", "medium.en"],
+    "notes": "Tests model name normalization.",
+    "recommendedRecordingSeconds": 5
+  },
+  {
+    "id": "whisper_cuda_005",
+    "category": "WhisperTerms",
+    "expectedText": "Run speech to text with CUDA.",
+    "acceptableAlternatives": ["Run speech-to-text with CUDA"],
+    "importantTerms": ["speech to text", "CUDA"],
+    "notes": "Tests CUDA recognition.",
+    "recommendedRecordingSeconds": 4
+  },
+  {
+    "id": "whisper_bean_006",
+    "category": "WhisperTerms",
+    "expectedText": "Whisper heard beam as bean.",
+    "acceptableAlternatives": [],
+    "importantTerms": ["Whisper", "beam", "bean"],
+    "notes": "Contains both confusion words intentionally.",
+    "recommendedRecordingSeconds": 4
+  },
+  {
+    "id": "whisper_medium_007",
+    "category": "WhisperTerms",
+    "expectedText": "Transcribe this with medium English.",
+    "acceptableAlternatives": [],
+    "importantTerms": ["Transcribe", "medium English"],
+    "notes": "Natural model description.",
+    "recommendedRecordingSeconds": 4
+  },
+  {
+    "id": "merlin_sqlite_001",
+    "category": "MerlinVocabulary",
+    "expectedText": "Merlin should prefer SQLite for local memory storage.",
+    "acceptableAlternatives": ["Merlin should prefer SQL lite for local memory storage"],
+    "importantTerms": ["Merlin", "SQLite", "local memory"],
+    "notes": "Core Merlin memory vocabulary.",
+    "recommendedRecordingSeconds": 5
+  },
+  {
+    "id": "merlin_sqlite_002",
+    "category": "MerlinVocabulary",
+    "expectedText": "Please save into long-term memory that Merlin should prefer SQLite.",
+    "acceptableAlternatives": ["Please save into long term memory that Merlin should prefer SQLite"],
+    "importantTerms": ["long-term memory", "Merlin", "SQLite"],
+    "notes": "Memory write command.",
+    "recommendedRecordingSeconds": 6
+  },
+  {
+    "id": "merlin_deepinfra_003",
+    "category": "MerlinVocabulary",
+    "expectedText": "What did we decide about DeepInfra context?",
+    "acceptableAlternatives": ["What did we decide about deep infra context"],
+    "importantTerms": ["DeepInfra", "context"],
+    "notes": "DeepInfra brand split test.",
+    "recommendedRecordingSeconds": 5
+  },
+  {
+    "id": "merlin_deepinfra_004",
+    "category": "MerlinVocabulary",
+    "expectedText": "DeepInfra should only receive compact prompts.",
+    "acceptableAlternatives": ["Deep infra should only receive compact prompts"],
+    "importantTerms": ["DeepInfra", "compact prompts"],
+    "notes": "DeepInfra routing vocabulary.",
+    "recommendedRecordingSeconds": 5
+  },
+  {
+    "id": "merlin_memory_005",
+    "category": "MerlinVocabulary",
+    "expectedText": "The memory compiler should reduce token usage.",
+    "acceptableAlternatives": [],
+    "importantTerms": ["memory compiler", "token usage"],
+    "notes": "Memory layer terminology.",
+    "recommendedRecordingSeconds": 5
+  },
+  {
+    "id": "merlin_brain_006",
+    "category": "MerlinVocabulary",
+    "expectedText": "Use the brain-like memory system.",
+    "acceptableAlternatives": ["Use the brain like memory system"],
+    "importantTerms": ["brain-like memory"],
+    "notes": "Hyphenated phrase test.",
+    "recommendedRecordingSeconds": 4
+  },
+  {
+    "id": "merlin_medium_memory_007",
+    "category": "MerlinVocabulary",
+    "expectedText": "The current conversation should become medium memory.",
+    "acceptableAlternatives": [],
+    "importantTerms": ["current conversation", "medium memory"],
+    "notes": "Memory tier phrase.",
+    "recommendedRecordingSeconds": 5
+  },
+  {
+    "id": "merlin_decision_008",
+    "category": "MerlinVocabulary",
+    "expectedText": "Store this as a project decision.",
+    "acceptableAlternatives": [],
+    "importantTerms": ["project decision"],
+    "notes": "Intent phrase.",
+    "recommendedRecordingSeconds": 4
+  },
+  {
+    "id": "routing_time_001",
+    "category": "ToolsAndRouting",
+    "expectedText": "What time is it?",
+    "acceptableAlternatives": [],
+    "importantTerms": ["time"],
+    "notes": "Short command.",
+    "recommendedRecordingSeconds": 3
+  },
+  {
+    "id": "routing_spotify_002",
+    "category": "ToolsAndRouting",
+    "expectedText": "What is the current volume of Spotify?",
+    "acceptableAlternatives": [],
+    "importantTerms": ["current volume", "Spotify"],
+    "notes": "Tool routing phrase.",
+    "recommendedRecordingSeconds": 5
+  },
+  {
+    "id": "routing_ram_003",
+    "category": "ToolsAndRouting",
+    "expectedText": "How much RAM is free?",
+    "acceptableAlternatives": [],
+    "importantTerms": ["RAM", "free"],
+    "notes": "System resource phrase.",
+    "recommendedRecordingSeconds": 4
+  },
+  {
+    "id": "routing_discord_004",
+    "category": "ToolsAndRouting",
+    "expectedText": "Open Discord.",
+    "acceptableAlternatives": [],
+    "importantTerms": ["Open", "Discord"],
+    "notes": "Application launch phrase.",
+    "recommendedRecordingSeconds": 3
+  },
+  {
+    "id": "routing_gpu_005",
+    "category": "ToolsAndRouting",
+    "expectedText": "Check GPU usage.",
+    "acceptableAlternatives": [],
+    "importantTerms": ["GPU usage"],
+    "notes": "System resource phrase.",
+    "recommendedRecordingSeconds": 4
+  },
+  {
+    "id": "routing_memory_usage_006",
+    "category": "ToolsAndRouting",
+    "expectedText": "What is the current memory usage of my PC?",
+    "acceptableAlternatives": [],
+    "importantTerms": ["current memory usage", "PC"],
+    "notes": "Memory usage wording.",
+    "recommendedRecordingSeconds": 5
+  },
+  {
+    "id": "routing_memory_size_007",
+    "category": "ToolsAndRouting",
+    "expectedText": "What is the current size of memory of my PC?",
+    "acceptableAlternatives": [],
+    "importantTerms": ["current size of memory", "PC"],
+    "notes": "Similar to previous phrase.",
+    "recommendedRecordingSeconds": 5
+  },
+  {
+    "id": "sentence_sqlite_001",
+    "category": "SentenceRegression",
+    "expectedText": "Please remember that SQLite is the preferred local database for Merlin.",
+    "acceptableAlternatives": ["Please remember that SQL lite is the preferred local database for Merlin"],
+    "importantTerms": ["SQLite", "local database", "Merlin"],
+    "notes": "Full sentence covering SQLite and Merlin memory wording.",
+    "recommendedRecordingSeconds": 6
+  },
+  {
+    "id": "sentence_deepinfra_002",
+    "category": "SentenceRegression",
+    "expectedText": "DeepInfra should receive compact context instead of full raw conversation history.",
+    "acceptableAlternatives": ["Deep infra should receive compact context instead of full raw conversation history"],
+    "importantTerms": ["DeepInfra", "compact context", "full raw conversation history"],
+    "notes": "Full sentence covering DeepInfra context policy.",
+    "recommendedRecordingSeconds": 7
+  },
+  {
+    "id": "sentence_codex_cuda_003",
+    "category": "SentenceRegression",
+    "expectedText": "Codex CLI should check whether CUDA is available before running Whisper.",
+    "acceptableAlternatives": ["Code X C L I should check whether CUDA is available before running Whisper"],
+    "importantTerms": ["Codex CLI", "CUDA", "Whisper"],
+    "notes": "Full sentence covering tool and GPU vocabulary.",
+    "recommendedRecordingSeconds": 6
+  },
+  {
+    "id": "confusion_beam_001",
+    "category": "CommonConfusionPairs",
+    "expectedText": "beam",
+    "acceptableAlternatives": [],
+    "importantTerms": ["beam"],
+    "notes": "Single-word beam.",
+    "recommendedRecordingSeconds": 2
+  },
+  {
+    "id": "confusion_bean_002",
+    "category": "CommonConfusionPairs",
+    "expectedText": "bean",
+    "acceptableAlternatives": [],
+    "importantTerms": ["bean"],
+    "notes": "Single-word bean.",
+    "recommendedRecordingSeconds": 2
+  },
+  {
+    "id": "confusion_beach_003",
+    "category": "CommonConfusionPairs",
+    "expectedText": "beach",
+    "acceptableAlternatives": [],
+    "importantTerms": ["beach"],
+    "notes": "Single-word beach.",
+    "recommendedRecordingSeconds": 2
+  },
+  {
+    "id": "confusion_speech_004",
+    "category": "CommonConfusionPairs",
+    "expectedText": "speech",
+    "acceptableAlternatives": [],
+    "importantTerms": ["speech"],
+    "notes": "Single-word speech.",
+    "recommendedRecordingSeconds": 2
+  },
+  {
+    "id": "confusion_sqlite_005",
+    "category": "CommonConfusionPairs",
+    "expectedText": "SQLite",
+    "acceptableAlternatives": ["SQL lite", "sequel light"],
+    "importantTerms": ["SQLite"],
+    "notes": "SQLite canonical form.",
+    "recommendedRecordingSeconds": 2
+  },
+  {
+    "id": "confusion_sequel_light_006",
+    "category": "CommonConfusionPairs",
+    "expectedText": "sequel light",
+    "acceptableAlternatives": ["SQLite", "SQL lite"],
+    "importantTerms": ["sequel light"],
+    "notes": "SQLite spoken form.",
+    "recommendedRecordingSeconds": 2
+  },
+  {
+    "id": "confusion_sql_lite_007",
+    "category": "CommonConfusionPairs",
+    "expectedText": "SQL lite",
+    "acceptableAlternatives": ["SQLite", "sequel light"],
+    "importantTerms": ["SQL lite"],
+    "notes": "SQLite split form.",
+    "recommendedRecordingSeconds": 2
+  },
+  {
+    "id": "confusion_deepinfra_008",
+    "category": "CommonConfusionPairs",
+    "expectedText": "DeepInfra",
+    "acceptableAlternatives": ["deep infra"],
+    "importantTerms": ["DeepInfra"],
+    "notes": "Brand as one token.",
+    "recommendedRecordingSeconds": 2
+  },
+  {
+    "id": "confusion_deep_infra_009",
+    "category": "CommonConfusionPairs",
+    "expectedText": "deep infra",
+    "acceptableAlternatives": ["DeepInfra"],
+    "importantTerms": ["deep infra"],
+    "notes": "Brand split form.",
+    "recommendedRecordingSeconds": 2
+  },
+  {
+    "id": "confusion_chatterbox_010",
+    "category": "CommonConfusionPairs",
+    "expectedText": "Chatterbox",
+    "acceptableAlternatives": ["chatter box"],
+    "importantTerms": ["Chatterbox"],
+    "notes": "TTS engine name.",
+    "recommendedRecordingSeconds": 2
+  },
+  {
+    "id": "confusion_chatter_box_011",
+    "category": "CommonConfusionPairs",
+    "expectedText": "chatter box",
+    "acceptableAlternatives": ["Chatterbox"],
+    "importantTerms": ["chatter box"],
+    "notes": "Split TTS engine name.",
+    "recommendedRecordingSeconds": 2
+  },
+  {
+    "id": "confusion_codex_cli_012",
+    "category": "CommonConfusionPairs",
+    "expectedText": "Codex CLI",
+    "acceptableAlternatives": ["code X C L I"],
+    "importantTerms": ["Codex CLI"],
+    "notes": "Tool name.",
+    "recommendedRecordingSeconds": 3
+  },
+  {
+    "id": "confusion_code_x_cli_013",
+    "category": "CommonConfusionPairs",
+    "expectedText": "code X C L I",
+    "acceptableAlternatives": ["Codex CLI"],
+    "importantTerms": ["code X C L I"],
+    "notes": "Phonetic tool name.",
+    "recommendedRecordingSeconds": 3
+  },
+  {
+    "id": "confusion_cuda_014",
+    "category": "CommonConfusionPairs",
+    "expectedText": "CUDA",
+    "acceptableAlternatives": ["cooda"],
+    "importantTerms": ["CUDA"],
+    "notes": "GPU framework.",
+    "recommendedRecordingSeconds": 2
+  },
+  {
+    "id": "confusion_cooda_015",
+    "category": "CommonConfusionPairs",
+    "expectedText": "cooda",
+    "acceptableAlternatives": ["CUDA"],
+    "importantTerms": ["cooda"],
+    "notes": "Phonetic CUDA.",
+    "recommendedRecordingSeconds": 2
+  },
+  {
+    "id": "confusion_appdata_016",
+    "category": "CommonConfusionPairs",
+    "expectedText": "AppData",
+    "acceptableAlternatives": ["app data"],
+    "importantTerms": ["AppData"],
+    "notes": "Windows folder name.",
+    "recommendedRecordingSeconds": 2
+  },
+  {
+    "id": "confusion_app_data_017",
+    "category": "CommonConfusionPairs",
+    "expectedText": "app data",
+    "acceptableAlternatives": ["AppData"],
+    "importantTerms": ["app data"],
+    "notes": "Split Windows folder name.",
+    "recommendedRecordingSeconds": 2
+  },
+  {
+    "id": "natural_sqlite_001",
+    "category": "NaturalSpeech",
+    "expectedText": "I remember that we talked about SQLite a while ago, what was the verdict?",
+    "acceptableAlternatives": ["I remember that we talked about SQL lite a while ago what was the verdict"],
+    "importantTerms": ["SQLite", "verdict"],
+    "notes": "Longer natural recall question.",
+    "recommendedRecordingSeconds": 7
+  },
+  {
+    "id": "natural_deepinfra_002",
+    "category": "NaturalSpeech",
+    "expectedText": "Please save into long-term memory that Merlin should never send full raw chat history to DeepInfra by default.",
+    "acceptableAlternatives": ["Please save into long term memory that Merlin should never send full raw chat history to deep infra by default"],
+    "importantTerms": ["long-term memory", "Merlin", "full raw chat history", "DeepInfra"],
+    "notes": "High-value memory instruction.",
+    "recommendedRecordingSeconds": 9
+  },
+  {
+    "id": "natural_architecture_003",
+    "category": "NaturalSpeech",
+    "expectedText": "Explain the tradeoffs of local-first memory architecture.",
+    "acceptableAlternatives": ["Explain the trade offs of local first memory architecture"],
+    "importantTerms": ["local-first memory architecture"],
+    "notes": "Longer conceptual question.",
+    "recommendedRecordingSeconds": 6
+  },
+  {
+    "id": "natural_postgres_004",
+    "category": "NaturalSpeech",
+    "expectedText": "Why did we choose SQLite instead of PostgreSQL for the local memory proof of concept?",
+    "acceptableAlternatives": ["Why did we choose SQL lite instead of PostgreSQL for the local memory proof of concept"],
+    "importantTerms": ["SQLite", "PostgreSQL", "local memory", "proof of concept"],
+    "notes": "Database comparison with technical terms.",
+    "recommendedRecordingSeconds": 8
+  },
+  {
+    "id": "natural_beam_search_005",
+    "category": "NaturalSpeech",
+    "expectedText": "What does beam search do when Whisper is decoding audio?",
+    "acceptableAlternatives": [],
+    "importantTerms": ["beam search", "Whisper", "decoding audio"],
+    "notes": "Context for conservative bean to beam preview.",
+    "recommendedRecordingSeconds": 6
+  }
+]

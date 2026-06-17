@@ -1,0 +1,1 @@
+phraseId,category,expectedText,actualTranscript,userRating,exactMatch,wordErrorRate,charErrorRate,missingImportantTerms,suspectedConfusions,transcriptionLatencyMs,durationMs,rmsLevel,peakLevel,clippingDetected,audioFilePath

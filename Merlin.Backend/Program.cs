@@ -1,19 +1,138 @@
 using Merlin.Backend.Configuration;
+using Merlin.Backend.Core.Conversation;
+using Merlin.Backend.Core.Memory.Search;
+using Merlin.Backend.Core.Memory.Services;
+using Merlin.Backend.Core.Memory.Stores;
+using Merlin.Backend.Infrastructure.Persistence;
+using Merlin.Backend.Infrastructure.Persistence.Repositories;
+using Merlin.Backend.Infrastructure.Persistence.Seeding;
 using Merlin.Backend.Services;
+using Merlin.Backend.Services.Acknowledgement;
+using Merlin.Backend.Services.BargeIn;
+using Merlin.Backend.Services.IntentRouting;
 using Merlin.Backend.Tools;
 using Merlin.Backend.WebSocket;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using System.Text.Json;
+
+EnvFileLoader.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.Configure<ApplicationLaunchOptions>(
     builder.Configuration.GetSection("ApplicationLaunch"));
+builder.Services.Configure<MerlinDbOptions>(
+    builder.Configuration.GetSection("MerlinDatabase"));
 builder.Services.Configure<LocalAIOptions>(
     builder.Configuration.GetSection("LocalAI"));
+builder.Services.Configure<LlmOptions>(
+    builder.Configuration.GetSection("Llm"));
+builder.Services.Configure<AcknowledgementSpeechOptions>(
+    builder.Configuration.GetSection("AcknowledgementSpeech"));
+builder.Services.Configure<BargeInOptions>(
+    builder.Configuration.GetSection("BargeIn"));
+builder.Services.PostConfigure<LlmOptions>(options =>
+{
+    options.Provider = Environment.GetEnvironmentVariable("MERLIN_LLM_PROVIDER") ?? options.Provider;
+    options.DeepInfraApiKey = Environment.GetEnvironmentVariable("DEEPINFRA_API_KEY") ?? options.DeepInfraApiKey;
+    options.DeepInfraBaseUrl = Environment.GetEnvironmentVariable("DEEPINFRA_BASE_URL") ?? options.DeepInfraBaseUrl;
+    options.DeepInfraModel = Environment.GetEnvironmentVariable("DEEPINFRA_MODEL") ?? options.DeepInfraModel;
+    if (bool.TryParse(Environment.GetEnvironmentVariable("MERLIN_USE_LOCAL_LLM_FALLBACK"), out var useLocalFallback))
+    {
+        options.UseLocalFallback = useLocalFallback;
+    }
+
+    if (int.TryParse(Environment.GetEnvironmentVariable("DEEPINFRA_REQUEST_TIMEOUT_SECONDS"), out var requestTimeoutSeconds))
+    {
+        options.DeepInfraRequestTimeoutSeconds = requestTimeoutSeconds;
+    }
+});
 builder.Services.Configure<VoiceOptions>(
     builder.Configuration.GetSection("Voice"));
 builder.Services.Configure<PiperOptions>(
     builder.Configuration.GetSection("Piper"));
+builder.Services.Configure<TtsOptions>(
+    builder.Configuration.GetSection("Tts"));
+builder.Services.PostConfigure<TtsOptions>(options =>
+{
+    options.Provider = Environment.GetEnvironmentVariable("MERLIN_TTS_PROVIDER") ?? options.Provider;
+    options.FallbackProvider = Environment.GetEnvironmentVariable("MERLIN_TTS_FALLBACK_PROVIDER") ?? options.FallbackProvider;
+    options.ChatterboxDevice = Environment.GetEnvironmentVariable("CHATTERBOX_DEVICE") ?? options.ChatterboxDevice;
+    options.ChatterboxReferenceVoicePath = Environment.GetEnvironmentVariable("CHATTERBOX_REFERENCE_VOICE_PATH") ?? options.ChatterboxReferenceVoicePath;
+    options.ChatterboxCacheDir = Environment.GetEnvironmentVariable("CHATTERBOX_CACHE_DIR") ?? options.ChatterboxCacheDir;
+    options.ChatterboxModel = Environment.GetEnvironmentVariable("CHATTERBOX_MODEL") ?? options.ChatterboxModel;
+    options.ChatterboxPythonExecutable = Environment.GetEnvironmentVariable("CHATTERBOX_PYTHON_EXECUTABLE") ?? options.ChatterboxPythonExecutable;
+    if (double.TryParse(Environment.GetEnvironmentVariable("CHATTERBOX_EXAGGERATION"), out var exaggeration))
+    {
+        options.ChatterboxExaggeration = exaggeration;
+    }
+
+    if (double.TryParse(Environment.GetEnvironmentVariable("CHATTERBOX_CFG_WEIGHT"), out var cfgWeight))
+    {
+        options.ChatterboxCfgWeight = cfgWeight;
+    }
+
+    if (double.TryParse(Environment.GetEnvironmentVariable("CHATTERBOX_TEMPERATURE"), out var temperature))
+    {
+        options.ChatterboxTemperature = temperature;
+    }
+
+    if (double.TryParse(Environment.GetEnvironmentVariable("CHATTERBOX_REPETITION_PENALTY"), out var repetitionPenalty))
+    {
+        options.ChatterboxRepetitionPenalty = repetitionPenalty;
+    }
+
+    if (double.TryParse(Environment.GetEnvironmentVariable("CHATTERBOX_TOP_P"), out var topP))
+    {
+        options.ChatterboxTopP = topP;
+    }
+
+    if (double.TryParse(Environment.GetEnvironmentVariable("CHATTERBOX_MIN_P"), out var minP))
+    {
+        options.ChatterboxMinP = minP;
+    }
+
+    if (bool.TryParse(Environment.GetEnvironmentVariable("CHATTERBOX_KEEP_WARM"), out var keepWarm))
+    {
+        options.ChatterboxKeepWarm = keepWarm;
+    }
+
+    if (int.TryParse(Environment.GetEnvironmentVariable("CHATTERBOX_MAX_TEXT_CHARS_PER_CHUNK"), out var maxChars))
+    {
+        options.ChatterboxMaxTextCharsPerChunk = maxChars;
+    }
+
+    if (bool.TryParse(Environment.GetEnvironmentVariable("CHATTERBOX_ENABLE_INTERACTIVE_CHUNKING"), out var interactiveChunking))
+    {
+        options.ChatterboxEnableInteractiveChunking = interactiveChunking;
+    }
+
+    if (int.TryParse(Environment.GetEnvironmentVariable("CHATTERBOX_FIRST_CHUNK_TARGET_CHARS"), out var firstChunkTarget))
+    {
+        options.ChatterboxFirstChunkTargetChars = firstChunkTarget;
+    }
+
+    if (int.TryParse(Environment.GetEnvironmentVariable("CHATTERBOX_FIRST_CHUNK_MAX_CHARS"), out var firstChunkMax))
+    {
+        options.ChatterboxFirstChunkMaxChars = firstChunkMax;
+    }
+
+    if (int.TryParse(Environment.GetEnvironmentVariable("CHATTERBOX_NEXT_CHUNK_TARGET_CHARS"), out var nextChunkTarget))
+    {
+        options.ChatterboxNextChunkTargetChars = nextChunkTarget;
+    }
+
+    if (int.TryParse(Environment.GetEnvironmentVariable("CHATTERBOX_NEXT_CHUNK_MAX_CHARS"), out var nextChunkMax))
+    {
+        options.ChatterboxNextChunkMaxChars = nextChunkMax;
+    }
+
+    if (bool.TryParse(Environment.GetEnvironmentVariable("CHATTERBOX_ENABLE_PHRASE_CACHE"), out var phraseCache))
+    {
+        options.ChatterboxEnablePhraseCache = phraseCache;
+    }
+});
 builder.Services.Configure<CapabilityOptions>(options =>
 {
     var configuredDomains = builder.Configuration
@@ -26,15 +145,113 @@ builder.Services.Configure<CapabilityOptions>(options =>
     }
 });
 
+builder.Services.AddSingleton<MerlinDbPathResolver>();
+builder.Services.AddDbContext<MerlinDbContext>((serviceProvider, options) =>
+{
+    var pathResolver = serviceProvider.GetRequiredService<MerlinDbPathResolver>();
+    var dbPath = pathResolver.ResolveDatabasePath();
+
+    options.UseSqlite($"Data Source={dbPath}");
+});
+builder.Services.AddHostedService<MerlinDbMigratorHostedService>();
+builder.Services.AddScoped<IMemoryStore, EfMemoryStore>();
+builder.Services.AddScoped<IConceptStore, EfConceptStore>();
+builder.Services.AddScoped<IConversationStateStore, EfConversationStateStore>();
+builder.Services.AddScoped<ITurnStateStore, EfTurnStateStore>();
+builder.Services.AddScoped<IPromptCompilationStore, EfPromptCompilationStore>();
+builder.Services.AddScoped<MerlinConceptSeeder>();
+builder.Services.AddScoped<IMemorySearchService, MemorySearchService>();
+builder.Services.AddSingleton<IConceptExtractionService, LocalConceptExtractionService>();
+builder.Services.AddScoped<IConversationRuntimeState, ConversationRuntimeState>();
+builder.Services.AddScoped<IAssistantTurnTracker, AssistantTurnTracker>();
+builder.Services.AddScoped<IPromptCompilationLogger, PromptCompilationLogger>();
+builder.Services.AddSingleton<ITokenEstimator, SimpleTokenEstimator>();
+builder.Services.AddScoped<FollowUpCueDetector>();
+builder.Services.AddScoped<ActiveConceptMerger>();
+builder.Services.AddScoped<TopicBoundaryDetector>();
+builder.Services.AddScoped<CurrentConversationMemoryService>();
+builder.Services.AddScoped<ExplicitMemoryRequestDetector>();
+builder.Services.AddScoped<MemoryTypeClassifier>();
+builder.Services.AddScoped<MemoryWriter>();
+builder.Services.AddScoped<TopicSummaryBuilder>();
+builder.Services.AddScoped<TopicImportanceScorer>();
+builder.Services.AddScoped<TopicClosingService>();
+builder.Services.AddScoped<ConceptGraphActivationService>();
+builder.Services.AddScoped<AssociativeRetriever>();
+builder.Services.AddScoped<TokenBudgetService>();
+builder.Services.AddScoped<PromptCompiler>();
+builder.Services.AddScoped<MemoryOrchestrator>();
+builder.Services.AddScoped<MemoryDebugService>();
+
 builder.Services.AddSingleton<IAIService, DummyAIService>();
 builder.Services.AddSingleton<PythonVoiceService>();
 builder.Services.AddSingleton<IVoiceTranscriptionService>(provider => provider.GetRequiredService<PythonVoiceService>());
-builder.Services.AddSingleton<IVoiceSynthesisService, PiperVoiceService>();
+builder.Services.AddSingleton<VoiceStreamSessionService>();
+builder.Services.AddHostedService<PythonVoiceWarmupHostedService>();
+builder.Services.AddSingleton<PiperVoiceService>();
+builder.Services.AddSingleton<ChatterboxTimingLogService>();
+builder.Services.AddHostedService(provider => provider.GetRequiredService<ChatterboxTimingLogService>());
+builder.Services.AddSingleton<ChatterboxWorkerClient>();
+builder.Services.AddSingleton<ChatterboxTtsProvider>();
+builder.Services.AddSingleton<IVoiceSynthesisService, TtsRouter>();
+builder.Services.AddHostedService<ChatterboxWarmupHostedService>();
+builder.Services.AddSingleton<IBargeInDiagnosticsLogger, BargeInDiagnosticsLogger>();
+builder.Services.AddSingleton<IPlaybackReferenceTap, PlaybackReferenceTap>();
+builder.Services.AddSingleton<IWindowsAecStatus, WindowsAecStatus>();
+builder.Services.AddSingleton<DegradedAcousticEchoCancellationService>();
+builder.Services.AddSingleton<WindowsWasapiAcousticEchoCancellationService>();
+builder.Services.AddSingleton<WebRtcApmAcousticEchoCancellationService>();
+builder.Services.AddSingleton<IAcousticEchoCancellationService>(serviceProvider =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<BargeInOptions>>().Value;
+    if (string.Equals(options.AecProvider, "WebRtcApm", StringComparison.OrdinalIgnoreCase))
+    {
+        return serviceProvider.GetRequiredService<WebRtcApmAcousticEchoCancellationService>();
+    }
+
+    if (string.Equals(options.AecProvider, "WindowsWasapiAec", StringComparison.OrdinalIgnoreCase))
+    {
+        return serviceProvider.GetRequiredService<WindowsWasapiAcousticEchoCancellationService>();
+    }
+
+    return serviceProvider.GetRequiredService<DegradedAcousticEchoCancellationService>();
+});
+builder.Services.AddSingleton<IBargeInVadService, BargeInVadService>();
+builder.Services.AddSingleton<ISpeakerDuckingService, SpeakerDuckingService>();
+builder.Services.AddSingleton<IBargeInTriggerBuffer, BargeInTriggerBuffer>();
+builder.Services.AddSingleton<IBargeInSttService, BargeInSttService>();
+builder.Services.AddSingleton<IInterruptionClassifier, InterruptionClassifier>();
+builder.Services.AddSingleton<IBargeInCoordinator, BargeInCoordinator>();
+builder.Services.AddSingleton<WindowsWasapiAecAudioCaptureService>();
+builder.Services.AddSingleton<WebRtcApmBargeInAudioCaptureService>();
+builder.Services.AddSingleton<IBargeInAudioCaptureService>(provider =>
+{
+    var options = provider.GetRequiredService<IOptions<BargeInOptions>>().Value;
+    return string.Equals(options.AecProvider, "WebRtcApm", StringComparison.OrdinalIgnoreCase)
+        ? provider.GetRequiredService<WebRtcApmBargeInAudioCaptureService>()
+        : provider.GetRequiredService<WindowsWasapiAecAudioCaptureService>();
+});
+builder.Services.AddHostedService(provider => provider.GetRequiredService<WindowsWasapiAecAudioCaptureService>());
+builder.Services.AddHostedService(provider => provider.GetRequiredService<WebRtcApmBargeInAudioCaptureService>());
+builder.Services.AddHostedService<BargeInCoordinatorHostedService>();
 builder.Services.AddSingleton<IAssistantSpeechPlaybackService, AssistantSpeechPlaybackService>();
 builder.Services.AddSingleton<ISpeechPolicyService, SpeechPolicyService>();
+builder.Services.AddSingleton<IAcknowledgementPhraseLibrary, AcknowledgementPhraseLibrary>();
+builder.Services.AddSingleton<IAcknowledgementPolicy, AcknowledgementPolicy>();
+builder.Services.AddSingleton<IAcknowledgementSpeechService, AcknowledgementSpeechService>();
+builder.Services.AddSingleton<IRequestProgressSpeechService, RequestProgressSpeechService>();
 builder.Services.AddSingleton<IAssistantPolicyProvider, AssistantPolicyProvider>();
 builder.Services.AddSingleton<ICapabilityClassifier, CapabilityClassifier>();
+builder.Services.AddSingleton<TextNormalizer>();
+builder.Services.AddSingleton<SpeechCommandNormalizer>();
+builder.Services.AddSingleton<EmergencyIntentRouter>();
+builder.Services.AddSingleton<DomainRouter>();
+builder.Services.AddSingleton<CapabilityRegistry>();
+builder.Services.AddSingleton<CapabilityRouter>();
+builder.Services.AddSingleton<IIntentClassifier, DeterministicIntentClassifier>();
+builder.Services.AddSingleton<MerlinIntentRouter>();
 builder.Services.AddSingleton<IResponsePolisher, ResponsePolisher>();
+builder.Services.AddSingleton<IAssistantResponsePresentationFormatter, AssistantSpeechResponseFormatter>();
 builder.Services.AddSingleton<IConversationSummaryStore, ConversationSummaryStore>();
 builder.Services.AddSingleton<IConversationSessionService, ConversationSessionService>();
 builder.Services.AddSingleton<ILongTermMemoryStore, LongTermMemoryStore>();
@@ -45,21 +262,29 @@ builder.Services.AddSingleton<LocalAIIntentParser>();
 builder.Services.AddSingleton<IIntentParser, HybridIntentParser>();
 builder.Services.AddSingleton<ILocalAIHealthService, LocalAIHealthService>();
 builder.Services.AddSingleton<ILocalAIChatService, LocalAIChatService>();
+builder.Services.AddSingleton<LocalLlmProvider>();
 builder.Services.AddHostedService<LocalAIWarmupHostedService>();
 builder.Services.AddHttpClient<ILocalAIClient, OllamaLocalAIClient>();
+builder.Services.AddHttpClient<DeepInfraLlmProvider>();
 builder.Services.AddSingleton<ISystemResourceProvider, LocalSystemResourceProvider>();
 builder.Services.AddSingleton<IProcessLauncher, DefaultProcessLauncher>();
 builder.Services.AddSingleton<IRuntimeStateService, RuntimeStateService>();
 builder.Services.AddSingleton<IApplicationResolver, ApplicationResolver>();
 builder.Services.AddSingleton<IConfirmationService, ConfirmationService>();
+builder.Services.AddSingleton<IPendingInteractionService, PendingInteractionService>();
 builder.Services.AddSingleton<ITrustedApplicationStore, TrustedApplicationStore>();
 builder.Services.AddSingleton<ITrustedCommandStore, TrustedCommandStore>();
+builder.Services.AddSingleton<ITrustedUrlStore, TrustedUrlStore>();
 builder.Services.AddSingleton<ITool, OpenApplicationTool>();
 builder.Services.AddSingleton<ITool, OpenUrlTool>();
 builder.Services.AddSingleton<ITool, ToolDiscoveryTool>();
 builder.Services.AddSingleton<ITool, SystemResourceTool>();
 builder.Services.AddSingleton<ITool, StatusTool>();
 builder.Services.AddSingleton<ITool, ConfirmationTool>();
+builder.Services.AddSingleton<ITool, WakeMerlinTool>();
+builder.Services.AddSingleton<ITool, EditBrowserMappingTool>();
+builder.Services.AddSingleton<ITool, DeleteBrowserMappingTool>();
+builder.Services.AddSingleton<ITool, DevVisualStateTool>();
 builder.Services.AddSingleton<ITool, GeneralConversationTool>();
 builder.Services.AddSingleton<ToolRegistry>();
 builder.Services.AddSingleton<CommandRouter>();
@@ -68,6 +293,11 @@ builder.Services.AddSingleton<WebSocketHandler>();
 var app = builder.Build();
 
 app.UseWebSockets();
+
+if (app.Environment.IsDevelopment())
+{
+    app.MapMemoryDebugEndpoints();
+}
 
 app.Map("/ws", async context =>
 {
@@ -167,18 +397,66 @@ app.MapGet("/api/voice/stream-pcm-test", async (
     logger.LogInformation("Voice stream POC: stream complete. Chunks: {Chunks}. Samples: {Samples}.", chunkIndex, sentSamples);
 });
 
+app.MapGet("/api/tts/health", async (
+    IOptions<TtsOptions> options,
+    ChatterboxWorkerClient chatterboxWorker,
+    IWebHostEnvironment environment,
+    CancellationToken cancellationToken) =>
+{
+    var ttsOptions = options.Value;
+    var referencePath = Path.IsPathRooted(ttsOptions.ChatterboxReferenceVoicePath)
+        ? ttsOptions.ChatterboxReferenceVoicePath
+        : Path.GetFullPath(ttsOptions.ChatterboxReferenceVoicePath, environment.ContentRootPath);
+
+    if (!string.Equals(ttsOptions.Provider, "chatterbox", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.Ok(new
+        {
+            provider = ttsOptions.Provider,
+            fallbackProvider = ttsOptions.FallbackProvider,
+            chatterboxEnabled = false,
+            referenceVoiceExists = File.Exists(referencePath)
+        });
+    }
+
+    try
+    {
+        await chatterboxWorker.EnsureLoadedAsync(cancellationToken);
+        return Results.Ok(new
+        {
+            provider = ttsOptions.Provider,
+            fallbackProvider = ttsOptions.FallbackProvider,
+            chatterboxEnabled = true,
+            model = ttsOptions.ChatterboxModel,
+            device = ttsOptions.ChatterboxDevice,
+            referenceVoicePath = referencePath,
+            referenceVoiceExists = File.Exists(referencePath)
+        });
+    }
+    catch (Exception exception)
+    {
+        return Results.Problem(
+            title: "Chatterbox health check failed.",
+            detail: exception.Message,
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
 app.MapPost("/api/voice/synthesize-stream", async (
     Merlin.Backend.Models.SpeechSynthesisRequest request,
     HttpResponse response,
     ILogger<Program> logger,
+    ChatterboxTimingLogService timingLog,
     IVoiceSynthesisService voiceService,
     CancellationToken cancellationToken) =>
 {
     var started = System.Diagnostics.Stopwatch.StartNew();
+    var error = string.Empty;
     try
     {
         if (string.IsNullOrWhiteSpace(request.Text))
         {
+            error = "Text is required.";
             response.StatusCode = StatusCodes.Status400BadRequest;
             await response.WriteAsync("Text is required.", cancellationToken);
             return;
@@ -189,7 +467,7 @@ app.MapPost("/api/voice/synthesize-stream", async (
         response.Headers["X-Accel-Buffering"] = "no";
 
         logger.LogInformation(
-            "Voice timing: synthesize stream endpoint start. Provider: Piper. Chars: {Chars}.",
+            "Voice timing: synthesize stream endpoint start. Chars: {Chars}.",
             request.Text.Length);
 
         await voiceService.StreamSynthesizeAsync(
@@ -213,18 +491,32 @@ app.MapPost("/api/voice/synthesize-stream", async (
             cancellationToken);
 
         logger.LogInformation(
-            "Voice timing: synthesize stream endpoint complete. Provider: Piper. Chars: {Chars}. ElapsedMs: {ElapsedMs}.",
+            "Voice timing: synthesize stream endpoint complete. Chars: {Chars}. ElapsedMs: {ElapsedMs}.",
             request.Text.Length,
             started.Elapsed.TotalMilliseconds);
     }
     catch (Exception exception)
     {
-        logger.LogError(exception, "Piper voice stream synthesis failed.");
+        error = exception.Message;
+        logger.LogError(exception, "Voice stream synthesis failed.");
         if (!response.HasStarted)
         {
             response.StatusCode = StatusCodes.Status500InternalServerError;
             await response.WriteAsync(exception.Message, cancellationToken);
         }
+    }
+    finally
+    {
+        started.Stop();
+        timingLog.RecordEndpoint(new ChatterboxTimingLogService.EndpointTiming
+        {
+            Endpoint = "/api/voice/synthesize-stream",
+            Chars = request.Text?.Length ?? 0,
+            ElapsedMs = started.Elapsed.TotalMilliseconds,
+            ResponseStarted = response.HasStarted,
+            Ok = string.IsNullOrWhiteSpace(error),
+            Error = string.IsNullOrWhiteSpace(error) ? null : error
+        });
     }
 });
 

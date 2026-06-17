@@ -5,8 +5,8 @@ namespace Merlin.Backend.Services;
 public sealed class SpeechPolicyService : ISpeechPolicyService
 {
     private const string SourceVoice = "voice";
+    private const string SourceVoiceStream = "voice_stream";
     private const string ModeOrb = "orb";
-    private const string ModeChat = "chat";
 
     public SpeechPolicyDecision Decide(AssistantRequest? request, AssistantResponse response)
     {
@@ -22,9 +22,9 @@ public sealed class SpeechPolicyService : ISpeechPolicyService
 
         if (hasNewContext)
         {
-            var shouldSpeak = interactionSource == SourceVoice
+            var shouldSpeak = IsVoiceSource(interactionSource)
                 && clientMode == ModeOrb
-                && response.Success;
+                && ShouldSpeakResponse(response);
 
             return new SpeechPolicyDecision
             {
@@ -51,5 +51,30 @@ public sealed class SpeechPolicyService : ISpeechPolicyService
         return string.IsNullOrWhiteSpace(value)
             ? fallback
             : value.Trim().ToLowerInvariant();
+    }
+
+    private static bool IsVoiceSource(string interactionSource)
+    {
+        return interactionSource == SourceVoice
+            || interactionSource == SourceVoiceStream;
+    }
+
+    private static bool ShouldSpeakResponse(AssistantResponse response)
+    {
+        if (string.IsNullOrWhiteSpace(response.Message))
+        {
+            return false;
+        }
+
+        if (string.Equals(response.ResponseType, "dev_visual", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return response.Success
+            || string.Equals(response.ResponseType, "confirmation", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(response.ResponseType, "error", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(response.ResponseType, "limitation", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(response.ResponseType, "safety", StringComparison.OrdinalIgnoreCase);
     }
 }

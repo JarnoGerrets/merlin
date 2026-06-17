@@ -1,0 +1,19 @@
+# Merlin ToDo
+
+## Orb speaking settings voice command
+
+- Add a deterministic local command flow before the AI model for orb speaking settings.
+- Support setting and querying live orb speaking deformation settings by voice.
+- Required settings:
+  - speaking deformation strength
+  - speaking pose speed
+- Example commands:
+  - "please set speaksettings for the orb to 1"
+  - "set orb speaking speed to 1.2"
+  - "set orb speaking deform strength to 0.8"
+  - "what is current speaking speed for the orb?"
+  - "what is the current orb speaking deform strength?"
+  - "reset orb speaking settings"
+- Save values to a live settings file and load them on reboot.
+- Bypass the AI model when the command is handled locally.
+- Return a short confirmation/query response through the existing UI/speech response path.

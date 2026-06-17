@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Merlin.Backend.Models;
+using Merlin.Backend.Services.BargeIn;
 using NAudio.Wave;
 
 namespace Merlin.Backend.Services;
@@ -12,6 +13,8 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
     private const int BufferSpacePollMs = 10;
     private const int PlaybackBufferSeconds = 30;
     private readonly IVoiceSynthesisService _voiceSynthesisService;
+    private readonly IPlaybackReferenceTap _playbackReferenceTap;
+    private readonly ISpeakerDuckingService _speakerDuckingService;
     private readonly ILogger<AssistantSpeechPlaybackService> _logger;
     private readonly SemaphoreSlim _speechGate = new(1, 1);
     private readonly object _syncRoot = new();
@@ -20,9 +23,13 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
 
     public AssistantSpeechPlaybackService(
         IVoiceSynthesisService voiceSynthesisService,
+        IPlaybackReferenceTap playbackReferenceTap,
+        ISpeakerDuckingService speakerDuckingService,
         ILogger<AssistantSpeechPlaybackService> logger)
     {
         _voiceSynthesisService = voiceSynthesisService;
+        _playbackReferenceTap = playbackReferenceTap;
+        _speakerDuckingService = speakerDuckingService;
         _logger = logger;
     }
 
@@ -30,7 +37,11 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
         string text,
         string? correlationId,
         Func<AssistantVisualEvent, CancellationToken, Task> sendEventAsync,
-        CancellationToken cancellationToken)
+        string? speechCacheKey,
+        bool? isReplayableSpeech,
+        CancellationToken cancellationToken,
+        SpeechPlaybackItemType itemType = SpeechPlaybackItemType.FinalAnswer,
+        bool cancelOnlyBeforePlayback = false)
     {
         var spokenText = text.Trim();
         if (string.IsNullOrWhiteSpace(spokenText))
@@ -40,7 +51,16 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
 
         var queueGeneration = Volatile.Read(ref _queueGeneration);
         _ = Task.Run(
-            () => SpeakQueuedAsync(spokenText, correlationId, queueGeneration, sendEventAsync, cancellationToken),
+            () => SpeakQueuedAsync(
+                spokenText,
+                correlationId,
+                queueGeneration,
+                sendEventAsync,
+                speechCacheKey,
+                isReplayableSpeech,
+                itemType,
+                cancelOnlyBeforePlayback,
+                cancellationToken),
             CancellationToken.None);
 
         return Task.CompletedTask;
@@ -58,6 +78,18 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
         return Task.CompletedTask;
     }
 
+    public Task PauseCurrentSpeechAsync(CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Speech playback soft pause requested. Current backend uses speaker ducking as the safe pause fallback.");
+        return Task.CompletedTask;
+    }
+
+    public Task ResumeCurrentSpeechAsync(CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Speech playback resume requested. Current backend restores speaker ducking volume and keeps the active queue alive.");
+        return Task.CompletedTask;
+    }
+
     public Task ClearQueueAsync(CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref _queueGeneration);
@@ -69,18 +101,35 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
         string? correlationId,
         long queueGeneration,
         Func<AssistantVisualEvent, CancellationToken, Task> sendEventAsync,
+        string? speechCacheKey,
+        bool? isReplayableSpeech,
+        SpeechPlaybackItemType itemType,
+        bool cancelOnlyBeforePlayback,
         CancellationToken cancellationToken)
     {
         try
         {
+            if (itemType is SpeechPlaybackItemType.FinalAnswer && _speechGate.CurrentCount == 0)
+            {
+                _logger.LogInformation(
+                    "Final answer waiting for active acknowledgement/progress playback to finish. CorrelationId: {CorrelationId}.",
+                    correlationId);
+            }
+
             await _speechGate.WaitAsync(cancellationToken);
         }
         catch (OperationCanceledException)
         {
+            _logger.LogInformation(
+                "Speech playback item cancelled before start. CorrelationId: {CorrelationId}. ItemType: {ItemType}.",
+                correlationId,
+                itemType);
             return;
         }
 
-        using var speechCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var speechCancellation = cancelOnlyBeforePlayback
+            ? new CancellationTokenSource()
+            : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         lock (_syncRoot)
         {
             _activeSpeechCancellation = speechCancellation;
@@ -90,10 +139,58 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
         {
             if (queueGeneration != Volatile.Read(ref _queueGeneration))
             {
+                _logger.LogInformation(
+                    "Speech playback item skipped because queue generation changed. CorrelationId: {CorrelationId}. ItemType: {ItemType}.",
+                    correlationId,
+                    itemType);
                 return;
             }
 
-            await SpeakAsync(text, correlationId, sendEventAsync, speechCancellation.Token);
+            if (cancelOnlyBeforePlayback && cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogInformation(
+                    "Speech playback item cancelled before active playback. CorrelationId: {CorrelationId}. ItemType: {ItemType}.",
+                    correlationId,
+                    itemType);
+                return;
+            }
+
+            if (itemType is SpeechPlaybackItemType.FinalAnswer)
+            {
+                _logger.LogInformation(
+                    "Final answer playback allowed to start. CorrelationId: {CorrelationId}.",
+                    correlationId);
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "Speech playback item active. CorrelationId: {CorrelationId}. ItemType: {ItemType}. Active playback will not be interrupted by pending-work cancellation.",
+                    correlationId,
+                    itemType);
+                if (itemType is SpeechPlaybackItemType.Progress)
+                {
+                    _logger.LogInformation(
+                        "Progress playback not interrupted because it was already active. CorrelationId: {CorrelationId}.",
+                        correlationId);
+                }
+            }
+
+            await SpeakAsync(
+                text,
+                correlationId,
+                sendEventAsync,
+                speechCacheKey,
+                isReplayableSpeech,
+                itemType,
+                speechCancellation.Token);
+
+            if (itemType is SpeechPlaybackItemType.Acknowledgement or SpeechPlaybackItemType.Progress)
+            {
+                _logger.LogInformation(
+                    "Active acknowledgement/progress playback completed. CorrelationId: {CorrelationId}. ItemType: {ItemType}.",
+                    correlationId,
+                    itemType);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -123,6 +220,9 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
         string text,
         string? correlationId,
         Func<AssistantVisualEvent, CancellationToken, Task> sendEventAsync,
+        string? speechCacheKey,
+        bool? isReplayableSpeech,
+        SpeechPlaybackItemType itemType,
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -134,9 +234,17 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
         var totalBytes = 0;
         var sampleRate = 0;
         var channels = 0;
+        var speechContext = new BargeInSpeechContext
+        {
+            AssistantTurnId = string.IsNullOrWhiteSpace(correlationId) ? Guid.NewGuid().ToString("N") : correlationId,
+            CorrelationId = correlationId,
+            SpeechType = itemType,
+            SpokenText = text
+        };
 
         try
         {
+            using var logContext = SpeechSynthesisLogContext.Push(speechCacheKey, isReplayableSpeech);
             await _voiceSynthesisService.StreamSynthesizeAsync(
                 text,
                 (metadata, token) =>
@@ -170,6 +278,7 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
 
                     var buffer = audio.ToArray();
                     await WaitForPlaybackBufferSpaceAsync(bufferedWaveProvider, buffer.Length, token);
+                    _playbackReferenceTap.PushPcm16Reference(buffer, sampleRate, channels, correlationId);
                     bufferedWaveProvider.AddSamples(buffer, 0, buffer.Length);
                     totalBytes += buffer.Length;
 
@@ -177,7 +286,9 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
                     {
                         playbackStarted = true;
                         playbackStopwatch.Start();
+                        waveOut.Volume = _speakerDuckingService.CurrentVolumeMultiplier;
                         waveOut.Play();
+                        _playbackReferenceTap.NotifySpeechStarted(speechContext);
                         await TrySendEventAsync(sendEventAsync, "SPEAKING_START", correlationId, null, token);
                         _logger.LogInformation(
                             "Voice timing: backend playback started. CorrelationId: {CorrelationId}. ElapsedMs: {ElapsedMs}.",
@@ -188,6 +299,7 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
                     if (lastEnergyEvent.ElapsedMilliseconds >= EnergyEventIntervalMs)
                     {
                         lastEnergyEvent.Restart();
+                        waveOut.Volume = _speakerDuckingService.CurrentVolumeMultiplier;
                         await TrySendEnergyAsync(sendEventAsync, correlationId, buffer, token);
                     }
                 },
@@ -226,6 +338,11 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
         }
         finally
         {
+            if (playbackStarted)
+            {
+                _playbackReferenceTap.NotifySpeechStopped(speechContext);
+            }
+
             waveOut?.Dispose();
         }
     }

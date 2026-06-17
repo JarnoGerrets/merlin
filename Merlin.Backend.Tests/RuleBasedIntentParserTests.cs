@@ -102,6 +102,44 @@ public sealed class RuleBasedIntentParserTests
     }
 
     [Theory]
+    [InlineData("yes please do")]
+    [InlineData("please do so")]
+    [InlineData("sure do so")]
+    [InlineData("okay please do so")]
+    [InlineData("open that as a website")]
+    [InlineData("that works")]
+    [InlineData("sure go ahead")]
+    [InlineData("no thanks")]
+    [InlineData("please don't do that")]
+    public async Task ParseAsync_WhenMessageIsConfirmationPhrase_ReturnsConfirmationIntent(string message)
+    {
+        var parser = new RuleBasedIntentParser(TestApplicationLaunchOptions.Create());
+
+        var result = await parser.ParseAsync(message);
+
+        Assert.Equal("confirmation", result.Intent);
+        Assert.Equal(message, result.NormalizedCommand);
+        Assert.Equal("confirmation", result.CapabilityId);
+        Assert.True(result.Confidence >= 0.9);
+    }
+
+    [Theory]
+    [InlineData("please activate thinking state for 30 seconds")]
+    [InlineData("run dev flow thinking to speaking to error")]
+    [InlineData("check visual flow listening to thinking to speaking to idle for 4 seconds each")]
+    public async Task ParseAsync_WhenMessageIsDevVisualCommand_ReturnsDevVisualIntent(string message)
+    {
+        var parser = new RuleBasedIntentParser(TestApplicationLaunchOptions.Create());
+
+        var result = await parser.ParseAsync(message);
+
+        Assert.Equal("dev_visual_state", result.Intent);
+        Assert.Equal(message, result.NormalizedCommand);
+        Assert.Equal("dev_visual_state", result.CapabilityId);
+        Assert.True(result.Confidence >= 0.9);
+    }
+
+    [Theory]
     [InlineData("tell me a joke")]
     [InlineData("who are you")]
     [InlineData("how do you work")]
@@ -177,5 +215,61 @@ public sealed class RuleBasedIntentParserTests
         Assert.Equal("open_application", result.Intent);
         Assert.Equal("open paint", result.NormalizedCommand);
         Assert.True(result.Confidence >= 0.7);
+    }
+
+    [Fact]
+    public async Task ParseAsync_WhenMessagePullsUpBareWebsiteName_ReturnsOpenApplicationForFallback()
+    {
+        var parser = new RuleBasedIntentParser(TestApplicationLaunchOptions.Create());
+
+        var result = await parser.ParseAsync("can you pull up facebook for me");
+
+        Assert.Equal("open_application", result.Intent);
+        Assert.Equal("open facebook", result.NormalizedCommand);
+        Assert.True(result.Confidence >= 0.7);
+    }
+
+    [Fact]
+    public async Task ParseAsync_WhenMessageEditsBrowserMapping_ReturnsEditBrowserMappingIntent()
+    {
+        var parser = new RuleBasedIntentParser(TestApplicationLaunchOptions.Create());
+
+        var result = await parser.ParseAsync("Can you please edit the domain of terminal from .com to .co.uk?");
+
+        Assert.Equal("edit_browser_mapping", result.Intent);
+        Assert.Equal("edit browser mapping terminal to .co.uk", result.NormalizedCommand);
+        Assert.Equal("browser_mapping", result.CapabilityId);
+        Assert.True(result.Confidence >= 0.9);
+    }
+
+    [Theory]
+    [InlineData("Can you edit domain of terminal?", "edit browser mapping terminal")]
+    [InlineData("Can you edit the browser mapping of terminal?", "edit browser mapping terminal")]
+    [InlineData("Edit browser mapping terminal", "edit browser mapping terminal")]
+    public async Task ParseAsync_WhenMessageStartsBrowserMappingEdit_ReturnsPendingEditIntent(
+        string message,
+        string expectedCommand)
+    {
+        var parser = new RuleBasedIntentParser(TestApplicationLaunchOptions.Create());
+
+        var result = await parser.ParseAsync(message);
+
+        Assert.Equal("edit_browser_mapping", result.Intent);
+        Assert.Equal(expectedCommand, result.NormalizedCommand);
+        Assert.Equal("browser_mapping", result.CapabilityId);
+        Assert.True(result.Confidence >= 0.9);
+    }
+
+    [Fact]
+    public async Task ParseAsync_WhenMessageEditsBrowserMappingOfAliasWithTarget_ReturnsEditIntent()
+    {
+        var parser = new RuleBasedIntentParser(TestApplicationLaunchOptions.Create());
+
+        var result = await parser.ParseAsync("Can you edit the browser mapping of terminal to terminal.co.uk?");
+
+        Assert.Equal("edit_browser_mapping", result.Intent);
+        Assert.Equal("edit browser mapping terminal to terminal.co.uk", result.NormalizedCommand);
+        Assert.Equal("browser_mapping", result.CapabilityId);
+        Assert.True(result.Confidence >= 0.9);
     }
 }

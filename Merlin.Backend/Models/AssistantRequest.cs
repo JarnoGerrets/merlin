@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Merlin.Backend.Models;
 
 public sealed class AssistantRequest
@@ -11,4 +13,10 @@ public sealed class AssistantRequest
     public string? InteractionSource { get; init; }
 
     public string? ClientMode { get; init; }
+
+    [JsonIgnore]
+    public Func<AssistantVisualEvent, CancellationToken, Task>? SpeechEventSender { get; init; }
+
+    [JsonIgnore]
+    public DateTimeOffset? ReceivedAtUtc { get; init; }
 }

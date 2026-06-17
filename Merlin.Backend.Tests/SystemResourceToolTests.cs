@@ -41,7 +41,7 @@ public sealed class SystemResourceToolTests
 
         Assert.True(result.Success);
         Assert.Equal("system_date", result.CapabilityId);
-        Assert.Contains("2026-06-10", result.Message);
+        Assert.Contains("10-06-2026", result.Message);
     }
 
     [Fact]

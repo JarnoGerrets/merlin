@@ -71,7 +71,7 @@ public sealed class SystemResourceTool : ITool
     {
         var currentDate = _systemResourceProvider.GetCurrentLocalDate();
         return Success(
-            $"Today's local date is {currentDate:yyyy-MM-dd}.",
+            $"Today's local date is {currentDate:dd-MM-yyyy}.",
             "system_date",
             "System Date");
     }

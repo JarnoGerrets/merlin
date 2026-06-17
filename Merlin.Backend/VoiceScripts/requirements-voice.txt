@@ -1,1 +1,5 @@
 faster-whisper
+# ctranslate2 4.8.0 hard-crashes on some Godot-recorded WAVs on Windows.
+ctranslate2==4.7.2
+# resemble-perth imports pkg_resources during Chatterbox load.
+setuptools<81

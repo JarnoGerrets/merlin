@@ -102,6 +102,57 @@ public sealed class CommandRouterTests
     }
 
     [Fact]
+    public async Task RouteAsync_WhenVoiceCommandContainsSpokenDomain_NormalizesBeforeParsing()
+    {
+        var launcher = new FakeProcessLauncher();
+        var router = new CommandRouter(
+            new RuleBasedIntentParser(TestApplicationLaunchOptions.Create()),
+            new ToolRegistry([new OpenUrlTool(launcher)]),
+            NullLogger<CommandRouter>.Instance,
+            new RuntimeStateService(),
+            new NoOpResponsePolisher(),
+            new SpeechCommandNormalizer());
+
+        var response = await router.RouteAsync(new AssistantRequest
+        {
+            Message = "open terminal dot nl",
+            InteractionSource = "voice"
+        });
+
+        Assert.True(response.Success);
+        Assert.Equal("Open URL", response.ToolName);
+        Assert.Equal("open_url", response.Intent);
+        Assert.Equal("open terminal.nl", response.OriginalMessage);
+        Assert.Equal("https://terminal.nl", launcher.LaunchedTarget);
+    }
+
+    [Fact]
+    public async Task RouteAsync_WhenVoiceMappingEditContainsDottedDomain_PreservesDomain()
+    {
+        var store = new FakeTrustedUrlStore();
+        store.SaveMapping("terminal", "https://terminal.com", "terminal.com");
+        var router = new CommandRouter(
+            new RuleBasedIntentParser(TestApplicationLaunchOptions.Create()),
+            new ToolRegistry([new EditBrowserMappingTool(store)]),
+            NullLogger<CommandRouter>.Instance,
+            new RuntimeStateService(),
+            new NoOpResponsePolisher(),
+            new SpeechCommandNormalizer());
+
+        var response = await router.RouteAsync(new AssistantRequest
+        {
+            Message = "Can you change terminal browser mapping to terminal.nl?",
+            InteractionSource = "voice"
+        });
+
+        Assert.True(response.Success);
+        Assert.Equal("Edit Browser Mapping", response.ToolName);
+        Assert.Equal("edit_browser_mapping", response.Intent);
+        Assert.Equal("can you change terminal browser mapping to terminal.nl?", response.OriginalMessage);
+        Assert.Equal("https://terminal.nl", store.FindByAlias("terminal")?.Url);
+    }
+
+    [Fact]
     public async Task RouteAsync_WhenCommandIsUnknown_ReturnsUnknownCommand()
     {
         var router = CreateRouter();
@@ -331,7 +382,7 @@ public sealed class CommandRouterTests
         Assert.Equal("system_resource_query", response.Intent);
         Assert.Equal("system_date", response.CapabilityId);
         Assert.Equal("assistant", response.ResponseType);
-        Assert.Contains("2026-06-10", response.Message);
+        Assert.Contains("10-06-2026", response.Message);
     }
 
     private static CommandRouter CreateRouter(params ITool[] tools)
@@ -429,8 +480,11 @@ public sealed class CommandRouterTests
 
     private sealed class FakeProcessLauncher : IProcessLauncher
     {
+        public string? LaunchedTarget { get; private set; }
+
         public Task LaunchAsync(string target, CancellationToken cancellationToken = default)
         {
+            LaunchedTarget = target;
             return Task.CompletedTask;
         }
     }

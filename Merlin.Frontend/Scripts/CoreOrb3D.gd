@@ -14,6 +14,7 @@ var visual_state := {
 	"speech_energy": 0.0,
 	"thinking_intensity": 0.0,
 	"error_intensity": 0.0,
+	"confirmation_intensity": 0.0,
 	"tool_intensity": 0.0,
 }
 
@@ -26,7 +27,7 @@ func _ready() -> void:
 
 
 func set_idle() -> void:
-	update_visual_state({ "mode": "idle", "energy": 0.0, "thinking_intensity": 0.0, "error_intensity": 0.0, "tool_intensity": 0.0 })
+	update_visual_state({ "mode": "idle", "energy": 0.0, "thinking_intensity": 0.0, "tool_intensity": 0.0 })
 	state_changed.emit("idle")
 
 
@@ -62,14 +63,23 @@ func play_tool_execution(duration: float = 2.5) -> void:
 
 func play_error(duration: float = 3.0) -> void:
 	_temporary_state_token += 1
-	update_visual_state({ "mode": "error", "energy": 0.62, "error_intensity": 1.0 })
+	update_visual_state({ "energy": maxf(float(visual_state.get("energy", 0.0)), 0.62), "error_intensity": 1.0 })
 	state_changed.emit("error")
 
 
 func play_confirmation() -> void:
 	_temporary_state_token += 1
-	update_visual_state({ "mode": "confirmation", "energy": 0.36 })
+	update_visual_state({ "energy": maxf(float(visual_state.get("energy", 0.0)), 0.36), "confirmation_intensity": 1.0 })
 	state_changed.emit("confirmation")
+
+
+func set_overlay_intensity(kind: String, strength: float) -> void:
+	var clamped := clampf(strength, 0.0, 1.0)
+	match kind:
+		"error":
+			update_visual_state({ "error_intensity": clamped })
+		"confirmation":
+			update_visual_state({ "confirmation_intensity": clamped })
 
 
 func notify_speech_tick(character: String = "", delay: float = 0.0, progress: float = 0.0) -> void:

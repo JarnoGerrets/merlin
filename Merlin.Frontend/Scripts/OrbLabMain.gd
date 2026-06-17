@@ -30,6 +30,14 @@ var _auto_tick_timer := 0.0
 var _speech_progress := 0.0
 var _energy_slider: HSlider
 var _energy_value_label: Label
+var _deformation_prototype_toggle: CheckBox
+var _deformation_static_toggle: CheckBox
+var _deformation_connections_toggle: CheckBox
+var _deformation_particles_toggle: CheckBox
+var _deformation_strength_slider: HSlider
+var _deformation_strength_value_label: Label
+var _deformation_static_amount_slider: HSlider
+var _deformation_static_amount_value_label: Label
 var _auto_button: Button
 var _rotation_enabled_toggle: CheckBox
 var _yaw_slider: HSlider
@@ -166,6 +174,7 @@ func _build_state_buttons() -> void:
 		_set_status("Thinking")
 	)
 	_add_state_button("Speaking", func() -> void:
+		_enable_speaking_deformation_preview()
 		core_orb.set_speaking()
 		_set_status("Speaking")
 	)
@@ -218,9 +227,82 @@ func _build_speech_controls() -> void:
 	_energy_value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	speech_row.add_child(_energy_value_label)
 
+	_deformation_prototype_toggle = CheckBox.new()
+	_deformation_prototype_toggle.text = "Deform"
+	_deformation_prototype_toggle.toggled.connect(func(_enabled: bool) -> void:
+		_apply_deformation_prototype_controls()
+	)
+	speech_row.add_child(_deformation_prototype_toggle)
+
+	_deformation_static_toggle = CheckBox.new()
+	_deformation_static_toggle.text = "Static"
+	_deformation_static_toggle.toggled.connect(func(_enabled: bool) -> void:
+		_apply_deformation_prototype_controls()
+	)
+	speech_row.add_child(_deformation_static_toggle)
+
+	_deformation_connections_toggle = CheckBox.new()
+	_deformation_connections_toggle.text = "Lines"
+	_deformation_connections_toggle.button_pressed = true
+	_deformation_connections_toggle.toggled.connect(func(_enabled: bool) -> void:
+		_apply_deformation_prototype_controls()
+	)
+	speech_row.add_child(_deformation_connections_toggle)
+
+	_deformation_particles_toggle = CheckBox.new()
+	_deformation_particles_toggle.text = "Particles"
+	_deformation_particles_toggle.button_pressed = true
+	_deformation_particles_toggle.toggled.connect(func(_enabled: bool) -> void:
+		_apply_deformation_prototype_controls()
+	)
+	speech_row.add_child(_deformation_particles_toggle)
+
+	var deformation_label := Label.new()
+	deformation_label.text = "Strength"
+	deformation_label.custom_minimum_size = Vector2(58.0, 0.0)
+	speech_row.add_child(deformation_label)
+
+	_deformation_strength_slider = HSlider.new()
+	_deformation_strength_slider.min_value = 0.0
+	_deformation_strength_slider.max_value = 1.5
+	_deformation_strength_slider.step = 0.01
+	_deformation_strength_slider.value = 0.8
+	_deformation_strength_slider.custom_minimum_size = Vector2(110.0, 0.0)
+	_deformation_strength_slider.value_changed.connect(func(_value: float) -> void:
+		_apply_deformation_prototype_controls()
+	)
+	speech_row.add_child(_deformation_strength_slider)
+
+	_deformation_strength_value_label = Label.new()
+	_deformation_strength_value_label.custom_minimum_size = Vector2(42.0, 0.0)
+	_deformation_strength_value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	speech_row.add_child(_deformation_strength_value_label)
+
+	var static_amount_label := Label.new()
+	static_amount_label.text = "Pose"
+	static_amount_label.custom_minimum_size = Vector2(42.0, 0.0)
+	speech_row.add_child(static_amount_label)
+
+	_deformation_static_amount_slider = HSlider.new()
+	_deformation_static_amount_slider.min_value = 0.0
+	_deformation_static_amount_slider.max_value = 1.0
+	_deformation_static_amount_slider.step = 0.01
+	_deformation_static_amount_slider.value = 0.0
+	_deformation_static_amount_slider.custom_minimum_size = Vector2(100.0, 0.0)
+	_deformation_static_amount_slider.value_changed.connect(func(_value: float) -> void:
+		_apply_deformation_prototype_controls()
+	)
+	speech_row.add_child(_deformation_static_amount_slider)
+
+	_deformation_static_amount_value_label = Label.new()
+	_deformation_static_amount_value_label.custom_minimum_size = Vector2(42.0, 0.0)
+	_deformation_static_amount_value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	speech_row.add_child(_deformation_static_amount_value_label)
+
 	var tick_button := Button.new()
 	tick_button.text = "Speech Tick"
 	tick_button.pressed.connect(func() -> void:
+		_enable_speaking_deformation_preview()
 		core_orb.set_speaking()
 		_send_speech_tick()
 		_set_status("Speaking tick %.2f" % _energy_slider.value)
@@ -234,6 +316,7 @@ func _build_speech_controls() -> void:
 		_auto_speech = _auto_button.button_pressed
 		_auto_tick_timer = 0.0
 		if _auto_speech:
+			_enable_speaking_deformation_preview()
 			core_orb.set_speaking()
 			_set_status("Speaking auto")
 		else:
@@ -241,6 +324,7 @@ func _build_speech_controls() -> void:
 	)
 	speech_row.add_child(_auto_button)
 	_apply_energy_slider()
+	_apply_deformation_prototype_controls()
 
 
 func _build_rotation_controls() -> void:
@@ -1370,6 +1454,35 @@ func _apply_energy_slider() -> void:
 		_energy_value_label.text = "%.2f" % _energy_slider.value
 	if core_orb != null:
 		core_orb.set_speech_energy_override(float(_energy_slider.value))
+
+
+func _apply_deformation_prototype_controls() -> void:
+	if _deformation_strength_value_label != null and _deformation_strength_slider != null:
+		_deformation_strength_value_label.text = "%.2f" % _deformation_strength_slider.value
+	if _deformation_static_amount_value_label != null and _deformation_static_amount_slider != null:
+		_deformation_static_amount_value_label.text = "%.2f" % _deformation_static_amount_slider.value
+	if core_orb == null:
+		return
+	core_orb.apply_orb_lab_parameter("enable_deformation_prototype", _deformation_prototype_toggle.button_pressed if _deformation_prototype_toggle != null else false)
+	core_orb.apply_orb_lab_parameter("deformation_debug_static_pose", _deformation_static_toggle.button_pressed if _deformation_static_toggle != null else false)
+	core_orb.apply_orb_lab_parameter("deformation_debug_connections_enabled", _deformation_connections_toggle.button_pressed if _deformation_connections_toggle != null else true)
+	core_orb.apply_orb_lab_parameter("deformation_debug_particles_enabled", _deformation_particles_toggle.button_pressed if _deformation_particles_toggle != null else true)
+	if _deformation_strength_slider != null:
+		core_orb.apply_orb_lab_parameter("deformation_prototype_strength", float(_deformation_strength_slider.value))
+	if _deformation_static_amount_slider != null:
+		core_orb.apply_orb_lab_parameter("deformation_debug_static_amount", float(_deformation_static_amount_slider.value))
+
+
+func _enable_speaking_deformation_preview() -> void:
+	if _deformation_prototype_toggle != null:
+		_deformation_prototype_toggle.button_pressed = true
+	if _deformation_static_toggle != null:
+		_deformation_static_toggle.button_pressed = false
+	if _deformation_connections_toggle != null:
+		_deformation_connections_toggle.button_pressed = true
+	if _deformation_particles_toggle != null:
+		_deformation_particles_toggle.button_pressed = true
+	_apply_deformation_prototype_controls()
 
 
 func _apply_manual_rotation() -> void:

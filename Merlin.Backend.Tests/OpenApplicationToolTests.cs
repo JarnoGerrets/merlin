@@ -19,6 +19,7 @@ public sealed class OpenApplicationToolTests
     [InlineData("open paint")]
     [InlineData("start calc")]
     [InlineData("launch visual studio code")]
+    [InlineData("pull up facebook")]
     [InlineData("open web browser")]
     public void CanHandle_WhenCommandIsSupported_ReturnsTrue(string command)
     {
@@ -84,6 +85,7 @@ public sealed class OpenApplicationToolTests
 
         Assert.False(result.Success);
         Assert.Equal("CONFIRMATION_REQUIRED", result.ErrorCode);
+        Assert.Equal("confirmation", result.ResponseType);
         Assert.NotNull(result.Confirmation);
         Assert.Equal("could you open paint for me", result.Confirmation.OriginalUserCommand);
         Assert.Equal("open paint", result.Confirmation.NormalizedCommand);
@@ -120,6 +122,61 @@ public sealed class OpenApplicationToolTests
         Assert.Equal("Opening Paint...", result.Message);
         Assert.Null(result.Confirmation);
         Assert.Equal("mspaint.exe", launcher.LaunchedTarget);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenAppIsNotFound_AsksToOpenDotComInBrowser()
+    {
+        var confirmationService = new ConfirmationService();
+        var tool = new OpenApplicationTool(
+            TestApplicationLaunchOptions.Create(),
+            new FakeApplicationResolver(new ApplicationResolutionResult { Found = false }),
+            confirmationService,
+            new FakeProcessLauncher());
+
+        var result = await tool.ExecuteAsync(
+            new ToolExecutionContext
+            {
+                OriginalMessage = "can you open facebook",
+                NormalizedCommand = "open facebook",
+                Intent = "open_application"
+            });
+
+        Assert.False(result.Success);
+        Assert.Equal("CONFIRMATION_REQUIRED", result.ErrorCode);
+        Assert.Equal("confirmation", result.ResponseType);
+        Assert.NotNull(result.Confirmation);
+        Assert.Equal("open_url_fallback", result.Confirmation.Action);
+        Assert.Equal("https://facebook.com", result.Confirmation.Target);
+        Assert.Equal("facebook.com", result.Confirmation.DisplayName);
+        Assert.Contains("Should I open facebook.com as a website instead?", result.Message);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenPullUpBareWebsiteName_AsksToOpenDotComInBrowser()
+    {
+        var confirmationService = new ConfirmationService();
+        var tool = new OpenApplicationTool(
+            TestApplicationLaunchOptions.Create(),
+            new FakeApplicationResolver(new ApplicationResolutionResult { Found = false }),
+            confirmationService,
+            new FakeProcessLauncher());
+
+        var result = await tool.ExecuteAsync(
+            new ToolExecutionContext
+            {
+                OriginalMessage = "can you pull up facebook for me",
+                NormalizedCommand = "pull up facebook for me",
+                Intent = "open_application"
+            });
+
+        Assert.False(result.Success);
+        Assert.Equal("CONFIRMATION_REQUIRED", result.ErrorCode);
+        Assert.Equal("confirmation", result.ResponseType);
+        Assert.NotNull(result.Confirmation);
+        Assert.Equal("open_url_fallback", result.Confirmation.Action);
+        Assert.Equal("https://facebook.com", result.Confirmation.Target);
+        Assert.Equal("facebook.com", result.Confirmation.DisplayName);
     }
 
     private static OpenApplicationTool CreateTool()
