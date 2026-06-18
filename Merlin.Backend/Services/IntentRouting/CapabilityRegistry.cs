@@ -29,6 +29,10 @@ public sealed class CapabilityRegistry
         new("app.focus", IntentDomain.AppControl, "Focus or switch to an application.", "ApplicationTool.Focus", ["focus", "switch to"], [], 0.78),
 
         new("url.open", IntentDomain.WebSearch, "Open a safe HTTP or HTTPS URL in the default browser.", "OpenUrlTool.Open", ["open", "go to", "take me to", "browse", "visit"], [], 0.72),
+        new("web_search", IntentDomain.WebSearch, "Search public web results and return source metadata.", "WebSearchTool.Search", ["search web", "search the web", "search internet"], ["folder", "file", "email", "meeting"], 0.72),
+        new("web_research", IntentDomain.WebSearch, "Research public web sources for current or source-aware answers.", "WebResearchTool.Research", ["latest", "current", "pricing", "official docs", "documentation", "known issue"], ["folder", "file", "email", "meeting"], 0.78),
+        new("codex_research", IntentDomain.WebSearch, "Read project context and compare with external documentation.", "CodexResearch.Read", ["our setup", "this repo", "our code", "codebase", "compared to official docs"], [], 0.78),
+        new("codex_implementation", IntentDomain.WebSearch, "Make repository changes after explicit implementation intent.", "CodexImplementation.Apply", ["fix our", "implement", "update the config", "change the backend"], [], 0.82),
 
         new("memory.search", IntentDomain.Memory, "Search personal or long-term memory.", "MemoryTool.Search", ["remember", "memory of", "last time we talked"], ["ram", "system memory"], 0.76),
         new("memory.save", IntentDomain.Memory, "Save information to memory.", "MemoryTool.Save", ["remember this", "save this"], [], 0.76),

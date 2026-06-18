@@ -69,6 +69,7 @@ public sealed class LocalAIChatService : ILocalAIChatService
             var cloudResult = await TryDeepInfraAsync(cloudMessages, cancellationToken);
             if (cloudResult.Success && !string.IsNullOrWhiteSpace(cloudResult.Message))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 _logger.LogInformation("LLM provider used: DeepInfra.");
                 _sessionService.AddUserMessage(message);
                 _sessionService.AddAssistantMessage(cloudResult.Message);
@@ -214,6 +215,7 @@ public sealed class LocalAIChatService : ILocalAIChatService
         var response = notifyUser
             ? $"{CloudFallbackNotice}{Environment.NewLine}{Environment.NewLine}{localResult.Message}"
             : localResult.Message;
+        cancellationToken.ThrowIfCancellationRequested();
         _sessionService.AddUserMessage(userMessage);
         _sessionService.AddAssistantMessage(localResult.Message);
         return new LocalAIChatResult

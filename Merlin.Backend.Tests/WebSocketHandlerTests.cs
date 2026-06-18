@@ -19,6 +19,7 @@ public sealed class WebSocketHandlerTests
                 NullLogger<CommandRouter>.Instance,
                 runtimeStateService,
                 new NoOpResponsePolisher()),
+            new LiveAssistantTurnService(NullLogger<LiveAssistantTurnService>.Instance),
             new NoOpAssistantSpeechPlaybackService(),
             new SpeechPolicyService(),
             NullLogger<WebSocketHandler>.Instance,

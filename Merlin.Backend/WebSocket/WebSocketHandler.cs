@@ -10,6 +10,7 @@ public sealed class WebSocketHandler
 {
     private static readonly JsonSerializerOptions JsonSerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly CommandRouter _commandRouter;
+    private readonly ILiveAssistantTurnService _liveTurnService;
     private readonly IAssistantSpeechPlaybackService _speechPlaybackService;
     private readonly ISpeechPolicyService _speechPolicyService;
     private readonly ILogger<WebSocketHandler> _logger;
@@ -18,6 +19,7 @@ public sealed class WebSocketHandler
 
     public WebSocketHandler(
         CommandRouter commandRouter,
+        ILiveAssistantTurnService liveTurnService,
         IAssistantSpeechPlaybackService speechPlaybackService,
         ISpeechPolicyService speechPolicyService,
         ILogger<WebSocketHandler> logger,
@@ -25,6 +27,7 @@ public sealed class WebSocketHandler
         VoiceStreamSessionService voiceStreamSessionService)
     {
         _commandRouter = commandRouter;
+        _liveTurnService = liveTurnService;
         _speechPlaybackService = speechPlaybackService;
         _speechPolicyService = speechPolicyService;
         _logger = logger;
@@ -105,14 +108,24 @@ public sealed class WebSocketHandler
             var request = DeserializeRequest(message);
             var response = request is null
                 ? await ProcessMessageAsync(message, cancellationToken)
-                : await ProcessRequestAsync(
+                : await ProcessLiveRequestAsync(
                     request,
                     visualEvent => SendVisualEventAsync(webSocket, sendGate, visualEvent, cancellationToken),
                     cancellationToken);
-            await SendResponseAsync(webSocket, sendGate, response, cancellationToken);
-            StartDevVisualFlowIfNeeded(webSocket, sendGate, response, setDevVisualFlowCancellation, cancellationToken);
 
-            await QueueSpeechIfNeededAsync(webSocket, sendGate, request, response, cancellationToken);
+            try
+            {
+                if (CanEmitTurn(response.CorrelationId))
+                {
+                    await SendResponseAsync(webSocket, sendGate, response, cancellationToken);
+                    StartDevVisualFlowIfNeeded(webSocket, sendGate, response, setDevVisualFlowCancellation, cancellationToken);
+                    await QueueSpeechIfNeededAsync(webSocket, sendGate, request, response, cancellationToken);
+                }
+            }
+            finally
+            {
+                CompleteLiveTurnIfNeeded(request, response.CorrelationId);
+            }
         }
     }
 
@@ -212,38 +225,51 @@ public sealed class WebSocketHandler
                     }
                     else
                     {
-                        response = await _commandRouter.RouteAsync(
+                        response = await ProcessLiveRequestAsync(
                             new AssistantRequest
                             {
                                 Message = transcript,
                                 CorrelationId = correlationId,
                                 InteractionSource = "voice_stream",
                                 ClientMode = envelope.ClientMode,
-                                ReceivedAtUtc = DateTimeOffset.UtcNow,
-                                SpeechEventSender = (visualEvent, token) => SendVisualEventAsync(webSocket, sendGate, visualEvent, token)
+                                ReceivedAtUtc = DateTimeOffset.UtcNow
                             },
+                            visualEvent => SendVisualEventAsync(webSocket, sendGate, visualEvent, cancellationToken),
                             cancellationToken);
                     }
 
-                    await SendResponseAsync(webSocket, sendGate, response, cancellationToken);
-                    StartDevVisualFlowIfNeeded(
-                        webSocket,
-                        sendGate,
-                        response,
-                        _ => { },
-                        cancellationToken);
-                    await QueueSpeechIfNeededAsync(
-                        webSocket,
-                        sendGate,
-                        new AssistantRequest
+                    try
+                    {
+                        if (CanEmitTurn(response.CorrelationId))
                         {
-                            Message = transcript,
-                            CorrelationId = correlationId,
-                            InteractionSource = "voice_stream",
-                            ClientMode = envelope.ClientMode
-                        },
-                        response,
-                        cancellationToken);
+                            await SendResponseAsync(webSocket, sendGate, response, cancellationToken);
+                            StartDevVisualFlowIfNeeded(
+                                webSocket,
+                                sendGate,
+                                response,
+                                _ => { },
+                                cancellationToken);
+                            await QueueSpeechIfNeededAsync(
+                                webSocket,
+                                sendGate,
+                                new AssistantRequest
+                                {
+                                    Message = transcript,
+                                    CorrelationId = correlationId,
+                                    InteractionSource = "voice_stream",
+                                    ClientMode = envelope.ClientMode
+                                },
+                                response,
+                                cancellationToken);
+                        }
+                    }
+                    finally
+                    {
+                        if (!string.IsNullOrWhiteSpace(transcript))
+                        {
+                            _liveTurnService.CompleteTurn(response.CorrelationId);
+                        }
+                    }
                     return true;
             }
         }
@@ -273,6 +299,11 @@ public sealed class WebSocketHandler
         AssistantResponse response,
         CancellationToken cancellationToken)
     {
+        if (!CanEmitTurn(response.CorrelationId))
+        {
+            return;
+        }
+
         var speechDecision = _speechPolicyService.Decide(request, response);
         if (speechDecision.UsedLegacySpeakResponseFallback)
         {
@@ -487,6 +518,92 @@ public sealed class WebSocketHandler
                 SpeechEventSender = (visualEvent, _) => sendVisualEventAsync(visualEvent)
             },
             cancellationToken);
+    }
+
+    private async Task<AssistantResponse> ProcessLiveRequestAsync(
+        AssistantRequest request,
+        Func<AssistantVisualEvent, Task> sendVisualEventAsync,
+        CancellationToken cancellationToken)
+    {
+        var correlationId = string.IsNullOrWhiteSpace(request.CorrelationId)
+            ? Guid.NewGuid().ToString("N")
+            : request.CorrelationId;
+        var turn = _liveTurnService.BeginTurn(
+            "default",
+            correlationId,
+            assistantTurnId: correlationId,
+            requestAborted: cancellationToken);
+
+        try
+        {
+            var response = await ProcessRequestAsync(
+                new AssistantRequest
+                {
+                    Message = request.Message,
+                    CorrelationId = correlationId,
+                    SpeakResponse = request.SpeakResponse,
+                    InteractionSource = request.InteractionSource,
+                    ClientMode = request.ClientMode,
+                    ReceivedAtUtc = request.ReceivedAtUtc,
+                    SpeechEventSender = (visualEvent, _) => sendVisualEventAsync(visualEvent)
+                },
+                sendVisualEventAsync,
+                turn.CancellationToken);
+
+            if (!CanEmitTurn(correlationId))
+            {
+                return response;
+            }
+
+            return response;
+        }
+        catch (OperationCanceledException) when (!_liveTurnService.ShouldEmit(correlationId) || cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogInformation(
+                "Live turn processing cancelled. CorrelationId: {CorrelationId}.",
+                correlationId);
+            return new AssistantResponse
+            {
+                Success = false,
+                Message = string.Empty,
+                CorrelationId = correlationId,
+                ErrorCode = "TURN_CANCELLED",
+                ResponseType = "cancelled"
+            };
+        }
+    }
+
+    private bool CanEmitTurn(string? correlationId)
+    {
+        if (string.IsNullOrWhiteSpace(correlationId))
+        {
+            return true;
+        }
+
+        if (_liveTurnService.ShouldEmit(correlationId))
+        {
+            return true;
+        }
+
+        if (!_liveTurnService.IsCancelled(correlationId))
+        {
+            return true;
+        }
+
+        _logger.LogInformation(
+            "Suppressing stale assistant response for live turn. CorrelationId: {CorrelationId}.",
+            correlationId);
+        return false;
+    }
+
+    private void CompleteLiveTurnIfNeeded(AssistantRequest? request, string correlationId)
+    {
+        if (request is null)
+        {
+            return;
+        }
+
+        _liveTurnService.CompleteTurn(correlationId);
     }
 
     private AssistantRequest? DeserializeRequest(string rawMessage)

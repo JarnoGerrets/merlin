@@ -385,6 +385,25 @@ public sealed class CommandRouterTests
         Assert.Contains("10-06-2026", response.Message);
     }
 
+    [Fact]
+    public async Task RouteAsync_PassesCancellationTokenToToolExecution()
+    {
+        var tool = new DelayedTool("slow command");
+        var router = CreateRouter(tool);
+        using var cancellation = new CancellationTokenSource();
+        await cancellation.CancelAsync();
+
+        await Assert.ThrowsAsync<TaskCanceledException>(() => router.RouteAsync(
+            new AssistantRequest
+            {
+                Message = "slow command",
+                CorrelationId = "correlation-1"
+            },
+            cancellation.Token));
+
+        Assert.True(tool.ObservedCancellation);
+    }
+
     private static CommandRouter CreateRouter(params ITool[] tools)
     {
         return new CommandRouter(
@@ -475,6 +494,41 @@ public sealed class CommandRouterTests
         {
             ExecutedCommand = command;
             return Task.FromResult(_result);
+        }
+    }
+
+    private sealed class DelayedTool : ITool
+    {
+        private readonly string _supportedCommand;
+
+        public DelayedTool(string supportedCommand)
+        {
+            _supportedCommand = supportedCommand;
+        }
+
+        public string Name => "Delayed Tool";
+
+        public string Description => "Waits until cancelled.";
+
+        public IReadOnlyCollection<string> Examples { get; } = ["slow command"];
+
+        public bool ObservedCancellation { get; private set; }
+
+        public bool CanHandle(string command)
+        {
+            return string.Equals(command, _supportedCommand, StringComparison.OrdinalIgnoreCase);
+        }
+
+        public async Task<ToolResult> ExecuteAsync(string command, CancellationToken cancellationToken = default)
+        {
+            ObservedCancellation = cancellationToken.IsCancellationRequested;
+            await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
+            return new ToolResult
+            {
+                Success = true,
+                Message = "done",
+                ToolName = Name
+            };
         }
     }
 

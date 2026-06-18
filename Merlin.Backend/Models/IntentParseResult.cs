@@ -15,4 +15,6 @@ public sealed class IntentParseResult
     public string? CapabilityId { get; init; }
 
     public string? CapabilityName { get; init; }
+
+    public CapabilityRouteResult? Route { get; init; }
 }

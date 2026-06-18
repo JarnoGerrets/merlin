@@ -28,6 +28,27 @@ builder.Services.Configure<LocalAIOptions>(
     builder.Configuration.GetSection("LocalAI"));
 builder.Services.Configure<LlmOptions>(
     builder.Configuration.GetSection("Llm"));
+builder.Services.Configure<WebSearchOptions>(
+    builder.Configuration.GetSection("WebSearch"));
+builder.Services.PostConfigure<WebSearchOptions>(options =>
+{
+    if (bool.TryParse(Environment.GetEnvironmentVariable("MERLIN_WEBSEARCH_ENABLED"), out var enabled))
+    {
+        options.Enabled = enabled;
+    }
+
+    options.Provider = Environment.GetEnvironmentVariable("MERLIN_WEBSEARCH_PROVIDER") ?? options.Provider;
+    options.ApiKey = Environment.GetEnvironmentVariable("MERLIN_WEBSEARCH_API_KEY") ?? options.ApiKey;
+    if (int.TryParse(Environment.GetEnvironmentVariable("MERLIN_WEBSEARCH_MAX_RESULTS"), out var maxResults))
+    {
+        options.MaxResults = maxResults;
+    }
+
+    if (int.TryParse(Environment.GetEnvironmentVariable("MERLIN_WEBSEARCH_TIMEOUT_SECONDS"), out var timeoutSeconds))
+    {
+        options.RequestTimeoutSeconds = timeoutSeconds;
+    }
+});
 builder.Services.Configure<AcknowledgementSpeechOptions>(
     builder.Configuration.GetSection("AcknowledgementSpeech"));
 builder.Services.Configure<BargeInOptions>(
@@ -236,6 +257,7 @@ builder.Services.AddHostedService(provider => provider.GetRequiredService<WebRtc
 builder.Services.AddHostedService<BargeInCoordinatorHostedService>();
 builder.Services.AddSingleton<IAssistantSpeechPlaybackService, AssistantSpeechPlaybackService>();
 builder.Services.AddSingleton<ISpeechPolicyService, SpeechPolicyService>();
+builder.Services.AddSingleton<ILiveAssistantTurnService, LiveAssistantTurnService>();
 builder.Services.AddSingleton<IAcknowledgementPhraseLibrary, AcknowledgementPhraseLibrary>();
 builder.Services.AddSingleton<IAcknowledgementPolicy, AcknowledgementPolicy>();
 builder.Services.AddSingleton<IAcknowledgementSpeechService, AcknowledgementSpeechService>();
@@ -249,6 +271,9 @@ builder.Services.AddSingleton<DomainRouter>();
 builder.Services.AddSingleton<CapabilityRegistry>();
 builder.Services.AddSingleton<CapabilityRouter>();
 builder.Services.AddSingleton<IIntentClassifier, DeterministicIntentClassifier>();
+builder.Services.AddSingleton<ITargetScopeDetector, TargetScopeDetector>();
+builder.Services.AddSingleton<ICapabilitySafetyClassifier, CapabilitySafetyClassifier>();
+builder.Services.AddSingleton<ScopeAwareCapabilityRouter>();
 builder.Services.AddSingleton<MerlinIntentRouter>();
 builder.Services.AddSingleton<IResponsePolisher, ResponsePolisher>();
 builder.Services.AddSingleton<IAssistantResponsePresentationFormatter, AssistantSpeechResponseFormatter>();
@@ -266,6 +291,8 @@ builder.Services.AddSingleton<LocalLlmProvider>();
 builder.Services.AddHostedService<LocalAIWarmupHostedService>();
 builder.Services.AddHttpClient<ILocalAIClient, OllamaLocalAIClient>();
 builder.Services.AddHttpClient<DeepInfraLlmProvider>();
+builder.Services.AddSingleton<IWebSearchProvider, FakeWebSearchProvider>();
+builder.Services.AddSingleton<WebSearchService>();
 builder.Services.AddSingleton<ISystemResourceProvider, LocalSystemResourceProvider>();
 builder.Services.AddSingleton<IProcessLauncher, DefaultProcessLauncher>();
 builder.Services.AddSingleton<IRuntimeStateService, RuntimeStateService>();
@@ -285,6 +312,7 @@ builder.Services.AddSingleton<ITool, WakeMerlinTool>();
 builder.Services.AddSingleton<ITool, EditBrowserMappingTool>();
 builder.Services.AddSingleton<ITool, DeleteBrowserMappingTool>();
 builder.Services.AddSingleton<ITool, DevVisualStateTool>();
+builder.Services.AddSingleton<ITool, WebSearchTool>();
 builder.Services.AddSingleton<ITool, GeneralConversationTool>();
 builder.Services.AddSingleton<ToolRegistry>();
 builder.Services.AddSingleton<CommandRouter>();

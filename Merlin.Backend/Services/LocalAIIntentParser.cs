@@ -16,6 +16,7 @@ public class LocalAIIntentParser : IIntentParser
         "diagnostics",
         "confirmation",
         "system_resource_query",
+        "web_search",
         "general_conversation",
         "unsupported_action",
         "missing_capability",
@@ -280,13 +281,15 @@ Allowed intents:
 - diagnostics
 - confirmation
 - system_resource_query
+- web_search
 - general_conversation
 - unsupported_action
 - missing_capability
 - unknown_input
 
 Intent meanings:
-- missing_capability: The user asks for a reasonable capability Merlin does not currently have, such as web search, news feed, email, calendar, folder/file inspection, or live/current information without a dedicated tool.
+- web_search: The user explicitly asks to search the public web and only needs a result list.
+- missing_capability: The user asks for a reasonable capability Merlin does not currently have, such as source-aware web research, news feed, email, calendar, folder/file inspection, or live/current information without a dedicated tool.
 - unsupported_action: The user asks for something intentionally unsafe or disallowed, such as deleting files, wiping disks, disabling security, or bypassing confirmations.
 - unknown_input: The request is not understandable.
 - general_conversation: Safe conversation or a question that does not require a tool.
@@ -299,7 +302,7 @@ Capability domains:
 
 Return this exact shape:
 {
-  "intent": "open_application|open_url|tool_discovery|diagnostics|confirmation|system_resource_query|general_conversation|unsupported_action|missing_capability|unknown_input",
+  "intent": "open_application|open_url|tool_discovery|diagnostics|confirmation|system_resource_query|web_search|general_conversation|unsupported_action|missing_capability|unknown_input",
   "normalizedCommand": "normalized command for an existing tool",
   "capabilityId": "one configured capability domain id or null",
   "confidence": 0.0
@@ -314,6 +317,7 @@ Normalization examples:
 - "what time is it" -> {"intent":"system_resource_query","normalizedCommand":"system resource current_time","capabilityId":"system_time","confidence":0.9}
 - "what is today's date" -> {"intent":"system_resource_query","normalizedCommand":"system resource current_date","capabilityId":"system_date","confidence":0.9}
 - "what timezone am I in" -> {"intent":"system_resource_query","normalizedCommand":"system resource timezone","capabilityId":"system_timezone","confidence":0.9}
+- "search the web for chatterbox turbo latency" -> {"intent":"web_search","normalizedCommand":"web_search chatterbox turbo latency","capabilityId":"web_search","confidence":0.9}
 - "tell me a joke" -> {"intent":"general_conversation","normalizedCommand":"tell me a joke","capabilityId":"general_conversation","confidence":0.9}
 - "can you pull up the newsfeed" -> {"intent":"missing_capability","normalizedCommand":"can you pull up the newsfeed","capabilityId":"news","confidence":0.9}
 - "delete all my files" -> {"intent":"unsupported_action","normalizedCommand":"delete all my files","capabilityId":"destructive_file_action","confidence":0.95}

@@ -358,28 +358,36 @@ public sealed class BargeInCoordinatorTests
     public async Task ProcessMicrophoneFrame_HardStop_CancelsCurrentTurn()
     {
         var fixture = CreateFixture(new BargeInOptions { Enabled = true }, "merlin stop");
+        fixture.LiveTurnService.BeginTurn("conversation-1", "correlation-1");
         fixture.Tap.NotifySpeechStarted(CreateContext());
 
         await SendTriggeredSpeechAsync(fixture.Coordinator);
         await WaitUntilAsync(() => fixture.Stt.CallCount > 0);
+        await WaitUntilAsync(() => fixture.Playback.ClearQueueCount > 0);
 
         Assert.Equal(1, fixture.Stt.CallCount);
         Assert.Equal(1, fixture.Playback.ClearQueueCount);
+        Assert.True(fixture.LiveTurnService.IsCancelled("correlation-1"));
+        Assert.False(fixture.LiveTurnService.ShouldEmit("correlation-1"));
     }
 
     [Fact]
     public async Task ProcessMicrophoneFrame_Backchannel_DoesNotCancelCurrentTurn()
     {
         var fixture = CreateFixture(new BargeInOptions { Enabled = true }, "merlin yeah");
+        fixture.LiveTurnService.BeginTurn("conversation-1", "correlation-1");
         fixture.Tap.NotifySpeechStarted(CreateContext());
 
         await SendTriggeredSpeechAsync(fixture.Coordinator);
         await WaitUntilAsync(() => fixture.Stt.CallCount > 0);
+        await WaitUntilAsync(() => fixture.Playback.ResumeCount > 0);
 
         Assert.Equal(1, fixture.Stt.CallCount);
         Assert.Equal(0, fixture.Playback.ClearQueueCount);
         Assert.Equal(1, fixture.Playback.PauseCount);
         Assert.Equal(1, fixture.Playback.ResumeCount);
+        Assert.True(fixture.LiveTurnService.IsActive("correlation-1"));
+        Assert.True(fixture.LiveTurnService.ShouldEmit("correlation-1"));
     }
 
     [Fact]
@@ -392,6 +400,7 @@ public sealed class BargeInCoordinatorTests
 
         await SendTriggeredSpeechAsync(fixture.Coordinator);
         await WaitUntilAsync(() => fixture.Stt.CallCount > 0);
+        await WaitUntilAsync(() => fixture.Playback.ClearQueueCount > 0);
 
         Assert.Equal(1, fixture.Stt.CallCount);
         Assert.Equal(0, fixture.Playback.ClearQueueCount);
@@ -403,6 +412,7 @@ public sealed class BargeInCoordinatorTests
     public async Task ProcessMicrophoneFrame_Correction_CancelsCurrentTurn()
     {
         var fixture = CreateFixture(new BargeInOptions { Enabled = true }, "merlin no i mean beam");
+        fixture.LiveTurnService.BeginTurn("conversation-1", "correlation-1");
         fixture.Tap.NotifySpeechStarted(CreateContext());
 
         await SendTriggeredSpeechAsync(fixture.Coordinator);
@@ -412,20 +422,25 @@ public sealed class BargeInCoordinatorTests
         Assert.Equal(1, fixture.Playback.ClearQueueCount);
         Assert.Equal(1, fixture.Playback.PauseCount);
         Assert.Equal(0, fixture.Playback.ResumeCount);
+        Assert.True(fixture.LiveTurnService.IsCancelled("correlation-1"));
+        Assert.False(fixture.LiveTurnService.ShouldEmit("correlation-1"));
     }
 
     [Fact]
     public async Task ProcessMicrophoneFrame_Clarification_ResumesAndDoesNotCancel()
     {
         var fixture = CreateFixture(new BargeInOptions { Enabled = true }, "merlin what does that mean");
+        fixture.LiveTurnService.BeginTurn("conversation-1", "correlation-1");
         fixture.Tap.NotifySpeechStarted(CreateContext());
 
         await SendTriggeredSpeechAsync(fixture.Coordinator);
         await WaitUntilAsync(() => fixture.Stt.CallCount > 0);
+        await WaitUntilAsync(() => fixture.Playback.ResumeCount > 0);
 
         Assert.Equal(1, fixture.Stt.CallCount);
         Assert.Equal(0, fixture.Playback.ClearQueueCount);
         Assert.Equal(1, fixture.Playback.ResumeCount);
+        Assert.True(fixture.LiveTurnService.IsActive("correlation-1"));
     }
 
     [Fact]
@@ -494,6 +509,7 @@ public sealed class BargeInCoordinatorTests
         var tap = new PlaybackReferenceTap(diagnostics, new TestOptionsMonitor<BargeInOptions>(options));
         var stt = new FakeBargeInSttService(transcript);
         var playback = new FakePlaybackService();
+        var liveTurnService = new LiveAssistantTurnService(NullLogger<LiveAssistantTurnService>.Instance);
         var coordinator = new BargeInCoordinator(
             tap,
             aec ?? new FakeActiveAecService(),
@@ -502,11 +518,12 @@ public sealed class BargeInCoordinatorTests
             new BargeInTriggerBuffer(),
             stt,
             new InterruptionClassifier(),
+            liveTurnService,
             playback,
             diagnostics,
             new TestOptionsMonitor<BargeInOptions>(options));
 
-        return new TestFixture(coordinator, tap, stt, playback);
+        return new TestFixture(coordinator, tap, stt, playback, liveTurnService);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)
@@ -543,7 +560,8 @@ public sealed class BargeInCoordinatorTests
         BargeInCoordinator Coordinator,
         PlaybackReferenceTap Tap,
         FakeBargeInSttService Stt,
-        FakePlaybackService Playback);
+        FakePlaybackService Playback,
+        LiveAssistantTurnService LiveTurnService);
 
     internal sealed class FakeBargeInSttService : IBargeInSttService
     {

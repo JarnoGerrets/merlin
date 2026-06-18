@@ -1,4 +1,5 @@
 using Merlin.Backend.Configuration;
+using Merlin.Backend.Models;
 using Microsoft.Extensions.Options;
 
 namespace Merlin.Backend.Services.BargeIn;
@@ -8,6 +9,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     private readonly IAcousticEchoCancellationService _aec;
     private readonly IBargeInDiagnosticsLogger _diagnostics;
     private readonly IInterruptionClassifier _interruptionClassifier;
+    private readonly ILiveAssistantTurnService _liveTurnService;
     private readonly IOptionsMonitor<BargeInOptions> _options;
     private readonly IAssistantSpeechPlaybackService _playbackService;
     private readonly IPlaybackReferenceTap _playbackReferenceTap;
@@ -29,6 +31,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         IBargeInTriggerBuffer triggerBuffer,
         IBargeInSttService sttService,
         IInterruptionClassifier interruptionClassifier,
+        ILiveAssistantTurnService liveTurnService,
         IAssistantSpeechPlaybackService playbackService,
         IBargeInDiagnosticsLogger diagnostics,
         IOptionsMonitor<BargeInOptions> options)
@@ -40,6 +43,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         _triggerBuffer = triggerBuffer;
         _sttService = sttService;
         _interruptionClassifier = interruptionClassifier;
+        _liveTurnService = liveTurnService;
         _playbackService = playbackService;
         _diagnostics = diagnostics;
         _options = options;
@@ -231,6 +235,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 : BargeInState.CancellingCurrentTurn;
             _diagnostics.StateChanged(context, state, decision.Reason);
             await _playbackService.ClearQueueAsync(cancellationToken);
+            await CancelLiveTurnAsync(context, classification, decision.Action, cancellationToken);
             _diagnostics.AssistantTurnCancelled(context, classification);
         }
 
@@ -239,6 +244,25 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             _diagnostics.CorrectionRegenerationStarted(context, classification.CorrectedUserMessage ?? classification.Reason);
             _diagnostics.Ignored(context, "Correction captured and current turn cancelled; DeepInfra correction regeneration is deferred until original-turn context is wired into barge-in.");
         }
+    }
+
+    private Task CancelLiveTurnAsync(
+        BargeInSpeechContext context,
+        InterruptionClassificationResult classification,
+        BargeInAction action,
+        CancellationToken cancellationToken)
+    {
+        var correlationId = string.IsNullOrWhiteSpace(context.CorrelationId)
+            ? context.AssistantTurnId
+            : context.CorrelationId;
+        var reason = action is BargeInAction.Correction
+            ? LiveAssistantTurnCancelReason.UserCorrection
+            : LiveAssistantTurnCancelReason.UserHardStop;
+        var correctionText = action is BargeInAction.Correction
+            ? classification.CorrectedUserMessage ?? classification.Reason
+            : null;
+
+        return _liveTurnService.CancelTurnAsync(correlationId, reason, correctionText, cancellationToken);
     }
 
     private static async Task WaitForPostTriggerAudioAsync(

@@ -209,9 +209,11 @@ public sealed class CommandRouter
                 {
                     OriginalMessage = intentResult.OriginalMessage,
                     NormalizedCommand = intentResult.NormalizedCommand,
-                    Intent = intentResult.Intent
+                    Intent = intentResult.Intent,
+                    Route = intentResult.Route
                 },
                 cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             pendingSpeechCancellation.Cancel();
             progressHandle?.MarkMainResponseReady();
             mainWorkStopwatch.Stop();

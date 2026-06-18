@@ -18,6 +18,7 @@ public sealed class HybridIntentParser : IIntentParser
     private readonly LocalAIOptions _options;
     private readonly IRuntimeStateService _runtimeStateService;
     private readonly RuleBasedIntentParser _ruleBasedIntentParser;
+    private readonly ScopeAwareCapabilityRouter? _scopeAwareCapabilityRouter;
     private readonly SpeechCommandNormalizer _speechCommandNormalizer;
 
     public HybridIntentParser(
@@ -31,7 +32,8 @@ public sealed class HybridIntentParser : IIntentParser
         MerlinIntentRouter? merlinIntentRouter = null,
         IConfirmationService? confirmationService = null,
         IPendingInteractionService? pendingInteractionService = null,
-        SpeechCommandNormalizer? speechCommandNormalizer = null)
+        SpeechCommandNormalizer? speechCommandNormalizer = null,
+        ScopeAwareCapabilityRouter? scopeAwareCapabilityRouter = null)
     {
         _ruleBasedIntentParser = ruleBasedIntentParser;
         _localAIIntentParser = localAIIntentParser;
@@ -41,6 +43,7 @@ public sealed class HybridIntentParser : IIntentParser
         _localAIHealthService = localAIHealthService;
         _logger = logger;
         _merlinIntentRouter = merlinIntentRouter;
+        _scopeAwareCapabilityRouter = scopeAwareCapabilityRouter;
         _confirmationService = confirmationService;
         _pendingInteractionService = pendingInteractionService;
         _speechCommandNormalizer = speechCommandNormalizer ?? new SpeechCommandNormalizer();
@@ -67,6 +70,16 @@ public sealed class HybridIntentParser : IIntentParser
         {
             _runtimeStateService.RecordIntentParserUsed(nameof(RuleBasedIntentParser), ruleResult.Intent);
             return WithParser(ruleResult, nameof(RuleBasedIntentParser));
+        }
+
+        if (_scopeAwareCapabilityRouter is not null)
+        {
+            var scopedResult = _scopeAwareCapabilityRouter.ToIntentParseResult(message);
+            if (ShouldUseScopeAwareResult(scopedResult))
+            {
+                _runtimeStateService.RecordIntentParserUsed(nameof(ScopeAwareCapabilityRouter), scopedResult.Intent);
+                return scopedResult;
+            }
         }
 
         if (_merlinIntentRouter is not null)
@@ -278,7 +291,24 @@ public sealed class HybridIntentParser : IIntentParser
             OriginalMessage = result.OriginalMessage,
             ParserUsed = parserName,
             CapabilityId = result.CapabilityId,
-            CapabilityName = result.CapabilityName
+            CapabilityName = result.CapabilityName,
+            Route = result.Route
         };
+    }
+
+    private static bool ShouldUseScopeAwareResult(IntentParseResult result)
+    {
+        var scope = result.Route?.TargetScope;
+        if (scope is null || result.Confidence < 0.55)
+        {
+            return false;
+        }
+
+        return scope is TargetScopes.Web
+            or TargetScopes.LocalFiles
+            or TargetScopes.Calendar
+            or TargetScopes.Email
+            or TargetScopes.Memory
+            or TargetScopes.ProjectRepo;
     }
 }

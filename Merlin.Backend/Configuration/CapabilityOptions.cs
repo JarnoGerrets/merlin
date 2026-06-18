@@ -115,9 +115,46 @@ public sealed class CapabilityOptions
                 {
                     Id = "web_search",
                     Name = "Web Search",
-                    Description = "Search the web or retrieve live/current information from the internet.",
+                    Description = "Search public web results and return source titles, URLs, domains, and snippets.",
+                    IsImplemented = true,
+                    ImplementedIntent = "web_search",
+                    MissingMessage = "I understand you want web search, but web search is not configured yet.",
+                    SafetyLevel = "external_request"
+                },
+                new CapabilityDomain
+                {
+                    Id = "web_research",
+                    Name = "Web Research",
+                    Description = "Fetch, scan, and synthesize public web sources with citations.",
                     IsImplemented = false,
-                    MissingMessage = "I understand you want web search, but I don't currently have a WebSearch capability implemented.",
+                    MissingMessage = "I understand you want source-aware web research, but I only have basic web search implemented so far.",
+                    SafetyLevel = "missing"
+                },
+                new CapabilityDomain
+                {
+                    Id = "codex_research",
+                    Name = "Codex Research",
+                    Description = "Read the current repo and compare it with external documentation.",
+                    IsImplemented = false,
+                    MissingMessage = "I understand you want repo-aware research, but Merlin does not currently have a Codex research capability wired in.",
+                    SafetyLevel = "missing"
+                },
+                new CapabilityDomain
+                {
+                    Id = "codex_implementation",
+                    Name = "Codex Implementation",
+                    Description = "Make code changes in the current repository after explicit implementation intent.",
+                    IsImplemented = false,
+                    MissingMessage = "I understand you want repository changes, but Merlin does not currently have an implementation capability wired in.",
+                    SafetyLevel = "missing"
+                },
+                new CapabilityDomain
+                {
+                    Id = "memory_lookup",
+                    Name = "Memory Lookup",
+                    Description = "Search prior conversation or saved memory.",
+                    IsImplemented = false,
+                    MissingMessage = "I understand you want me to look through prior conversation memory, but explicit memory lookup is not implemented as a routed capability yet.",
                     SafetyLevel = "missing"
                 },
                 new CapabilityDomain
