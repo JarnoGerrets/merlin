@@ -11,6 +11,7 @@ public sealed class WindowsWasapiAecAudioCaptureService : IBargeInAudioCaptureSe
 {
     private static readonly Guid IIdAcousticEchoCancellationControl = new("f4ae25b5-aaa3-437d-b6b3-dbbe2d0e9549");
     private readonly IBargeInCoordinator _coordinator;
+    private readonly IContinuousMicAudioBuffer _continuousMicAudioBuffer;
     private readonly IBargeInDiagnosticsLogger _diagnostics;
     private readonly ILogger<WindowsWasapiAecAudioCaptureService> _logger;
     private readonly IOptionsMonitor<BargeInOptions> _options;
@@ -18,6 +19,8 @@ public sealed class WindowsWasapiAecAudioCaptureService : IBargeInAudioCaptureSe
     private readonly IWindowsAecStatus _status;
     private readonly object _syncRoot = new();
     private CancellationTokenSource? _captureCancellation;
+    private BargeInAnalysisFrameQueue? _analysisQueue;
+    private Task? _analysisTask;
     private Task? _captureTask;
     private BargeInSpeechContext? _activeContext;
     private long _micFrameCount;
@@ -26,6 +29,7 @@ public sealed class WindowsWasapiAecAudioCaptureService : IBargeInAudioCaptureSe
     public WindowsWasapiAecAudioCaptureService(
         IPlaybackReferenceTap playbackReferenceTap,
         IBargeInCoordinator coordinator,
+        IContinuousMicAudioBuffer continuousMicAudioBuffer,
         IWindowsAecStatus status,
         IBargeInDiagnosticsLogger diagnostics,
         IOptionsMonitor<BargeInOptions> options,
@@ -33,6 +37,7 @@ public sealed class WindowsWasapiAecAudioCaptureService : IBargeInAudioCaptureSe
     {
         _playbackReferenceTap = playbackReferenceTap;
         _coordinator = coordinator;
+        _continuousMicAudioBuffer = continuousMicAudioBuffer;
         _status = status;
         _diagnostics = diagnostics;
         _options = options;
@@ -43,6 +48,7 @@ public sealed class WindowsWasapiAecAudioCaptureService : IBargeInAudioCaptureSe
     {
         _playbackReferenceTap.SpeechStarted += OnSpeechStarted;
         _playbackReferenceTap.SpeechStopped += OnSpeechStopped;
+        OnSpeechStarted(this, CreateLiveMonitorContext());
         return Task.CompletedTask;
     }
 
@@ -84,6 +90,10 @@ public sealed class WindowsWasapiAecAudioCaptureService : IBargeInAudioCaptureSe
             _micFrameCount = 0;
             _echoReducedFrameCount = 0;
             _captureCancellation = new CancellationTokenSource();
+            _analysisQueue = new BargeInAnalysisFrameQueue(Math.Max(1, options.AnalysisQueueCapacityFrames));
+            _analysisTask = Task.Run(
+                () => AnalysisLoopAsync(context, _analysisQueue, _captureCancellation.Token),
+                CancellationToken.None);
             _captureTask = Task.Run(
                 () => CaptureLoopAsync(context, _captureCancellation.Token),
                 CancellationToken.None);
@@ -92,7 +102,17 @@ public sealed class WindowsWasapiAecAudioCaptureService : IBargeInAudioCaptureSe
 
     private void OnSpeechStopped(object? sender, BargeInSpeechContext context)
     {
+        lock (_syncRoot)
+        {
+            if (_activeContext is not null
+                && !string.Equals(_activeContext.AssistantTurnId, context.AssistantTurnId, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
         StopCapture("speech_stopped");
+        OnSpeechStarted(this, CreateLiveMonitorContext());
     }
 
     private async Task CaptureLoopAsync(BargeInSpeechContext context, CancellationToken cancellationToken)
@@ -163,9 +183,19 @@ public sealed class WindowsWasapiAecAudioCaptureService : IBargeInAudioCaptureSe
                         {
                             Samples = samples,
                             SampleRate = format.SampleRate,
-                            Timestamp = DateTimeOffset.UtcNow
+                            Timestamp = DateTimeOffset.UtcNow,
+                            DurationMs = format.SampleRate <= 0
+                                ? 0
+                                : Math.Max(1, (int)Math.Round(samples.Length * 1000.0 / format.SampleRate))
                         };
-                        await _coordinator.ProcessMicrophoneFrameAsync(audioFrame, cancellationToken);
+                        var recordedFrame = _continuousMicAudioBuffer.Append(audioFrame, options);
+                        BargeInAnalysisFrameQueue? queue;
+                        lock (_syncRoot)
+                        {
+                            queue = _analysisQueue;
+                        }
+
+                        queue?.Enqueue(recordedFrame);
                         var echoFrameNumber = Interlocked.Increment(ref _echoReducedFrameCount);
                         _diagnostics.EchoReducedFrameProcessed(context, echoFrameNumber, AecMode.Active);
                     }
@@ -222,12 +252,18 @@ public sealed class WindowsWasapiAecAudioCaptureService : IBargeInAudioCaptureSe
     {
         CancellationTokenSource? cancellation;
         Task? captureTask;
+        Task? analysisTask;
+        BargeInAnalysisFrameQueue? analysisQueue;
         lock (_syncRoot)
         {
             cancellation = _captureCancellation;
             captureTask = _captureTask;
+            analysisTask = _analysisTask;
+            analysisQueue = _analysisQueue;
             _captureCancellation = null;
             _captureTask = null;
+            _analysisTask = null;
+            _analysisQueue = null;
         }
 
         if (cancellation is null)
@@ -237,15 +273,45 @@ public sealed class WindowsWasapiAecAudioCaptureService : IBargeInAudioCaptureSe
 
         cancellation.Cancel();
         _logger.LogInformation(
-            "Windows WASAPI AEC capture stopping. Reason: {Reason}. MicFrames: {MicFrames}. EchoReducedFrames: {EchoReducedFrames}.",
+            "Windows WASAPI AEC capture stopping. Reason: {Reason}. MicFrames: {MicFrames}. EchoReducedFrames: {EchoReducedFrames}. AnalysisFramesDropped: {AnalysisFramesDropped}.",
             reason,
             Interlocked.Read(ref _micFrameCount),
-            Interlocked.Read(ref _echoReducedFrameCount));
+            Interlocked.Read(ref _echoReducedFrameCount),
+            analysisQueue?.DroppedFrames ?? 0);
         _ = captureTask?.ContinueWith(
             _ => cancellation.Dispose(),
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
+        _ = analysisTask;
+    }
+
+    private async Task AnalysisLoopAsync(
+        BargeInSpeechContext context,
+        BargeInAnalysisFrameQueue queue,
+        CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                var frame = await queue.DequeueAsync(cancellationToken);
+                if (frame is null)
+                {
+                    continue;
+                }
+
+                await _coordinator.ProcessMicrophoneFrameAsync(frame, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Windows WASAPI AEC barge-in analysis frame processing failed. Capture will continue.");
+            }
+        }
     }
 
     private static IAudioClient GetAudioClientInterface(AudioClient audioClient)
@@ -433,6 +499,17 @@ public sealed class WindowsWasapiAecAudioCaptureService : IBargeInAudioCaptureSe
     public void Dispose()
     {
         StopCapture("disposed");
+    }
+
+    private static BargeInSpeechContext CreateLiveMonitorContext()
+    {
+        return new BargeInSpeechContext
+        {
+            AssistantTurnId = "live-utterance-monitor",
+            CorrelationId = null,
+            SpeechType = Merlin.Backend.Models.SpeechPlaybackItemType.FinalAnswer,
+            SpokenText = string.Empty
+        };
     }
 
     [ComImport]

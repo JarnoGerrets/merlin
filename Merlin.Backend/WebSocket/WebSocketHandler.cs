@@ -1,8 +1,10 @@
 using System.Net.WebSockets;
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using Merlin.Backend.Models;
 using Merlin.Backend.Services;
+using Merlin.Backend.Services.BargeIn;
 
 namespace Merlin.Backend.WebSocket;
 
@@ -10,12 +12,15 @@ public sealed class WebSocketHandler
 {
     private static readonly JsonSerializerOptions JsonSerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly CommandRouter _commandRouter;
+    private readonly IBargeInCoordinator? _bargeInCoordinator;
+    private readonly ICorrectionRequestBuilder _correctionRequestBuilder;
     private readonly ILiveAssistantTurnService _liveTurnService;
     private readonly IAssistantSpeechPlaybackService _speechPlaybackService;
     private readonly ISpeechPolicyService _speechPolicyService;
     private readonly ILogger<WebSocketHandler> _logger;
     private readonly IRuntimeStateService _runtimeStateService;
     private readonly VoiceStreamSessionService _voiceStreamSessionService;
+    private readonly ConcurrentDictionary<string, AssistantRequest> _recentRequestsByCorrelationId = new(StringComparer.OrdinalIgnoreCase);
 
     public WebSocketHandler(
         CommandRouter commandRouter,
@@ -24,9 +29,13 @@ public sealed class WebSocketHandler
         ISpeechPolicyService speechPolicyService,
         ILogger<WebSocketHandler> logger,
         IRuntimeStateService runtimeStateService,
-        VoiceStreamSessionService voiceStreamSessionService)
+        VoiceStreamSessionService voiceStreamSessionService,
+        ICorrectionRequestBuilder? correctionRequestBuilder = null,
+        IBargeInCoordinator? bargeInCoordinator = null)
     {
         _commandRouter = commandRouter;
+        _bargeInCoordinator = bargeInCoordinator;
+        _correctionRequestBuilder = correctionRequestBuilder ?? new CorrectionRequestBuilder();
         _liveTurnService = liveTurnService;
         _speechPlaybackService = speechPlaybackService;
         _speechPolicyService = speechPolicyService;
@@ -46,7 +55,10 @@ public sealed class WebSocketHandler
 
         using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
         using var sendGate = new SemaphoreSlim(1, 1);
+        ConcurrentDictionary<string, byte>? connectionCorrelationIds = null;
         CancellationTokenSource? devVisualFlowCancellation = null;
+        Func<CorrectionRegenerationRequested, CancellationToken, Task>? correctionHandler = null;
+        Func<LiveUserUtteranceRouted, CancellationToken, Task>? liveUtteranceHandler = null;
         _runtimeStateService.IncrementActiveWebSocketConnections();
         _logger.LogInformation(
             "WebSocket connection opened. ActiveConnections: {ActiveConnections}",
@@ -54,9 +66,30 @@ public sealed class WebSocketHandler
 
         try
         {
+            connectionCorrelationIds = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+            if (_bargeInCoordinator is not null)
+            {
+                var sessionCancellationToken = context.RequestAborted;
+                correctionHandler = (request, oldCaptureToken) => DispatchCorrectionRegenerationAsync(
+                    request,
+                    webSocket,
+                    sendGate,
+                    connectionCorrelationIds,
+                    oldCaptureToken,
+                    sessionCancellationToken);
+                _bargeInCoordinator.CorrectionRegenerationRequested += correctionHandler;
+                liveUtteranceHandler = (routed, token) => DispatchLiveUtteranceRouteAsync(
+                    routed,
+                    webSocket,
+                    sendGate,
+                    token);
+                _bargeInCoordinator.LiveUserUtteranceRouted += liveUtteranceHandler;
+            }
+
             await ReceiveLoopAsync(
                 webSocket,
                 sendGate,
+                connectionCorrelationIds,
                 cancellation =>
                 {
                     devVisualFlowCancellation?.Cancel();
@@ -66,6 +99,16 @@ public sealed class WebSocketHandler
         }
         finally
         {
+            if (_bargeInCoordinator is not null && correctionHandler is not null)
+            {
+                _bargeInCoordinator.CorrectionRegenerationRequested -= correctionHandler;
+            }
+
+            if (_bargeInCoordinator is not null && liveUtteranceHandler is not null)
+            {
+                _bargeInCoordinator.LiveUserUtteranceRouted -= liveUtteranceHandler;
+            }
+
             devVisualFlowCancellation?.Cancel();
             _runtimeStateService.DecrementActiveWebSocketConnections();
             _logger.LogInformation(
@@ -77,6 +120,7 @@ public sealed class WebSocketHandler
     private async Task ReceiveLoopAsync(
         System.Net.WebSockets.WebSocket webSocket,
         SemaphoreSlim sendGate,
+        ConcurrentDictionary<string, byte> connectionCorrelationIds,
         Action<CancellationTokenSource> setDevVisualFlowCancellation,
         CancellationToken cancellationToken)
     {
@@ -100,38 +144,39 @@ public sealed class WebSocketHandler
                 _logger.LogInformation("Incoming WebSocket message: {Message}", message);
             }
 
-            if (await TryHandleVoiceStreamMessageAsync(webSocket, sendGate, message, cancellationToken))
+            if (await TryHandleVoiceStreamMessageAsync(webSocket, sendGate, connectionCorrelationIds, message, cancellationToken))
             {
                 continue;
             }
 
             var request = DeserializeRequest(message);
-            var response = request is null
-                ? await ProcessMessageAsync(message, cancellationToken)
-                : await ProcessLiveRequestAsync(
-                    request,
-                    visualEvent => SendVisualEventAsync(webSocket, sendGate, visualEvent, cancellationToken),
+            if (request is null)
+            {
+                var response = await ProcessMessageAsync(message, cancellationToken);
+                await EmitProcessedResponseAsync(
+                    webSocket,
+                    sendGate,
+                    null,
+                    response,
+                    setDevVisualFlowCancellation,
                     cancellationToken);
+                continue;
+            }
 
-            try
-            {
-                if (CanEmitTurn(response.CorrelationId))
-                {
-                    await SendResponseAsync(webSocket, sendGate, response, cancellationToken);
-                    StartDevVisualFlowIfNeeded(webSocket, sendGate, response, setDevVisualFlowCancellation, cancellationToken);
-                    await QueueSpeechIfNeededAsync(webSocket, sendGate, request, response, cancellationToken);
-                }
-            }
-            finally
-            {
-                CompleteLiveTurnIfNeeded(request, response.CorrelationId);
-            }
+            await ProcessAndEmitLiveRequestAsync(
+                webSocket,
+                sendGate,
+                request,
+                connectionCorrelationIds,
+                setDevVisualFlowCancellation,
+                cancellationToken);
         }
     }
 
     private async Task<bool> TryHandleVoiceStreamMessageAsync(
         System.Net.WebSockets.WebSocket webSocket,
         SemaphoreSlim sendGate,
+        ConcurrentDictionary<string, byte> connectionCorrelationIds,
         string rawMessage,
         CancellationToken cancellationToken)
     {
@@ -234,6 +279,7 @@ public sealed class WebSocketHandler
                                 ClientMode = envelope.ClientMode,
                                 ReceivedAtUtc = DateTimeOffset.UtcNow
                             },
+                            connectionCorrelationIds,
                             visualEvent => SendVisualEventAsync(webSocket, sendGate, visualEvent, cancellationToken),
                             cancellationToken);
                     }
@@ -292,6 +338,163 @@ public sealed class WebSocketHandler
         return true;
     }
 
+    internal async Task DispatchCorrectionRegenerationAsync(
+        CorrectionRegenerationRequested correction,
+        System.Net.WebSockets.WebSocket webSocket,
+        SemaphoreSlim sendGate,
+        ConcurrentDictionary<string, byte> connectionCorrelationIds,
+        CancellationToken oldCaptureCancellationToken,
+        CancellationToken sessionCancellationToken)
+    {
+        if (!connectionCorrelationIds.ContainsKey(correction.OriginalCorrelationId))
+        {
+            return;
+        }
+
+        _recentRequestsByCorrelationId.TryGetValue(correction.OriginalCorrelationId, out var previousRequest);
+        var buildResult = _correctionRequestBuilder.Build(new CorrectionRequestBuildInput(
+            correction.CorrectionText,
+            correction.OriginalCorrelationId,
+            previousRequest));
+
+        _logger.LogInformation(
+            "Dispatching correction regeneration. OriginalCorrelationId: {OriginalCorrelationId}. NewCorrelationId: {NewCorrelationId}. Strategy: {Strategy}. OldCaptureTokenCancelled: {OldCaptureTokenCancelled}. SessionTokenCancelled: {SessionTokenCancelled}.",
+            buildResult.OriginalCorrelationId,
+            buildResult.NewCorrelationId,
+            buildResult.Strategy,
+            oldCaptureCancellationToken.IsCancellationRequested,
+            sessionCancellationToken.IsCancellationRequested);
+
+        await ProcessAndEmitLiveRequestAsync(
+            webSocket,
+            sendGate,
+            buildResult.Request,
+            connectionCorrelationIds,
+            _ => { },
+            sessionCancellationToken);
+    }
+
+    internal async Task DispatchLiveUtteranceRouteAsync(
+        LiveUserUtteranceRouted routed,
+        System.Net.WebSockets.WebSocket webSocket,
+        SemaphoreSlim sendGate,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation(
+            "Live utterance route dispatched. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. StateWhenCaptured: {StateWhenCaptured}. Route: {Route}. Action: {Action}.",
+            routed.Utterance.ActiveTurnId,
+            routed.Utterance.CorrelationId,
+            routed.Utterance.StateWhenCaptured,
+            routed.Decision.Kind,
+            routed.Decision.Action);
+
+        var responseCorrelationId = RoutedResponseCorrelationId(routed.Utterance);
+        AssistantResponse? response = routed.Decision.Kind switch
+        {
+            UtteranceRouteKind.PauseAndClarify when routed.Decision.Action == "PauseAndConfirmCancel" => new AssistantResponse
+            {
+                Success = true,
+                Message = BuildPendingStopQuestion(routed.Utterance),
+                SpokenText = BuildPendingStopQuestion(routed.Utterance),
+                CorrelationId = responseCorrelationId,
+                Intent = "live_utterance_pause",
+                ResponseType = "confirmation"
+            },
+            UtteranceRouteKind.QueueAfterActiveTurn => new AssistantResponse
+            {
+                Success = false,
+                Message = "I heard that follow-up, but queueing active-flow requests is not implemented yet.",
+                SpokenText = "I heard that follow-up, but queueing active-flow requests is not implemented yet.",
+                CorrelationId = responseCorrelationId,
+                ErrorCode = "NOT_IMPLEMENTED_QUEUE",
+                Intent = "live_utterance_queue_after",
+                ResponseType = "limitation"
+            },
+            UtteranceRouteKind.StatusQuestion => new AssistantResponse
+            {
+                Success = true,
+                Message = $"I heard you while I was {FormatState(routed.Utterance.StateWhenCaptured)}.",
+                SpokenText = $"I heard you while I was {FormatState(routed.Utterance.StateWhenCaptured)}.",
+                CorrelationId = responseCorrelationId,
+                Intent = "live_utterance_status",
+                ResponseType = "assistant"
+            },
+            _ => null
+        };
+
+        if (response is null)
+        {
+            return;
+        }
+
+        await SendResponseAsync(webSocket, sendGate, response, cancellationToken);
+        await QueueSpeechIfNeededAsync(
+            webSocket,
+            sendGate,
+            new AssistantRequest
+            {
+                Message = routed.Utterance.Text,
+                CorrelationId = responseCorrelationId,
+                InteractionSource = "voice_correction",
+                ClientMode = "voice"
+            },
+            response,
+            cancellationToken);
+    }
+
+    internal async Task<AssistantResponse> ProcessAndEmitLiveRequestAsync(
+        System.Net.WebSockets.WebSocket webSocket,
+        SemaphoreSlim sendGate,
+        AssistantRequest request,
+        ConcurrentDictionary<string, byte> connectionCorrelationIds,
+        Action<CancellationTokenSource> setDevVisualFlowCancellation,
+        CancellationToken cancellationToken)
+    {
+        var response = await ProcessLiveRequestAsync(
+            request,
+            connectionCorrelationIds,
+            visualEvent => SendVisualEventAsync(webSocket, sendGate, visualEvent, cancellationToken),
+            cancellationToken);
+
+        try
+        {
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                await EmitProcessedResponseAsync(
+                    webSocket,
+                    sendGate,
+                    request,
+                    response,
+                    setDevVisualFlowCancellation,
+                    cancellationToken);
+            }
+        }
+        finally
+        {
+            CompleteLiveTurnIfNeeded(request, response.CorrelationId);
+        }
+
+        return response;
+    }
+
+    private async Task EmitProcessedResponseAsync(
+        System.Net.WebSockets.WebSocket webSocket,
+        SemaphoreSlim sendGate,
+        AssistantRequest? request,
+        AssistantResponse response,
+        Action<CancellationTokenSource> setDevVisualFlowCancellation,
+        CancellationToken cancellationToken)
+    {
+        if (!CanEmitTurn(response.CorrelationId))
+        {
+            return;
+        }
+
+        await SendResponseAsync(webSocket, sendGate, response, cancellationToken);
+        StartDevVisualFlowIfNeeded(webSocket, sendGate, response, setDevVisualFlowCancellation, cancellationToken);
+        await QueueSpeechIfNeededAsync(webSocket, sendGate, request, response, cancellationToken);
+    }
+
     private async Task QueueSpeechIfNeededAsync(
         System.Net.WebSockets.WebSocket webSocket,
         SemaphoreSlim sendGate,
@@ -315,6 +518,11 @@ public sealed class WebSocketHandler
 
         if (speechDecision.ShouldSpeak && speechDecision.ShouldQueue)
         {
+            if (!string.IsNullOrWhiteSpace(response.CorrelationId))
+            {
+                _liveTurnService.UpdateTurnState(response.CorrelationId, LiveAssistantTurnState.Speaking);
+            }
+
             await _speechPlaybackService.EnqueueAsync(
                 speechDecision.SpeechTextOverride ?? ResponseSpeechText(response),
                 response.CorrelationId,
@@ -421,6 +629,35 @@ public sealed class WebSocketHandler
         };
     }
 
+    private static string BuildPendingStopQuestion(UserUtterance utterance)
+    {
+        return utterance.StateWhenCaptured is LiveAssistantTurnState.AwaitingToolCommit
+            ? "Do you want me to stop and not run that pending action?"
+            : "Do you want me to stop that action?";
+    }
+
+    private static string RoutedResponseCorrelationId(UserUtterance utterance)
+    {
+        return !string.IsNullOrWhiteSpace(utterance.CorrelationId)
+            ? utterance.CorrelationId
+            : !string.IsNullOrWhiteSpace(utterance.ActiveTurnId)
+                ? utterance.ActiveTurnId
+                : Guid.NewGuid().ToString("N");
+    }
+
+    private static string FormatState(LiveAssistantTurnState state)
+    {
+        return state switch
+        {
+            LiveAssistantTurnState.ProcessingTurn => "processing that request",
+            LiveAssistantTurnState.PlanningTool => "planning the tool action",
+            LiveAssistantTurnState.AwaitingToolCommit => "waiting briefly before the tool action",
+            LiveAssistantTurnState.ExecutingTool => "running the tool",
+            LiveAssistantTurnState.Speaking => "speaking",
+            _ => state.ToString()
+        };
+    }
+
     private static async Task<string?> ReceiveMessageAsync(
         System.Net.WebSockets.WebSocket webSocket,
         byte[] buffer,
@@ -522,12 +759,23 @@ public sealed class WebSocketHandler
 
     private async Task<AssistantResponse> ProcessLiveRequestAsync(
         AssistantRequest request,
+        ConcurrentDictionary<string, byte> connectionCorrelationIds,
         Func<AssistantVisualEvent, Task> sendVisualEventAsync,
         CancellationToken cancellationToken)
     {
         var correlationId = string.IsNullOrWhiteSpace(request.CorrelationId)
             ? Guid.NewGuid().ToString("N")
             : request.CorrelationId;
+        connectionCorrelationIds.TryAdd(correlationId, 0);
+        _recentRequestsByCorrelationId[correlationId] = new AssistantRequest
+        {
+            Message = request.Message,
+            CorrelationId = correlationId,
+            SpeakResponse = request.SpeakResponse,
+            InteractionSource = request.InteractionSource,
+            ClientMode = request.ClientMode,
+            ReceivedAtUtc = request.ReceivedAtUtc
+        };
         var turn = _liveTurnService.BeginTurn(
             "default",
             correlationId,

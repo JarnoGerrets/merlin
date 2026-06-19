@@ -10,6 +10,8 @@ public sealed class SpeakerDuckingService : ISpeakerDuckingService
     private readonly object _syncRoot = new();
     private bool _isDucked;
 
+    public event EventHandler<SpeakerDuckingChangedEventArgs>? DuckingChanged;
+
     public SpeakerDuckingService(IOptions<BargeInOptions> options, ILogger<SpeakerDuckingService> logger)
     {
         _options = options.Value;
@@ -40,6 +42,11 @@ public sealed class SpeakerDuckingService : ISpeakerDuckingService
 
     public void StartDucking(BargeInSpeechContext context)
     {
+        StartDucking(context, "speech_active");
+    }
+
+    public void StartDucking(BargeInSpeechContext context, string reason)
+    {
         lock (_syncRoot)
         {
             if (_isDucked)
@@ -50,13 +57,24 @@ public sealed class SpeakerDuckingService : ISpeakerDuckingService
             _isDucked = true;
         }
 
+        var multiplier = CurrentVolumeMultiplier;
+        DuckingChanged?.Invoke(this, new SpeakerDuckingChangedEventArgs
+        {
+            IsDucked = true,
+            VolumeMultiplier = multiplier,
+            Reason = reason,
+            FadeDuration = TimeSpan.FromMilliseconds(Math.Max(0, _options.DuckingFadeMs)),
+            ChangedAtUtc = DateTimeOffset.UtcNow
+        });
+
         _logger.LogInformation(
-            "Speaker ducking started. CorrelationId: {CorrelationId}. AssistantTurnId: {AssistantTurnId}. SpeechType: {SpeechType}. VolumePercent: {VolumePercent}. FadeMs: {FadeMs}.",
+            "Speaker ducking started. CorrelationId: {CorrelationId}. AssistantTurnId: {AssistantTurnId}. SpeechType: {SpeechType}. VolumePercent: {VolumePercent}. FadeMs: {FadeMs}. Reason: {Reason}.",
             context.CorrelationId,
             context.AssistantTurnId,
             context.SpeechType,
             _options.DuckingVolumePercent,
-            _options.DuckingFadeMs);
+            _options.DuckingFadeMs,
+            reason);
     }
 
     public void Restore(BargeInSpeechContext context, string reason)
@@ -70,6 +88,16 @@ public sealed class SpeakerDuckingService : ISpeakerDuckingService
 
             _isDucked = false;
         }
+
+        var multiplier = CurrentVolumeMultiplier;
+        DuckingChanged?.Invoke(this, new SpeakerDuckingChangedEventArgs
+        {
+            IsDucked = false,
+            VolumeMultiplier = multiplier,
+            Reason = reason,
+            FadeDuration = TimeSpan.FromMilliseconds(Math.Max(0, _options.DuckingRestoreMs)),
+            ChangedAtUtc = DateTimeOffset.UtcNow
+        });
 
         _logger.LogInformation(
             "Speaker ducking restored. CorrelationId: {CorrelationId}. AssistantTurnId: {AssistantTurnId}. SpeechType: {SpeechType}. RestoreMs: {RestoreMs}. Reason: {Reason}.",

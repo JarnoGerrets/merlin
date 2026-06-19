@@ -7,6 +7,7 @@ public sealed class LiveAssistantTurnService : ILiveAssistantTurnService
 {
     private readonly ConcurrentDictionary<string, LiveAssistantTurn> _turns = new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<LiveAssistantTurnService> _logger;
+    private string? _currentCorrelationId;
 
     public LiveAssistantTurnService(ILogger<LiveAssistantTurnService> logger)
     {
@@ -41,6 +42,7 @@ public sealed class LiveAssistantTurnService : ILiveAssistantTurnService
             turn,
             (_, existing) =>
             {
+                existing.UpdateState(LiveAssistantTurnState.Superseded);
                 existing.MarkCancelled(LiveAssistantTurnCancelReason.SupersededByNewTurn);
                 existing.Dispose();
                 _logger.LogInformation(
@@ -48,6 +50,7 @@ public sealed class LiveAssistantTurnService : ILiveAssistantTurnService
                     normalizedCorrelationId);
                 return turn;
             });
+        Volatile.Write(ref _currentCorrelationId, normalizedCorrelationId);
 
         _logger.LogInformation(
             "Live turn started. ConversationId: {ConversationId}. CorrelationId: {CorrelationId}. AssistantTurnId: {AssistantTurnId}.",
@@ -68,6 +71,47 @@ public sealed class LiveAssistantTurnService : ILiveAssistantTurnService
 
         turn = null!;
         return false;
+    }
+
+    public bool TryGetCurrentActiveTurn(out LiveAssistantTurn turn)
+    {
+        var correlationId = Volatile.Read(ref _currentCorrelationId);
+        if (!string.IsNullOrWhiteSpace(correlationId)
+            && TryGetActiveTurn(correlationId, out turn))
+        {
+            return true;
+        }
+
+        foreach (var candidate in _turns.Values.OrderByDescending(candidate => candidate.StartedAt))
+        {
+            if (candidate.Status is LiveAssistantTurnStatus.Active)
+            {
+                turn = candidate;
+                return true;
+            }
+        }
+
+        turn = null!;
+        return false;
+    }
+
+    public void UpdateTurnState(
+        string correlationId,
+        LiveAssistantTurnState state,
+        string? pendingCommandDescription = null)
+    {
+        if (!_turns.TryGetValue(correlationId, out var turn))
+        {
+            return;
+        }
+
+        turn.UpdateState(state, pendingCommandDescription);
+        _logger.LogInformation(
+            "Live turn state changed. CorrelationId: {CorrelationId}. ActiveTurnId: {ActiveTurnId}. State: {State}. PendingCommand: {PendingCommand}.",
+            turn.CorrelationId,
+            turn.AssistantTurnId,
+            turn.State,
+            turn.PendingCommandDescription);
     }
 
     public CancellationToken GetTurnCancellationToken(
@@ -99,6 +143,9 @@ public sealed class LiveAssistantTurnService : ILiveAssistantTurnService
         var cancelled = turn.MarkCancelled(reason, correctionText);
         if (cancelled)
         {
+            turn.UpdateState(reason is LiveAssistantTurnCancelReason.SupersededByNewTurn
+                ? LiveAssistantTurnState.Superseded
+                : LiveAssistantTurnState.Cancelled);
             _logger.LogInformation(
                 "Live turn cancelled. CorrelationId: {CorrelationId}. Reason: {Reason}. CorrectionLength: {CorrectionLength}.",
                 correlationId,
@@ -142,7 +189,12 @@ public sealed class LiveAssistantTurnService : ILiveAssistantTurnService
         }
 
         turn.MarkCompleted();
+        turn.UpdateState(LiveAssistantTurnState.Completed);
         turn.Dispose();
+        if (string.Equals(Volatile.Read(ref _currentCorrelationId), correlationId, StringComparison.OrdinalIgnoreCase))
+        {
+            Volatile.Write(ref _currentCorrelationId, null);
+        }
         _logger.LogInformation(
             "Live turn completed. CorrelationId: {CorrelationId}. FinalStatus: {Status}.",
             correlationId,

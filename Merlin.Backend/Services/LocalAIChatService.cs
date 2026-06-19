@@ -67,6 +67,7 @@ public sealed class LocalAIChatService : ILocalAIChatService
                 ? messages
                 : [new ChatMessage("user", preparation.CompiledPrompt)];
             var cloudResult = await TryDeepInfraAsync(cloudMessages, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             if (cloudResult.Success && !string.IsNullOrWhiteSpace(cloudResult.Message))
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -154,6 +155,7 @@ public sealed class LocalAIChatService : ILocalAIChatService
 
             _logger.LogInformation("DeepInfra attempt {Attempt}/{MaxAttempts}. Model: {Model}", attempt, maxAttempts, _llmOptions.DeepInfraModel);
             lastResult = await _deepInfraProvider.GenerateAsync(messages, timeoutCts.Token);
+            cancellationToken.ThrowIfCancellationRequested();
 
             if (lastResult.Success)
             {
@@ -203,6 +205,7 @@ public sealed class LocalAIChatService : ILocalAIChatService
         bool notifyUser,
         CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         _logger.LogInformation("LLM provider used: LocalAI fallback.");
         var localResult = await _localProvider.GenerateAsync(messages, cancellationToken);
         if (!localResult.Success || string.IsNullOrWhiteSpace(localResult.Message))

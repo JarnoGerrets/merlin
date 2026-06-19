@@ -15,16 +15,19 @@ public sealed class ChatterboxTtsProvider : IVoiceSynthesisService
     private readonly TtsOptions _options;
     private readonly ChatterboxTimingLogService _timingLog;
     private readonly ChatterboxWorkerClient _workerClient;
+    private readonly IGpuWorkScheduler _gpuWorkScheduler;
 
     public ChatterboxTtsProvider(
         IOptions<TtsOptions> options,
         ChatterboxWorkerClient workerClient,
+        IGpuWorkScheduler gpuWorkScheduler,
         IWebHostEnvironment environment,
         ChatterboxTimingLogService timingLog,
         ILogger<ChatterboxTtsProvider> logger)
     {
         _options = options.Value;
         _workerClient = workerClient;
+        _gpuWorkScheduler = gpuWorkScheduler;
         _environment = environment;
         _timingLog = timingLog;
         _logger = logger;
@@ -117,7 +120,11 @@ public sealed class ChatterboxTtsProvider : IVoiceSynthesisService
                         cacheKey,
                         chunk,
                         context?.Replayable);
-                    result = await _workerClient.SynthesizeAsync(chunk, referenceVoicePath, cancellationToken);
+                    result = await _gpuWorkScheduler.RunAsync(
+                        "ChatterboxTtsChunk",
+                        GpuWorkPriority.Low,
+                        token => _workerClient.SynthesizeAsync(chunk, referenceVoicePath, token),
+                        cancellationToken);
                     await TryWriteCacheAsync(cacheKey, result, cancellationToken);
                 }
 

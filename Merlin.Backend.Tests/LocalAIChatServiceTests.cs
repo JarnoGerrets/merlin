@@ -45,6 +45,28 @@ public sealed class LocalAIChatServiceTests
     }
 
     [Fact]
+    public async Task GenerateResponseAsync_WhenDeepInfraTurnIsCancelled_DoesNotFallBackToLocalAI()
+    {
+        var client = new FakeLocalAIClient("Local answer should not be used.");
+        var service = CreateService(
+            client,
+            enabled: true,
+            available: true,
+            llmOptions: new LlmOptions
+            {
+                Provider = "deepinfra",
+                UseLocalFallback = true
+            });
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            service.GenerateResponseAsync("tell me something slow", cancellation.Token));
+
+        Assert.Equal(0, client.CallCount);
+    }
+
+    [Fact]
     public async Task GenerateResponseAsync_WhenLocalAIIsCold_WarmsOnDemand()
     {
         var service = CreateService(new FakeLocalAIClient("Local answer."), enabled: true, available: false, warmupSucceeds: true);
@@ -158,15 +180,16 @@ public sealed class LocalAIChatServiceTests
         bool warmupSucceeds = true,
         string policy = "TEST POLICY",
         IConversationSessionService? sessionService = null,
-        ILongTermMemoryStore? memoryStore = null)
+        ILongTermMemoryStore? memoryStore = null,
+        LlmOptions? llmOptions = null)
     {
         var localOptions = Options.Create(new LocalAIOptions { Enabled = enabled });
-        var llmOptions = Options.Create(new LlmOptions { Provider = "local" });
+        var configuredLlmOptions = Options.Create(llmOptions ?? new LlmOptions { Provider = "local" });
         var healthService = new FakeLocalAIHealthService(available, warmupSucceeds);
         return new LocalAIChatService(
-            new DeepInfraLlmProvider(new HttpClient(), llmOptions, NullLogger<DeepInfraLlmProvider>.Instance),
+            new DeepInfraLlmProvider(new HttpClient(), configuredLlmOptions, NullLogger<DeepInfraLlmProvider>.Instance),
             new LocalLlmProvider(client, healthService, localOptions, NullLogger<LocalLlmProvider>.Instance),
-            llmOptions,
+            configuredLlmOptions,
             new FakeAssistantPolicyProvider(policy),
             sessionService ?? new ConversationSessionService(new FakeConversationSummaryStore()),
             memoryStore ?? new FakeLongTermMemoryStore(),
@@ -184,10 +207,14 @@ public sealed class LocalAIChatServiceTests
 
         public string LastPrompt { get; private set; } = string.Empty;
 
+        public int CallCount { get; private set; }
+
         public Task<string?> GenerateAsync(
             string prompt,
             CancellationToken cancellationToken = default)
         {
+            CallCount++;
+            cancellationToken.ThrowIfCancellationRequested();
             LastPrompt = prompt;
             return Task.FromResult(_response);
         }

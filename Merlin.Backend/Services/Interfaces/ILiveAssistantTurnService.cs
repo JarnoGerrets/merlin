@@ -12,6 +12,13 @@ public interface ILiveAssistantTurnService
 
     bool TryGetActiveTurn(string correlationId, out LiveAssistantTurn turn);
 
+    bool TryGetCurrentActiveTurn(out LiveAssistantTurn turn);
+
+    void UpdateTurnState(
+        string correlationId,
+        LiveAssistantTurnState state,
+        string? pendingCommandDescription = null);
+
     CancellationToken GetTurnCancellationToken(
         string correlationId,
         CancellationToken fallback = default);

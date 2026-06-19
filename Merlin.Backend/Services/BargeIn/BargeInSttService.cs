@@ -6,13 +6,16 @@ namespace Merlin.Backend.Services.BargeIn;
 public sealed class BargeInSttService : IBargeInSttService
 {
     private readonly ILogger<BargeInSttService> _logger;
+    private readonly IGpuWorkScheduler _gpuWorkScheduler;
     private readonly IVoiceTranscriptionService _voiceTranscriptionService;
 
     public BargeInSttService(
         IVoiceTranscriptionService voiceTranscriptionService,
+        IGpuWorkScheduler gpuWorkScheduler,
         ILogger<BargeInSttService> logger)
     {
         _voiceTranscriptionService = voiceTranscriptionService;
+        _gpuWorkScheduler = gpuWorkScheduler;
         _logger = logger;
     }
 
@@ -51,9 +54,10 @@ public sealed class BargeInSttService : IBargeInSttService
             options.GatedSttDevice,
             options.GatedSttBeamSize);
 
-        VoiceTranscriptionResponse transcription = await _voiceTranscriptionService.TranscribeAsync(
-            wavStream,
-            ".wav",
+        VoiceTranscriptionResponse transcription = await _gpuWorkScheduler.RunAsync(
+            "InterruptionStt",
+            GpuWorkPriority.High,
+            token => _voiceTranscriptionService.TranscribeAsync(wavStream, ".wav", token),
             cancellationToken);
 
         return new BargeInSttResult

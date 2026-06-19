@@ -18,7 +18,9 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
     private readonly ILogger<AssistantSpeechPlaybackService> _logger;
     private readonly SemaphoreSlim _speechGate = new(1, 1);
     private readonly object _syncRoot = new();
+    private readonly object _volumeSyncRoot = new();
     private CancellationTokenSource? _activeSpeechCancellation;
+    private Action<float>? _activeVolumeSetter;
     private long _queueGeneration;
 
     public AssistantSpeechPlaybackService(
@@ -31,6 +33,7 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
         _playbackReferenceTap = playbackReferenceTap;
         _speakerDuckingService = speakerDuckingService;
         _logger = logger;
+        _speakerDuckingService.DuckingChanged += OnDuckingChanged;
     }
 
     public Task EnqueueAsync(
@@ -266,7 +269,10 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
                     {
                         DesiredLatency = 100
                     };
-                    waveOut.Init(bufferedWaveProvider);
+                    waveOut.Init(new PlaybackReferenceWaveProvider(
+                        bufferedWaveProvider,
+                        _playbackReferenceTap,
+                        correlationId));
                     return Task.CompletedTask;
                 },
                 async (audio, token) =>
@@ -278,7 +284,6 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
 
                     var buffer = audio.ToArray();
                     await WaitForPlaybackBufferSpaceAsync(bufferedWaveProvider, buffer.Length, token);
-                    _playbackReferenceTap.PushPcm16Reference(buffer, sampleRate, channels, correlationId);
                     bufferedWaveProvider.AddSamples(buffer, 0, buffer.Length);
                     totalBytes += buffer.Length;
 
@@ -286,7 +291,8 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
                     {
                         playbackStarted = true;
                         playbackStopwatch.Start();
-                        waveOut.Volume = _speakerDuckingService.CurrentVolumeMultiplier;
+                        SetActiveVolumeSetter(volume => waveOut.Volume = volume);
+                        ApplyOutputVolume(_speakerDuckingService.CurrentVolumeMultiplier, "playback_start");
                         waveOut.Play();
                         _playbackReferenceTap.NotifySpeechStarted(speechContext);
                         await TrySendEventAsync(sendEventAsync, "SPEAKING_START", correlationId, null, token);
@@ -299,7 +305,6 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
                     if (lastEnergyEvent.ElapsedMilliseconds >= EnergyEventIntervalMs)
                     {
                         lastEnergyEvent.Restart();
-                        waveOut.Volume = _speakerDuckingService.CurrentVolumeMultiplier;
                         await TrySendEnergyAsync(sendEventAsync, correlationId, buffer, token);
                     }
                 },
@@ -343,7 +348,69 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
                 _playbackReferenceTap.NotifySpeechStopped(speechContext);
             }
 
+            ClearActiveVolumeSetter();
             waveOut?.Dispose();
+        }
+    }
+
+    private void OnDuckingChanged(object? sender, SpeakerDuckingChangedEventArgs eventArgs)
+    {
+        ApplyOutputVolume(eventArgs.VolumeMultiplier, eventArgs.Reason);
+    }
+
+    private void SetActiveVolumeSetter(Action<float> setter)
+    {
+        lock (_volumeSyncRoot)
+        {
+            _activeVolumeSetter = setter;
+        }
+    }
+
+    private void ClearActiveVolumeSetter()
+    {
+        lock (_volumeSyncRoot)
+        {
+            _activeVolumeSetter = null;
+        }
+    }
+
+    internal void SetActiveVolumeSetterForTests(Action<float> setter)
+    {
+        SetActiveVolumeSetter(setter);
+    }
+
+    internal void ClearActiveVolumeSetterForTests()
+    {
+        ClearActiveVolumeSetter();
+    }
+
+    private void ApplyOutputVolume(float multiplier, string reason)
+    {
+        Action<float>? setter;
+        lock (_volumeSyncRoot)
+        {
+            setter = _activeVolumeSetter;
+        }
+
+        if (setter is null)
+        {
+            return;
+        }
+
+        var clamped = Math.Clamp(multiplier, 0.0f, 1.0f);
+        try
+        {
+            setter(clamped);
+            _logger.LogInformation(
+                "Speaker ducking volume applied to active output. Target: {Target}. Reason: {Reason}.",
+                clamped,
+                reason);
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
         }
     }
 

@@ -1,6 +1,7 @@
 using Merlin.Backend.Models;
 using Merlin.Backend.Configuration;
 using Merlin.Backend.Services.Acknowledgement;
+using Merlin.Backend.Tools;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
 
@@ -19,6 +20,7 @@ public sealed class CommandRouter
     private readonly IRuntimeStateService _runtimeStateService;
     private readonly SpeechCommandNormalizer _speechCommandNormalizer;
     private readonly ToolRegistry _toolRegistry;
+    private readonly ILiveAssistantTurnService? _liveTurnService;
 
     public CommandRouter(
         IIntentParser intentParser,
@@ -31,7 +33,8 @@ public sealed class CommandRouter
         IAcknowledgementPolicy? acknowledgementPolicy = null,
         IAcknowledgementSpeechService? acknowledgementSpeechService = null,
         IRequestProgressSpeechService? progressSpeechService = null,
-        IOptions<LlmOptions>? llmOptions = null)
+        IOptions<LlmOptions>? llmOptions = null,
+        ILiveAssistantTurnService? liveTurnService = null)
     {
         _acknowledgementPolicy = acknowledgementPolicy;
         _acknowledgementSpeechService = acknowledgementSpeechService;
@@ -44,6 +47,7 @@ public sealed class CommandRouter
         _runtimeStateService = runtimeStateService;
         _speechCommandNormalizer = speechCommandNormalizer ?? new SpeechCommandNormalizer();
         _toolRegistry = toolRegistry;
+        _liveTurnService = liveTurnService;
     }
 
     public async Task<AssistantResponse> RouteAsync(string message, CancellationToken cancellationToken = default)
@@ -79,6 +83,8 @@ public sealed class CommandRouter
             correlationId,
             _runtimeStateService.TotalRequestsProcessed,
             message);
+
+        SetTurnState(correlationId, LiveAssistantTurnState.Interpreting);
 
         if (string.IsNullOrWhiteSpace(message))
         {
@@ -143,6 +149,7 @@ public sealed class CommandRouter
             }, cancellationToken);
         }
 
+        SetTurnState(correlationId, LiveAssistantTurnState.PlanningTool);
         var tool = _toolRegistry.FindTool(intentResult.NormalizedCommand);
 
         if (tool is null)
@@ -204,6 +211,31 @@ public sealed class CommandRouter
         var mainWorkStopwatch = Stopwatch.StartNew();
         try
         {
+            if (ShouldUsePendingCommandGate(tool, intentResult))
+            {
+                SetTurnState(
+                    correlationId,
+                    LiveAssistantTurnState.AwaitingToolCommit,
+                    DescribePendingCommand(tool, intentResult.NormalizedCommand));
+                _logger.LogInformation(
+                    "PendingCommandCreated. CorrelationId: {CorrelationId}. ToolName: {ToolName}. Command: {Command}.",
+                    correlationId,
+                    tool.Name,
+                    intentResult.NormalizedCommand);
+                _logger.LogInformation(
+                    "PendingCommandAwaitingCommit. CorrelationId: {CorrelationId}. ToolName: {ToolName}. GraceMs: {GraceMs}.",
+                    correlationId,
+                    tool.Name,
+                    PendingCommandGraceMs);
+                await Task.Delay(TimeSpan.FromMilliseconds(PendingCommandGraceMs), cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                _logger.LogInformation(
+                    "PendingCommandCommitted. CorrelationId: {CorrelationId}. ToolName: {ToolName}.",
+                    correlationId,
+                    tool.Name);
+            }
+
+            SetTurnState(correlationId, LiveAssistantTurnState.ExecutingTool);
             result = await tool.ExecuteAsync(
                 new ToolExecutionContext
                 {
@@ -225,6 +257,19 @@ public sealed class CommandRouter
             _logger.LogInformation(
                 "Final answer waiting for active acknowledgement/progress playback to finish if one is already playing. CorrelationId: {CorrelationId}.",
                 correlationId);
+        }
+        catch (OperationCanceledException)
+        {
+            pendingSpeechCancellation.Cancel();
+            if (ShouldUsePendingCommandGate(tool, intentResult))
+            {
+                _logger.LogInformation(
+                    "PendingCommandCancelledBeforeCommit. CorrelationId: {CorrelationId}. ToolName: {ToolName}.",
+                    correlationId,
+                    tool.Name);
+            }
+
+            throw;
         }
         finally
         {
@@ -255,6 +300,8 @@ public sealed class CommandRouter
             result.Success,
             result.ErrorCode);
 
+        SetTurnState(correlationId, LiveAssistantTurnState.ProcessingTurn);
+        cancellationToken.ThrowIfCancellationRequested();
         return await PolishAsync(new AssistantResponse
         {
             Success = result.Success,
@@ -280,6 +327,8 @@ public sealed class CommandRouter
             DevVisualFlow = result.DevVisualFlow
         }, cancellationToken);
     }
+
+    private const int PendingCommandGraceMs = 500;
 
     private AcknowledgementDecision? DecideAcknowledgement(
         AssistantRequest request,
@@ -390,6 +439,7 @@ public sealed class CommandRouter
         AssistantResponse response,
         CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var polishedMessage = await _responsePolisher.PolishMessageAsync(response, cancellationToken);
         var polishedResponse = new AssistantResponse
         {
@@ -446,6 +496,26 @@ public sealed class CommandRouter
             ApplicationCandidates = polishedResponse.ApplicationCandidates,
             DevVisualFlow = polishedResponse.DevVisualFlow
         };
+    }
+
+    private void SetTurnState(
+        string correlationId,
+        LiveAssistantTurnState state,
+        string? pendingCommandDescription = null)
+    {
+        _liveTurnService?.UpdateTurnState(correlationId, state, pendingCommandDescription);
+    }
+
+    private static bool ShouldUsePendingCommandGate(ITool tool, IntentParseResult intentResult)
+    {
+        return string.Equals(tool.Name, "Open URL", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(intentResult.Intent, "open_url", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(intentResult.CapabilityId, "url.open", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string DescribePendingCommand(ITool tool, string command)
+    {
+        return $"{tool.Name}: {command}";
     }
 
     private static string GetOrCreateCorrelationId(string? correlationId)

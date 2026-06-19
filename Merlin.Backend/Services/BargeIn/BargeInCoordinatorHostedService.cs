@@ -16,8 +16,7 @@ public sealed class BargeInCoordinatorHostedService : IHostedService
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Barge-in coordinator initialized.");
-        _ = _coordinator;
-        return Task.CompletedTask;
+        return _coordinator.StartLiveMonitoringAsync(cancellationToken);
     }
 
     public Task StopAsync(CancellationToken cancellationToken)

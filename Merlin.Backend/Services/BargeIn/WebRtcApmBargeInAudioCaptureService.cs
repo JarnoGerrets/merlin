@@ -9,12 +9,15 @@ public sealed class WebRtcApmBargeInAudioCaptureService : IBargeInAudioCaptureSe
 {
     private readonly IBargeInCoordinator _coordinator;
     private readonly IBargeInDiagnosticsLogger _diagnostics;
+    private readonly IContinuousMicAudioBuffer _continuousMicAudioBuffer;
     private readonly ILogger<WebRtcApmBargeInAudioCaptureService> _logger;
     private readonly IOptionsMonitor<BargeInOptions> _options;
     private readonly IPlaybackReferenceTap _playbackReferenceTap;
     private readonly object _syncRoot = new();
     private readonly List<float> _pendingSamples = [];
     private CancellationTokenSource? _captureCancellation;
+    private BargeInAnalysisFrameQueue? _analysisQueue;
+    private Task? _analysisTask;
     private Task? _captureTask;
     private BargeInSpeechContext? _activeContext;
     private long _nearEndFramesReceived;
@@ -25,12 +28,14 @@ public sealed class WebRtcApmBargeInAudioCaptureService : IBargeInAudioCaptureSe
         IPlaybackReferenceTap playbackReferenceTap,
         IBargeInCoordinator coordinator,
         IBargeInDiagnosticsLogger diagnostics,
+        IContinuousMicAudioBuffer continuousMicAudioBuffer,
         IOptionsMonitor<BargeInOptions> options,
         ILogger<WebRtcApmBargeInAudioCaptureService> logger)
     {
         _playbackReferenceTap = playbackReferenceTap;
         _coordinator = coordinator;
         _diagnostics = diagnostics;
+        _continuousMicAudioBuffer = continuousMicAudioBuffer;
         _options = options;
         _logger = logger;
     }
@@ -39,6 +44,7 @@ public sealed class WebRtcApmBargeInAudioCaptureService : IBargeInAudioCaptureSe
     {
         _playbackReferenceTap.SpeechStarted += OnSpeechStarted;
         _playbackReferenceTap.SpeechStopped += OnSpeechStopped;
+        OnSpeechStarted(this, CreateLiveMonitorContext());
         return Task.CompletedTask;
     }
 
@@ -76,6 +82,10 @@ public sealed class WebRtcApmBargeInAudioCaptureService : IBargeInAudioCaptureSe
             _nearEndFramesReceived = 0;
             _activeContext = context;
             _captureCancellation = new CancellationTokenSource();
+            _analysisQueue = new BargeInAnalysisFrameQueue(Math.Max(1, options.AnalysisQueueCapacityFrames));
+            _analysisTask = Task.Run(
+                () => AnalysisLoopAsync(context, _analysisQueue, _captureCancellation.Token),
+                CancellationToken.None);
             _captureTask = Task.Run(
                 () => CaptureLoopAsync(context, _captureCancellation.Token),
                 CancellationToken.None);
@@ -84,7 +94,17 @@ public sealed class WebRtcApmBargeInAudioCaptureService : IBargeInAudioCaptureSe
 
     private void OnSpeechStopped(object? sender, BargeInSpeechContext context)
     {
+        lock (_syncRoot)
+        {
+            if (_activeContext is not null
+                && !string.Equals(_activeContext.AssistantTurnId, context.AssistantTurnId, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
         StopCapture("speech_stopped");
+        OnSpeechStarted(this, CreateLiveMonitorContext());
     }
 
     private async Task CaptureLoopAsync(BargeInSpeechContext context, CancellationToken cancellationToken)
@@ -150,7 +170,7 @@ public sealed class WebRtcApmBargeInAudioCaptureService : IBargeInAudioCaptureSe
                                 _targetSampleRate);
                         }
 
-                        await EmitFramesAsync(context, converted, cancellationToken);
+                        EmitFrames(context, converted);
                     }
                     finally
                     {
@@ -186,7 +206,7 @@ public sealed class WebRtcApmBargeInAudioCaptureService : IBargeInAudioCaptureSe
         }
     }
 
-    private async Task EmitFramesAsync(BargeInSpeechContext context, float[] samples, CancellationToken cancellationToken)
+    private void EmitFrames(BargeInSpeechContext context, float[] samples)
     {
         lock (_syncRoot)
         {
@@ -209,14 +229,49 @@ public sealed class WebRtcApmBargeInAudioCaptureService : IBargeInAudioCaptureSe
 
             var frameCount = Interlocked.Increment(ref _nearEndFramesReceived);
             _diagnostics.MicFrameProcessed(context, frameCount);
-            await _coordinator.ProcessMicrophoneFrameAsync(
-                new BargeInAudioFrame
+            var rawFrame = new BargeInAudioFrame
+            {
+                Samples = frame,
+                SampleRate = _targetSampleRate,
+                Timestamp = DateTimeOffset.UtcNow,
+                DurationMs = Math.Max(1, (int)Math.Round(frame.Length * 1000.0 / _targetSampleRate))
+            };
+            var recordedFrame = _continuousMicAudioBuffer.Append(rawFrame, _options.CurrentValue);
+            BargeInAnalysisFrameQueue? queue;
+            lock (_syncRoot)
+            {
+                queue = _analysisQueue;
+            }
+
+            queue?.Enqueue(recordedFrame);
+        }
+    }
+
+    private async Task AnalysisLoopAsync(
+        BargeInSpeechContext context,
+        BargeInAnalysisFrameQueue queue,
+        CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                var frame = await queue.DequeueAsync(cancellationToken);
+                if (frame is null)
                 {
-                    Samples = frame,
-                    SampleRate = _targetSampleRate,
-                    Timestamp = DateTimeOffset.UtcNow
-                },
-                cancellationToken);
+                    continue;
+                }
+
+                await _coordinator.ProcessMicrophoneFrameAsync(frame, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "WebRTC APM barge-in analysis frame processing failed. Capture will continue.");
+            }
         }
     }
 
@@ -224,12 +279,18 @@ public sealed class WebRtcApmBargeInAudioCaptureService : IBargeInAudioCaptureSe
     {
         CancellationTokenSource? cancellation;
         Task? captureTask;
+        Task? analysisTask;
+        BargeInAnalysisFrameQueue? analysisQueue;
         lock (_syncRoot)
         {
             cancellation = _captureCancellation;
             captureTask = _captureTask;
+            analysisTask = _analysisTask;
+            analysisQueue = _analysisQueue;
             _captureCancellation = null;
             _captureTask = null;
+            _analysisTask = null;
+            _analysisQueue = null;
             _pendingSamples.Clear();
         }
 
@@ -240,14 +301,16 @@ public sealed class WebRtcApmBargeInAudioCaptureService : IBargeInAudioCaptureSe
 
         cancellation.Cancel();
         _logger.LogInformation(
-            "WebRTC APM microphone capture stopping. Reason: {Reason}. NearEndFramesReceived: {NearEndFramesReceived}.",
+            "WebRTC APM microphone capture stopping. Reason: {Reason}. NearEndFramesReceived: {NearEndFramesReceived}. AnalysisFramesDropped: {AnalysisFramesDropped}.",
             reason,
-            Interlocked.Read(ref _nearEndFramesReceived));
+            Interlocked.Read(ref _nearEndFramesReceived),
+            analysisQueue?.DroppedFrames ?? 0);
         _ = captureTask?.ContinueWith(
             _ => cancellation.Dispose(),
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
+        _ = analysisTask;
     }
 
     private static int NormalizeSampleRate(int sampleRate)
@@ -263,5 +326,16 @@ public sealed class WebRtcApmBargeInAudioCaptureService : IBargeInAudioCaptureSe
     public void Dispose()
     {
         StopCapture("disposed");
+    }
+
+    private static BargeInSpeechContext CreateLiveMonitorContext()
+    {
+        return new BargeInSpeechContext
+        {
+            AssistantTurnId = "live-utterance-monitor",
+            CorrelationId = null,
+            SpeechType = Merlin.Backend.Models.SpeechPlaybackItemType.FinalAnswer,
+            SpokenText = string.Empty
+        };
     }
 }

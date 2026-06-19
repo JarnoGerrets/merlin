@@ -37,6 +37,7 @@ public sealed class LocalLlmProvider : IChatProvider
         {
             _logger.LogInformation("Local AI is not warm. Starting localAI on demand. Provider: {Provider}. Model: {Model}", _options.Provider, _options.Model);
             await _localAIHealthService.WarmupAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             if (!_localAIHealthService.IsAvailable)
             {
                 return LlmProviderResult.Failed(LocalAIChatService.UnavailableErrorCode, "Local AI could not be started.", retryable: false);
@@ -53,6 +54,11 @@ public sealed class LocalLlmProvider : IChatProvider
 
             _localAIHealthService.MarkAvailable(0);
             return LlmProviderResult.Succeeded(response.Trim());
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogInformation("Local AI chat generation cancelled because the caller cancelled the active operation.");
+            throw;
         }
         catch (Exception exception)
         {

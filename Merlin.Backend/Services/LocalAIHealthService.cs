@@ -87,6 +87,14 @@ public sealed class LocalAIHealthService : ILocalAIHealthService
             stopwatch.Stop();
             MarkAvailable(stopwatch.ElapsedMilliseconds);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            stopwatch.Stop();
+            _logger.LogInformation(
+                "Local AI warmup cancelled because the caller cancelled the active operation. ElapsedMs: {ElapsedMs}.",
+                stopwatch.ElapsedMilliseconds);
+            throw;
+        }
         catch (Exception exception)
         {
             stopwatch.Stop();

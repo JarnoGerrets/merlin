@@ -49,6 +49,21 @@ public sealed class LocalAIHealthServiceTests
         Assert.NotNull(service.LastLatencyMs);
     }
 
+    [Fact]
+    public async Task WarmupAsync_WhenCallerCancels_RethrowsWithoutMarkingUnavailable()
+    {
+        var service = CreateService(new FakeLocalAIClient("unused"), enabled: true);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => service.WarmupAsync(cancellation.Token));
+
+        Assert.False(service.IsAvailable);
+        Assert.Null(service.LastError);
+        Assert.Null(service.LastWarmupUtc);
+        Assert.Null(service.LastLatencyMs);
+    }
+
     private static LocalAIHealthService CreateService(
         ILocalAIClient client,
         bool enabled)
@@ -79,6 +94,7 @@ public sealed class LocalAIHealthServiceTests
             string prompt,
             CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (_exception is not null)
             {
                 throw _exception;

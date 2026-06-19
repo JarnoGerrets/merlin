@@ -2,6 +2,7 @@ namespace Merlin.Backend.Models;
 
 public sealed class LiveAssistantTurn : IDisposable
 {
+    private readonly object _stateSync = new();
     private int _disposed;
 
     public required string ConversationId { get; init; }
@@ -18,9 +19,31 @@ public sealed class LiveAssistantTurn : IDisposable
 
     public LiveAssistantTurnStatus Status { get; private set; } = LiveAssistantTurnStatus.Active;
 
+    public LiveAssistantTurnState State { get; private set; } = LiveAssistantTurnState.ProcessingTurn;
+
     public LiveAssistantTurnCancelReason? CancelReason { get; private set; }
 
     public string? CorrectionText { get; private set; }
+
+    public string? PendingCommandDescription { get; private set; }
+
+    public LiveAssistantTurnState UpdateState(
+        LiveAssistantTurnState state,
+        string? pendingCommandDescription = null)
+    {
+        lock (_stateSync)
+        {
+            State = state;
+            if (pendingCommandDescription is not null)
+            {
+                PendingCommandDescription = string.IsNullOrWhiteSpace(pendingCommandDescription)
+                    ? null
+                    : pendingCommandDescription.Trim();
+            }
+
+            return State;
+        }
+    }
 
     public bool MarkCancelled(
         LiveAssistantTurnCancelReason reason,
@@ -70,6 +93,24 @@ public enum LiveAssistantTurnStatus
     Active,
     Cancelled,
     Completed
+}
+
+public enum LiveAssistantTurnState
+{
+    IdleListening,
+    CapturingUserSpeech,
+    Interpreting,
+    ProcessingTurn,
+    PlanningTool,
+    AwaitingToolCommit,
+    ExecutingTool,
+    Speaking,
+    PausedByUser,
+    Interrupted,
+    Completed,
+    Failed,
+    Cancelled,
+    Superseded
 }
 
 public enum LiveAssistantTurnCancelReason

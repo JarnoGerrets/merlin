@@ -6,6 +6,21 @@ namespace Merlin.Backend.Services.BargeIn;
 public sealed partial class InterruptionClassifier : IInterruptionClassifier
 {
     private static readonly string[] Backchannels = ["yes", "yeah", "yep", "mhm", "mm hmm", "okay", "ok", "right", "uh huh", "makes sense"];
+    private static readonly string[] PoliteHardStopPrefixes =
+    [
+        "please ",
+        "can you please ",
+        "could you please ",
+        "would you please ",
+        "can you ",
+        "could you ",
+        "would you ",
+        "hey ",
+        "uh ",
+        "um ",
+        "no ",
+        "nope "
+    ];
 
     public InterruptionClassificationResult Classify(InterruptionClassificationInput input, BargeInOptions options)
     {
@@ -15,18 +30,25 @@ public sealed partial class InterruptionClassifier : IInterruptionClassifier
             return Result(InterruptionType.None, 0.0, "Empty gated STT transcript.");
         }
 
+        var withoutWakeWord = RemoveWakeWord(normalized, options);
+        var hardStopCandidate = NormalizeHardStopCandidate(withoutWakeWord);
+        if (CanUseNaturalHardStop(input)
+            && MatchesHardStop(hardStopCandidate, options.HardStopPhrases))
+        {
+            return Result(InterruptionType.HardStop, 0.95, "Matched natural hard-stop phrase while assistant was speaking.");
+        }
+
         if (RequiresWakeWord(input, options))
         {
             return Result(InterruptionType.NoiseOrEcho, 0.2, "Wake word was required but not present.");
         }
 
-        var withoutWakeWord = RemoveWakeWord(normalized, options);
         if (IsBackchannel(withoutWakeWord))
         {
             return Result(InterruptionType.Backchannel, 0.9, "Backchannel phrase should not cancel assistant speech.");
         }
 
-        if (MatchesConfiguredPhrase(withoutWakeWord, options.HardStopPhrases, exactShortPhrase: true))
+        if (MatchesHardStop(hardStopCandidate, options.HardStopPhrases))
         {
             return Result(InterruptionType.HardStop, 0.95, "Matched hard-stop phrase.");
         }
@@ -96,6 +118,69 @@ public sealed partial class InterruptionClassifier : IInterruptionClassifier
         }
 
         return false;
+    }
+
+    private static bool MatchesHardStop(string normalized, IEnumerable<string> phrases)
+    {
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return false;
+        }
+
+        if (MatchesConfiguredPhrase(normalized, phrases, exactShortPhrase: true))
+        {
+            return true;
+        }
+
+        var words = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length <= 4
+            && (words.Contains("stop", StringComparer.OrdinalIgnoreCase)
+                || words.Contains("abort", StringComparer.OrdinalIgnoreCase)
+                || words.Contains("cancel", StringComparer.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string NormalizeHardStopCandidate(string normalized)
+    {
+        var candidate = normalized.Trim();
+        var changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var prefix in PoliteHardStopPrefixes)
+            {
+                if (!candidate.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                candidate = candidate[prefix.Length..].Trim();
+                changed = true;
+                break;
+            }
+        }
+
+        foreach (var suffix in new[] { " please", " thanks", " thank you" })
+        {
+            if (candidate.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                candidate = candidate[..^suffix.Length].Trim();
+                break;
+            }
+        }
+
+        return candidate;
+    }
+
+    private static bool CanUseNaturalHardStop(InterruptionClassificationInput input)
+    {
+        return !string.IsNullOrWhiteSpace(input.CurrentSpeechType)
+            && !string.Equals(input.CurrentSpeechType, "Idle", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(input.CurrentSpeechType, "None", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? TryExtractCorrection(string normalized, IEnumerable<string> phrases)

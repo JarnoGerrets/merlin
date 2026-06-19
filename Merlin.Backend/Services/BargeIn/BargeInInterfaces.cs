@@ -14,7 +14,24 @@ public interface IPlaybackReferenceTap
 
     void PushPcm16Reference(ReadOnlyMemory<byte> pcm, int sampleRate, int channels, string? correlationId);
 
+    void PushConsumedPcm16Reference(ReadOnlyMemory<byte> pcm, int sampleRate, int channels, string? correlationId);
+
     ReadOnlyMemory<float> GetLatestReferenceFrame(int sampleCount);
+
+    bool TryGetReferenceWindow(int delayMs, int sampleCount, Span<float> destination);
+
+    PlaybackReferenceDebugSnapshot GetDebugSnapshot();
+}
+
+public interface IAssistantPlaybackMonitor
+{
+    bool IsPlaybackActive { get; }
+
+    DateTimeOffset? PlaybackStartedAt { get; }
+
+    double CurrentPlaybackEnergy { get; }
+
+    double RecentPlaybackEnergy { get; }
 }
 
 public interface IAcousticEchoCancellationService : IAsyncDisposable
@@ -33,11 +50,15 @@ public interface IBargeInVadService
 
 public interface ISpeakerDuckingService
 {
+    event EventHandler<SpeakerDuckingChangedEventArgs>? DuckingChanged;
+
     float CurrentVolumeMultiplier { get; }
 
     bool IsDucked { get; }
 
     void StartDucking(BargeInSpeechContext context);
+
+    void StartDucking(BargeInSpeechContext context, string reason);
 
     void Restore(BargeInSpeechContext context, string reason);
 }
@@ -47,6 +68,35 @@ public interface IBargeInTriggerBuffer
     void AddFrame(BargeInAudioFrame frame);
 
     IReadOnlyList<BargeInAudioFrame> CaptureTriggeredWindow(BargeInAudioFrame triggerFrame, BargeInOptions options);
+
+    IReadOnlyList<BargeInAudioFrame> CaptureTriggeredWindow(
+        BargeInAudioFrame triggerFrame,
+        BargeInOptions options,
+        DateTimeOffset capturedUntil);
+
+    BargeInTriggeredCapture CaptureTriggeredWindowWithDiagnostics(
+        BargeInAudioFrame triggerFrame,
+        BargeInOptions options,
+        DateTimeOffset capturedUntil,
+        string? currentAssistantTurnId);
+
+    void Reset(string reason = "manual", string? assistantTurnId = null);
+}
+
+public interface IContinuousMicAudioBuffer
+{
+    BargeInAudioFrame Append(BargeInAudioFrame frame, BargeInOptions options);
+
+    ContinuousMicAudioRange GetAudioRange(
+        DateTimeOffset triggerTimestamp,
+        DateTimeOffset startUtc,
+        DateTimeOffset endUtc,
+        int requestedPreRollMs,
+        BargeInOptions options);
+
+    long DroppedFrames { get; }
+
+    int BufferMilliseconds { get; }
 
     void Reset();
 }
@@ -59,16 +109,43 @@ public interface IBargeInSttService
         CancellationToken cancellationToken);
 }
 
+public interface IInterruptionCaptureDiagnosticsWriter
+{
+    Task SaveAsync(
+        InterruptionCaptureDiagnostic diagnostic,
+        IReadOnlyList<BargeInAudioFrame> frames,
+        IReadOnlyList<InterruptionCaptureFrameDiagnostic> frameDiagnostics,
+        CancellationToken cancellationToken);
+}
+
 public interface IInterruptionClassifier
 {
     InterruptionClassificationResult Classify(InterruptionClassificationInput input, BargeInOptions options);
 }
 
+public interface ISelfSpeechSuppressionGate
+{
+    SelfSpeechGateResult Evaluate(SelfSpeechGateInput input, BargeInOptions options);
+
+    void Reset();
+}
+
+public interface ISelfSpeechGateDiagnosticsWriter
+{
+    void Write(SelfSpeechGateDiagnosticEntry entry, BargeInOptions options);
+}
+
 public interface IBargeInCoordinator
 {
+    event Func<CorrectionRegenerationRequested, CancellationToken, Task>? CorrectionRegenerationRequested;
+
+    event Func<LiveUserUtteranceRouted, CancellationToken, Task>? LiveUserUtteranceRouted;
+
     bool IsMonitoring { get; }
 
     Task ProcessMicrophoneFrameAsync(BargeInAudioFrame frame, CancellationToken cancellationToken = default);
+
+    Task StartLiveMonitoringAsync(CancellationToken cancellationToken = default);
 }
 
 public interface IBargeInAudioCaptureService
