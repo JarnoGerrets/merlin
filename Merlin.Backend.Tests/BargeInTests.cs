@@ -1105,8 +1105,9 @@ public sealed class BargeInCoordinatorTests
     public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_Disabled_DoesNotYieldPlayback()
     {
         var options = SustainedUserSpeechScorePauseOptions();
+        options.PausePlaybackOnRollingUserSpeechEvidence = false;
         options.PausePlaybackOnSustainedUserSpeechScore = false;
-        options.SustainedUserSpeechScoreDurationMs = 30;
+        options.FloorYieldRequiredHighScoreMs = 30;
         var fixture = CreateFixture(
             options,
             vad: new AlwaysSpeechNeverTriggeredVadService(),
@@ -1126,7 +1127,7 @@ public sealed class BargeInCoordinatorTests
     public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_BelowThreshold_DoesNotYieldPlayback()
     {
         var options = SustainedUserSpeechScorePauseOptions();
-        options.SustainedUserSpeechScoreDurationMs = 30;
+        options.FloorYieldRequiredHighScoreMs = 30;
         var fixture = CreateFixture(
             options,
             vad: new AlwaysSpeechNeverTriggeredVadService(),
@@ -1146,7 +1147,7 @@ public sealed class BargeInCoordinatorTests
     public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_BriefHighScore_DoesNotYieldPlayback()
     {
         var options = SustainedUserSpeechScorePauseOptions();
-        options.SustainedUserSpeechScoreDurationMs = 250;
+        options.FloorYieldRequiredHighScoreMs = 180;
         var fixture = CreateFixture(
             options,
             vad: new AlwaysSpeechNeverTriggeredVadService(),
@@ -1166,7 +1167,7 @@ public sealed class BargeInCoordinatorTests
     public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_SustainedHighScore_YieldsPlayback()
     {
         var options = SustainedUserSpeechScorePauseOptions();
-        options.SustainedUserSpeechScoreDurationMs = 30;
+        options.FloorYieldRequiredHighScoreMs = 30;
         var fixture = CreateFixture(
             options,
             vad: new AlwaysSpeechNeverTriggeredVadService(),
@@ -1184,22 +1185,50 @@ public sealed class BargeInCoordinatorTests
     }
 
     [Fact]
-    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_ResetsWhenScoreDrops()
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_FragmentedHighScoreIslands_YieldPlayback()
     {
         var options = SustainedUserSpeechScorePauseOptions();
-        options.SustainedUserSpeechScoreDurationMs = 30;
+        options.FloorYieldRequiredHighScoreMs = 180;
+        options.FloorYieldEvidenceWindowMs = 350;
         var fixture = CreateFixture(
             options,
             vad: new AlwaysSpeechNeverTriggeredVadService(),
-            selfSpeechGate: new ScoreSequenceSelfSpeechGate(1.0, 1.0, 0.2, 0.2, 1.0));
+            selfSpeechGate: new FrameScoreSequenceSelfSpeechGate(
+                1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+                0.2, 0.2, 0.2,
+                1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
+                0.2, 0.2, 0.2,
+                1.0, 1.0));
         fixture.Tap.NotifySpeechStarted(CreateContext());
 
-        for (var index = 0; index < 3; index++)
+        for (var index = 0; index < 24; index++)
         {
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
         }
 
-        Assert.Equal(0, fixture.Playback.PauseCount);
+        Assert.Equal(1, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Playback.ClearQueueCount);
+        Assert.Equal(0, fixture.Stt.CallCount);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_BelowThresholdFramesDoNotHardReset()
+    {
+        var options = SustainedUserSpeechScorePauseOptions();
+        options.FloorYieldRequiredHighScoreMs = 50;
+        options.FloorYieldEvidenceWindowMs = 350;
+        var fixture = CreateFixture(
+            options,
+            vad: new AlwaysSpeechNeverTriggeredVadService(),
+            selfSpeechGate: new FrameScoreSequenceSelfSpeechGate(1.0, 1.0, 0.2, 1.0, 1.0, 1.0));
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        for (var index = 0; index < 6; index++)
+        {
+            await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
+        }
+
+        Assert.Equal(1, fixture.Playback.PauseCount);
         Assert.Equal(0, fixture.Stt.CallCount);
     }
 
@@ -1207,7 +1236,7 @@ public sealed class BargeInCoordinatorTests
     public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_ResetsWhenPlaybackStops()
     {
         var options = SustainedUserSpeechScorePauseOptions();
-        options.SustainedUserSpeechScoreDurationMs = 30;
+        options.FloorYieldRequiredHighScoreMs = 30;
         var fixture = CreateFixture(
             options,
             vad: new AlwaysSpeechNeverTriggeredVadService(),
@@ -1228,7 +1257,7 @@ public sealed class BargeInCoordinatorTests
     public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_DoesNotCancelActiveTurn()
     {
         var options = SustainedUserSpeechScorePauseOptions();
-        options.SustainedUserSpeechScoreDurationMs = 30;
+        options.FloorYieldRequiredHighScoreMs = 30;
         var fixture = CreateFixture(
             options,
             vad: new AlwaysSpeechNeverTriggeredVadService(),
@@ -2756,10 +2785,17 @@ public sealed class BargeInCoordinatorTests
         return new BargeInOptions
         {
             Enabled = true,
-            PausePlaybackOnSustainedUserSpeechScore = true,
+            PausePlaybackOnRollingUserSpeechEvidence = true,
+            PausePlaybackOnSustainedUserSpeechScore = false,
             RequireSustainedUserSpeechScoreDuringPlayback = false,
             SustainedUserSpeechScoreThreshold = 0.90,
             SustainedUserSpeechScoreDurationMs = 250,
+            FloorYieldEvidenceWindowMs = 350,
+            FloorYieldHighScoreThreshold = 0.90,
+            FloorYieldRequiredHighScoreMs = 180,
+            FloorYieldAverageScoreThreshold = 0.65,
+            FloorYieldRequireRecentHighFrame = true,
+            FloorYieldRecentHighFrameWindowMs = 80,
             PauseInsteadOfCancelOnSpeech = false,
             EnableSpeakerDucking = true,
             BurstCapturePromotion = new BurstCapturePromotionOptions
@@ -3491,6 +3527,55 @@ public sealed class BargeInCoordinatorTests
         public void Reset()
         {
             _index = 0;
+        }
+    }
+
+    private sealed class FrameScoreSequenceSelfSpeechGate : ISelfSpeechSuppressionGate
+    {
+        private readonly double[] _scores;
+        private int _index;
+        private DateTimeOffset? _currentTimestamp;
+        private double _currentScore;
+
+        public FrameScoreSequenceSelfSpeechGate(params double[] scores)
+        {
+            _scores = scores.Length == 0 ? [1.0] : scores;
+            _currentScore = _scores[0];
+        }
+
+        public SelfSpeechGateResult Evaluate(SelfSpeechGateInput input, BargeInOptions options)
+        {
+            if (_currentTimestamp != input.Timestamp)
+            {
+                _currentTimestamp = input.Timestamp;
+                _currentScore = _scores[Math.Min(_index, _scores.Length - 1)];
+                _index++;
+            }
+
+            var decision = _currentScore >= 0.9
+                ? SelfSpeechDecision.Allow
+                : SelfSpeechDecision.Uncertain;
+            return new SelfSpeechGateResult
+            {
+                Decision = decision,
+                Confidence = 0.9,
+                Reason = "test frame user speech score gate result",
+                MicEnergy = input.MicEnergy,
+                PlaybackEnergy = input.PlaybackEnergy,
+                EstimatedEchoEnergy = input.PlaybackEnergy * options.SelfSpeechSuppression.EchoLeakageMultiplier,
+                UserSpeechScore = _currentScore,
+                SustainedUncertainFrames = decision is SelfSpeechDecision.Uncertain ? 1 : 0,
+                CorrelationScore = input.CorrelationScore,
+                BestDelayMs = input.BestDelayMs,
+                CorrelationDecision = input.CorrelationDecision
+            };
+        }
+
+        public void Reset()
+        {
+            _index = 0;
+            _currentTimestamp = null;
+            _currentScore = _scores[0];
         }
     }
 

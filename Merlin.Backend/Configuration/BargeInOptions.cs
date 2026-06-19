@@ -124,9 +124,23 @@ public sealed class BargeInOptions
 
     public bool PausePlaybackOnSustainedUserSpeechScore { get; set; } = false;
 
+    public bool PausePlaybackOnRollingUserSpeechEvidence { get; set; } = false;
+
     public double SustainedUserSpeechScoreThreshold { get; set; } = 0.90;
 
     public int SustainedUserSpeechScoreDurationMs { get; set; } = 250;
+
+    public int FloorYieldEvidenceWindowMs { get; set; } = 350;
+
+    public double FloorYieldHighScoreThreshold { get; set; } = 0.90;
+
+    public int FloorYieldRequiredHighScoreMs { get; set; } = 180;
+
+    public double FloorYieldAverageScoreThreshold { get; set; } = 0.65;
+
+    public bool FloorYieldRequireRecentHighFrame { get; set; } = true;
+
+    public int FloorYieldRecentHighFrameWindowMs { get; set; } = 80;
 
     public bool RequireWakePrefixForStopDuringPlayback { get; set; } = false;
 
