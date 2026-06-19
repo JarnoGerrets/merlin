@@ -5,6 +5,7 @@ using System.Text.Json;
 using Merlin.Backend.Models;
 using Merlin.Backend.Services;
 using Merlin.Backend.Services.BargeIn;
+using Merlin.Backend.Services.LiveUtterance;
 
 namespace Merlin.Backend.WebSocket;
 
@@ -13,7 +14,9 @@ public sealed class WebSocketHandler
     private static readonly JsonSerializerOptions JsonSerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly CommandRouter _commandRouter;
     private readonly IBargeInCoordinator? _bargeInCoordinator;
+    private readonly IBargeInDebugSnapshotService? _bargeInDebugSnapshots;
     private readonly ICorrectionRequestBuilder _correctionRequestBuilder;
+    private readonly ILiveUtteranceGate? _liveUtteranceGate;
     private readonly ILiveAssistantTurnService _liveTurnService;
     private readonly IAssistantSpeechPlaybackService _speechPlaybackService;
     private readonly ISpeechPolicyService _speechPolicyService;
@@ -31,17 +34,21 @@ public sealed class WebSocketHandler
         IRuntimeStateService runtimeStateService,
         VoiceStreamSessionService voiceStreamSessionService,
         ICorrectionRequestBuilder? correctionRequestBuilder = null,
-        IBargeInCoordinator? bargeInCoordinator = null)
+        IBargeInCoordinator? bargeInCoordinator = null,
+        ILiveUtteranceGate? liveUtteranceGate = null,
+        IBargeInDebugSnapshotService? bargeInDebugSnapshots = null)
     {
         _commandRouter = commandRouter;
         _bargeInCoordinator = bargeInCoordinator;
         _correctionRequestBuilder = correctionRequestBuilder ?? new CorrectionRequestBuilder();
+        _liveUtteranceGate = liveUtteranceGate;
         _liveTurnService = liveTurnService;
         _speechPlaybackService = speechPlaybackService;
         _speechPolicyService = speechPolicyService;
         _logger = logger;
         _runtimeStateService = runtimeStateService;
         _voiceStreamSessionService = voiceStreamSessionService;
+        _bargeInDebugSnapshots = bargeInDebugSnapshots;
     }
 
     public async Task HandleAsync(HttpContext context)
@@ -59,6 +66,7 @@ public sealed class WebSocketHandler
         CancellationTokenSource? devVisualFlowCancellation = null;
         Func<CorrectionRegenerationRequested, CancellationToken, Task>? correctionHandler = null;
         Func<LiveUserUtteranceRouted, CancellationToken, Task>? liveUtteranceHandler = null;
+        Func<BargeInDebugSnapshot, CancellationToken, Task>? bargeInDebugHandler = null;
         _runtimeStateService.IncrementActiveWebSocketConnections();
         _logger.LogInformation(
             "WebSocket connection opened. ActiveConnections: {ActiveConnections}",
@@ -86,6 +94,16 @@ public sealed class WebSocketHandler
                 _bargeInCoordinator.LiveUserUtteranceRouted += liveUtteranceHandler;
             }
 
+            if (_bargeInDebugSnapshots?.IsEnabled == true)
+            {
+                bargeInDebugHandler = (snapshot, token) => DispatchBargeInDebugSnapshotAsync(
+                    snapshot,
+                    webSocket,
+                    sendGate,
+                    token);
+                _bargeInDebugSnapshots.SnapshotAvailable += bargeInDebugHandler;
+            }
+
             await ReceiveLoopAsync(
                 webSocket,
                 sendGate,
@@ -107,6 +125,11 @@ public sealed class WebSocketHandler
             if (_bargeInCoordinator is not null && liveUtteranceHandler is not null)
             {
                 _bargeInCoordinator.LiveUserUtteranceRouted -= liveUtteranceHandler;
+            }
+
+            if (_bargeInDebugSnapshots is not null && bargeInDebugHandler is not null)
+            {
+                _bargeInDebugSnapshots.SnapshotAvailable -= bargeInDebugHandler;
             }
 
             devVisualFlowCancellation?.Cancel();
@@ -389,6 +412,18 @@ public sealed class WebSocketHandler
             routed.Decision.Action);
 
         var responseCorrelationId = RoutedResponseCorrelationId(routed.Utterance);
+        if ((routed.Decision.Kind is UtteranceRouteKind.PauseAndClarify
+                && routed.Decision.Action is "AskClarification" or "StopSpeechOnlyNoConfirmation" or "PauseActiveTurn")
+            || routed.Decision.Action is "HoldForMoreSpeech")
+        {
+            await SendVisualStateAsync(webSocket, sendGate, "listening", cancellationToken);
+            _logger.LogInformation(
+                "VisualStateSetToPausedForUserSpeech. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. Action: {Action}.",
+                routed.Utterance.ActiveTurnId,
+                routed.Utterance.CorrelationId,
+                routed.Decision.Action);
+        }
+
         AssistantResponse? response = routed.Decision.Kind switch
         {
             UtteranceRouteKind.PauseAndClarify when routed.Decision.Action == "PauseAndConfirmCancel" => new AssistantResponse
@@ -440,6 +475,20 @@ public sealed class WebSocketHandler
             },
             response,
             cancellationToken);
+    }
+
+    internal static Task DispatchBargeInDebugSnapshotAsync(
+        BargeInDebugSnapshot snapshot,
+        System.Net.WebSockets.WebSocket webSocket,
+        SemaphoreSlim sendGate,
+        CancellationToken cancellationToken)
+    {
+        var json = JsonSerializer.Serialize(new
+        {
+            type = "barge_in_debug_snapshot",
+            snapshot
+        }, JsonSerializerOptions);
+        return SendJsonAsync(webSocket, sendGate, json, cancellationToken);
     }
 
     internal async Task<AssistantResponse> ProcessAndEmitLiveRequestAsync(
@@ -767,6 +816,13 @@ public sealed class WebSocketHandler
             ? Guid.NewGuid().ToString("N")
             : request.CorrelationId;
         connectionCorrelationIds.TryAdd(correlationId, 0);
+
+        var gateResponse = EvaluateVoiceRequestGate(request, correlationId);
+        if (gateResponse is not null)
+        {
+            return gateResponse;
+        }
+
         _recentRequestsByCorrelationId[correlationId] = new AssistantRequest
         {
             Message = request.Message,
@@ -842,6 +898,117 @@ public sealed class WebSocketHandler
             "Suppressing stale assistant response for live turn. CorrelationId: {CorrelationId}.",
             correlationId);
         return false;
+    }
+
+    private AssistantResponse? EvaluateVoiceRequestGate(AssistantRequest request, string correlationId)
+    {
+        if (_liveUtteranceGate is null || !IsVoiceRequest(request))
+        {
+            return null;
+        }
+
+        LiveAssistantTurn? activeTurn = null;
+        if (!_liveTurnService.TryGetActiveTurn(correlationId, out activeTurn))
+        {
+            _liveTurnService.TryGetCurrentActiveTurn(out activeTurn);
+        }
+
+        var state = activeTurn?.State ?? LiveAssistantTurnState.IdleListening;
+        var utterance = new UserUtterance
+        {
+            Text = request.Message.Trim(),
+            TimestampUtc = request.ReceivedAtUtc ?? DateTimeOffset.UtcNow,
+            ActiveTurnId = activeTurn?.AssistantTurnId,
+            CorrelationId = correlationId,
+            StateWhenCaptured = state,
+            AssistantWasSpeaking = state is LiveAssistantTurnState.Speaking,
+            Source = request.InteractionSource ?? "voice",
+            Confidence = null
+        };
+        var result = _liveUtteranceGate.Evaluate(new LiveUtteranceGateInput
+        {
+            Utterance = utterance,
+            ActiveTurn = activeTurn,
+            CurrentSystemState = state.ToString(),
+            AssistantWasSpeaking = utterance.AssistantWasSpeaking,
+            IsIdleListening = activeTurn is null || state is LiveAssistantTurnState.IdleListening,
+            PendingCommandDescription = activeTurn?.PendingCommandDescription,
+            SttConfidence = utterance.Confidence
+        });
+
+        if (result.ShouldRouteToCommandRouter)
+        {
+            return null;
+        }
+
+        return result.Decision switch
+        {
+            LiveUtteranceGateDecisionKind.HoldForMoreSpeech => BuildGateResponse(
+                correlationId,
+                "LIVE_UTTERANCE_HELD",
+                "live_utterance_hold",
+                result.ClarificationPrompt ?? string.Empty,
+                result),
+            LiveUtteranceGateDecisionKind.AskClarification => BuildGateResponse(
+                correlationId,
+                "LIVE_UTTERANCE_CLARIFICATION",
+                "live_utterance_clarification",
+                result.ClarificationPrompt ?? "Sorry, I didn't catch that.",
+                result,
+                success: true,
+                responseType: "confirmation"),
+            LiveUtteranceGateDecisionKind.AcceptPlaybackControl
+                or LiveUtteranceGateDecisionKind.AcceptCancellation
+                or LiveUtteranceGateDecisionKind.AcceptContinuation => BuildGateResponse(
+                    correlationId,
+                    "LIVE_UTTERANCE_CONTROL_HANDLED",
+                    "live_utterance_control",
+                    string.Empty,
+                    result),
+            LiveUtteranceGateDecisionKind.IgnoreAsGarbageTranscript
+                or LiveUtteranceGateDecisionKind.IgnoreAsNoise
+                or LiveUtteranceGateDecisionKind.IgnoreAsEcho
+                or LiveUtteranceGateDecisionKind.IgnoreAsWakewordLeak => BuildGateResponse(
+                    correlationId,
+                    "LIVE_UTTERANCE_IGNORED",
+                    "live_utterance_ignored",
+                    string.Empty,
+                    result),
+            _ => null
+        };
+    }
+
+    private static AssistantResponse BuildGateResponse(
+        string correlationId,
+        string errorCode,
+        string intent,
+        string message,
+        LiveUtteranceGateResult result,
+        bool success = false,
+        string responseType = "ignored")
+    {
+        return new AssistantResponse
+        {
+            Success = success,
+            Message = message,
+            SpokenText = message,
+            CorrelationId = correlationId,
+            ErrorCode = success ? null : errorCode,
+            Intent = intent,
+            IntentConfidence = result.Confidence,
+            OriginalMessage = result.NormalizedText,
+            ParserUsed = result.Decision.ToString(),
+            CapabilityId = "live_utterance_gate",
+            CapabilityName = result.Reason,
+            ResponseType = responseType
+        };
+    }
+
+    private static bool IsVoiceRequest(AssistantRequest request)
+    {
+        return string.Equals(request.InteractionSource, "voice", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(request.InteractionSource, "voice_stream", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(request.ClientMode, "voice", StringComparison.OrdinalIgnoreCase);
     }
 
     private void CompleteLiveTurnIfNeeded(AssistantRequest? request, string correlationId)

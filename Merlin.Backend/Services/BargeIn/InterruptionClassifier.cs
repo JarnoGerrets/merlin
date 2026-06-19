@@ -30,11 +30,20 @@ public sealed partial class InterruptionClassifier : IInterruptionClassifier
             return Result(InterruptionType.None, 0.0, "Empty gated STT transcript.");
         }
 
-        var withoutWakeWord = RemoveWakeWord(normalized, options);
+        var hasStopWakePrefix = HasStopWakePrefix(normalized, options);
+        var withoutStopWakePrefix = hasStopWakePrefix
+            ? RemoveStopWakePrefix(normalized, options)
+            : normalized;
+        var withoutWakeWord = RemoveWakeWord(withoutStopWakePrefix, options);
         var hardStopCandidate = NormalizeHardStopCandidate(withoutWakeWord);
         if (CanUseNaturalHardStop(input)
             && MatchesHardStop(hardStopCandidate, options.HardStopPhrases))
         {
+            if (options.RequireWakePrefixForStopDuringPlayback && !hasStopWakePrefix)
+            {
+                return Result(InterruptionType.NoiseOrEcho, 0.2, $"Stop command rejected during assistant playback because wake prefix '{Normalize(options.StopWakePrefix)}' was missing.");
+            }
+
             return Result(InterruptionType.HardStop, 0.95, "Matched natural hard-stop phrase while assistant was speaking.");
         }
 
@@ -136,7 +145,10 @@ public sealed partial class InterruptionClassifier : IInterruptionClassifier
         if (words.Length <= 4
             && (words.Contains("stop", StringComparer.OrdinalIgnoreCase)
                 || words.Contains("abort", StringComparer.OrdinalIgnoreCase)
-                || words.Contains("cancel", StringComparer.OrdinalIgnoreCase)))
+                || words.Contains("cancel", StringComparer.OrdinalIgnoreCase)
+                || ContainsWholePhrase(normalized, "shut up")
+                || ContainsWholePhrase(normalized, "be quiet")
+                || words.Contains("quiet", StringComparer.OrdinalIgnoreCase)))
         {
             return true;
         }
@@ -174,6 +186,11 @@ public sealed partial class InterruptionClassifier : IInterruptionClassifier
         }
 
         return candidate;
+    }
+
+    private static bool ContainsWholePhrase(string normalized, string phrase)
+    {
+        return Regex.IsMatch(normalized, $@"(^|\s){Regex.Escape(phrase)}(\s|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
     private static bool CanUseNaturalHardStop(InterruptionClassificationInput input)
@@ -244,6 +261,46 @@ public sealed partial class InterruptionClassifier : IInterruptionClassifier
             {
                 return normalized[wakeWord.Length..].Trim();
             }
+        }
+
+        return normalized;
+    }
+
+    private static bool HasStopWakePrefix(string normalized, BargeInOptions options)
+    {
+        var wakePrefix = Normalize(options.StopWakePrefix);
+        if (string.IsNullOrWhiteSpace(wakePrefix))
+        {
+            return false;
+        }
+
+        return string.Equals(normalized, wakePrefix, StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith($"{wakePrefix} ", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith($"hey {wakePrefix} ", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string RemoveStopWakePrefix(string normalized, BargeInOptions options)
+    {
+        var wakePrefix = Normalize(options.StopWakePrefix);
+        if (string.IsNullOrWhiteSpace(wakePrefix))
+        {
+            return normalized;
+        }
+
+        if (string.Equals(normalized, wakePrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Empty;
+        }
+
+        if (normalized.StartsWith($"{wakePrefix} ", StringComparison.OrdinalIgnoreCase))
+        {
+            return normalized[wakePrefix.Length..].Trim();
+        }
+
+        var heyPrefix = $"hey {wakePrefix} ";
+        if (normalized.StartsWith(heyPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return normalized[heyPrefix.Length..].Trim();
         }
 
         return normalized;

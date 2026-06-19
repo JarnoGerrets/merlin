@@ -2,6 +2,7 @@ using Merlin.Backend.Configuration;
 using Merlin.Backend.Models;
 using Merlin.Backend.Services;
 using Merlin.Backend.Services.BargeIn;
+using Merlin.Backend.Services.LiveUtterance;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -65,6 +66,48 @@ public sealed class BargeInClassifierTests
         var result = classifier.Classify(
             CreateInput(transcript, isAecDegraded: false),
             new BargeInOptions { RequireWakeWordForFirstVersion = true });
+
+        Assert.Equal(InterruptionType.HardStop, result.Type);
+    }
+
+    [Theory]
+    [InlineData("stop")]
+    [InlineData("shut up")]
+    [InlineData("and shut up")]
+    [InlineData("no stop")]
+    public void Classify_WhileAssistantSpeaking_RejectsStopWithoutWakePrefix_WhenExperimentEnabled(string transcript)
+    {
+        var classifier = new InterruptionClassifier();
+
+        var result = classifier.Classify(
+            CreateInput(transcript, isAecDegraded: false),
+            new BargeInOptions
+            {
+                RequireWakeWordForFirstVersion = true,
+                RequireWakePrefixForStopDuringPlayback = true,
+                StopWakePrefix = "merlin"
+            });
+
+        Assert.Equal(InterruptionType.NoiseOrEcho, result.Type);
+    }
+
+    [Theory]
+    [InlineData("Merlin stop")]
+    [InlineData("Merlin, stop")]
+    [InlineData("Merlin shut up")]
+    [InlineData("Hey Merlin stop")]
+    public void Classify_WhileAssistantSpeaking_AcceptsStopWithWakePrefix_WhenExperimentEnabled(string transcript)
+    {
+        var classifier = new InterruptionClassifier();
+
+        var result = classifier.Classify(
+            CreateInput(transcript, isAecDegraded: false),
+            new BargeInOptions
+            {
+                RequireWakeWordForFirstVersion = true,
+                RequireWakePrefixForStopDuringPlayback = true,
+                StopWakePrefix = "merlin"
+            });
 
         Assert.Equal(InterruptionType.HardStop, result.Type);
     }
@@ -196,6 +239,34 @@ public sealed class SpeakerDuckingServiceTests
         playback.ClearActiveVolumeSetterForTests();
     }
 
+    [Fact]
+    public async Task EnqueueAsync_RestoresStaleDuckingBeforePlaybackStart()
+    {
+        var ducking = new SpeakerDuckingService(
+            Options.Create(new BargeInOptions { DuckingVolumePercent = 20 }),
+            NullLogger<SpeakerDuckingService>.Instance);
+        ducking.StartDucking(BargeInCoordinatorTests.CreateContext(), "vad_triggered");
+        var playback = new AssistantSpeechPlaybackService(
+            new SingleChunkVoiceSynthesisService(),
+            new FakePlaybackReferenceTap(),
+            ducking,
+            NullLogger<AssistantSpeechPlaybackService>.Instance);
+        var events = new List<SpeakerDuckingChangedEventArgs>();
+        ducking.DuckingChanged += (_, eventArgs) => events.Add(eventArgs);
+
+        await playback.EnqueueAsync(
+            "hello",
+            "correlation-1",
+            (_, _) => Task.CompletedTask,
+            null,
+            null,
+            CancellationToken.None);
+        await Task.Delay(250);
+
+        Assert.False(ducking.IsDucked);
+        Assert.Contains(events, e => !e.IsDucked && e.Reason == "playback_start_reset_stale_ducking");
+    }
+
     private sealed class FakeVoiceSynthesisService : IVoiceSynthesisService
     {
         public Task StreamSynthesizeAsync(
@@ -205,6 +276,26 @@ public sealed class SpeakerDuckingServiceTests
             CancellationToken cancellationToken)
         {
             throw new NotSupportedException();
+        }
+    }
+
+    private sealed class SingleChunkVoiceSynthesisService : IVoiceSynthesisService
+    {
+        public async Task StreamSynthesizeAsync(
+            string text,
+            Func<VoiceSynthesisStreamMetadata, CancellationToken, Task> onMetadataAsync,
+            Func<ReadOnlyMemory<byte>, CancellationToken, Task> onAudioAsync,
+            CancellationToken cancellationToken)
+        {
+            await onMetadataAsync(
+                new VoiceSynthesisStreamMetadata
+                {
+                    Format = "s16le",
+                    SampleRate = 48000,
+                    Channels = 1
+                },
+                cancellationToken);
+            await onAudioAsync(new byte[960], cancellationToken);
         }
     }
 
@@ -839,6 +930,7 @@ public sealed class BargeInCoordinatorTests
         }
 
         await WaitUntilAsync(() => fixture.Stt.CallCount > 0);
+        await WaitUntilAsync(() => captureWriter.CallCount > 0);
 
         Assert.True(fixture.Stt.LastAudioDuration.TotalMilliseconds >= 3000);
         Assert.Equal("sustained_silence", captureWriter.LastDiagnostic?.CaptureEndReason);
@@ -912,6 +1004,246 @@ public sealed class BargeInCoordinatorTests
 
         Assert.Equal(0, fixture.Stt.CallCount);
         Assert.Equal(0, fixture.Playback.ClearQueueCount);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScoreGate_Disabled_AllowsExistingCapture()
+    {
+        var fixture = CreateFixture(
+            new BargeInOptions
+            {
+                Enabled = true,
+                RequireSustainedUserSpeechScoreDuringPlayback = false
+            },
+            vad: new AlwaysTriggeredVadService(),
+            selfSpeechGate: new ScoreSequenceSelfSpeechGate(0.0));
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, 0));
+
+        Assert.Equal(1, fixture.Playback.PauseCount);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScoreGate_BlocksLowScoreBeforeStt()
+    {
+        var fixture = CreateFixture(
+            SustainedUserSpeechScoreOptions(),
+            vad: new AlwaysTriggeredVadService(),
+            selfSpeechGate: new ScoreSequenceSelfSpeechGate(0.2));
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        for (var index = 0; index < 10; index++)
+        {
+            await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
+        }
+
+        Assert.Equal(0, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Stt.CallCount);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScoreGate_BlocksBriefHighScore()
+    {
+        var options = SustainedUserSpeechScoreOptions();
+        options.SustainedUserSpeechScoreDurationMs = 250;
+        var fixture = CreateFixture(
+            options,
+            vad: new AlwaysTriggeredVadService(),
+            selfSpeechGate: new ScoreSequenceSelfSpeechGate(1.0));
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        for (var index = 0; index < 5; index++)
+        {
+            await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
+        }
+
+        Assert.Equal(0, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Stt.CallCount);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScoreGate_AllowsSustainedHighScore()
+    {
+        var options = SustainedUserSpeechScoreOptions();
+        options.SustainedUserSpeechScoreDurationMs = 30;
+        var fixture = CreateFixture(
+            options,
+            vad: new AlwaysTriggeredVadService(),
+            selfSpeechGate: new ScoreSequenceSelfSpeechGate(1.0));
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        for (var index = 0; index < 3; index++)
+        {
+            await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
+        }
+
+        Assert.Equal(1, fixture.Playback.PauseCount);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScoreGate_ResetsWhenScoreDrops()
+    {
+        var options = SustainedUserSpeechScoreOptions();
+        options.SustainedUserSpeechScoreDurationMs = 30;
+        var fixture = CreateFixture(
+            options,
+            vad: new AlwaysTriggeredVadService(),
+            selfSpeechGate: new ScoreSequenceSelfSpeechGate(1.0, 1.0, 0.2, 1.0));
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        for (var index = 0; index < 4; index++)
+        {
+            await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
+        }
+
+        Assert.Equal(0, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Stt.CallCount);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_Disabled_DoesNotYieldPlayback()
+    {
+        var options = SustainedUserSpeechScorePauseOptions();
+        options.PausePlaybackOnSustainedUserSpeechScore = false;
+        options.SustainedUserSpeechScoreDurationMs = 30;
+        var fixture = CreateFixture(
+            options,
+            vad: new AlwaysSpeechNeverTriggeredVadService(),
+            selfSpeechGate: new ScoreSequenceSelfSpeechGate(1.0));
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        for (var index = 0; index < 5; index++)
+        {
+            await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
+        }
+
+        Assert.Equal(0, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Stt.CallCount);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_BelowThreshold_DoesNotYieldPlayback()
+    {
+        var options = SustainedUserSpeechScorePauseOptions();
+        options.SustainedUserSpeechScoreDurationMs = 30;
+        var fixture = CreateFixture(
+            options,
+            vad: new AlwaysSpeechNeverTriggeredVadService(),
+            selfSpeechGate: new ScoreSequenceSelfSpeechGate(0.2));
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        for (var index = 0; index < 5; index++)
+        {
+            await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
+        }
+
+        Assert.Equal(0, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Stt.CallCount);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_BriefHighScore_DoesNotYieldPlayback()
+    {
+        var options = SustainedUserSpeechScorePauseOptions();
+        options.SustainedUserSpeechScoreDurationMs = 250;
+        var fixture = CreateFixture(
+            options,
+            vad: new AlwaysSpeechNeverTriggeredVadService(),
+            selfSpeechGate: new ScoreSequenceSelfSpeechGate(1.0));
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        for (var index = 0; index < 5; index++)
+        {
+            await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
+        }
+
+        Assert.Equal(0, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Stt.CallCount);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_SustainedHighScore_YieldsPlayback()
+    {
+        var options = SustainedUserSpeechScorePauseOptions();
+        options.SustainedUserSpeechScoreDurationMs = 30;
+        var fixture = CreateFixture(
+            options,
+            vad: new AlwaysSpeechNeverTriggeredVadService(),
+            selfSpeechGate: new ScoreSequenceSelfSpeechGate(1.0));
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        for (var index = 0; index < 3; index++)
+        {
+            await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
+        }
+
+        Assert.Equal(1, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Playback.ClearQueueCount);
+        Assert.Equal(0, fixture.Stt.CallCount);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_ResetsWhenScoreDrops()
+    {
+        var options = SustainedUserSpeechScorePauseOptions();
+        options.SustainedUserSpeechScoreDurationMs = 30;
+        var fixture = CreateFixture(
+            options,
+            vad: new AlwaysSpeechNeverTriggeredVadService(),
+            selfSpeechGate: new ScoreSequenceSelfSpeechGate(1.0, 1.0, 0.2, 0.2, 1.0));
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        for (var index = 0; index < 3; index++)
+        {
+            await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
+        }
+
+        Assert.Equal(0, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Stt.CallCount);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_ResetsWhenPlaybackStops()
+    {
+        var options = SustainedUserSpeechScorePauseOptions();
+        options.SustainedUserSpeechScoreDurationMs = 30;
+        var fixture = CreateFixture(
+            options,
+            vad: new AlwaysSpeechNeverTriggeredVadService(),
+            selfSpeechGate: new ScoreSequenceSelfSpeechGate(1.0));
+        var context = CreateContext();
+        fixture.Tap.NotifySpeechStarted(context);
+
+        await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, 0));
+        fixture.Tap.NotifySpeechStopped(context);
+        fixture.Tap.NotifySpeechStarted(context);
+        await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, 10));
+
+        Assert.Equal(0, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Stt.CallCount);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_DoesNotCancelActiveTurn()
+    {
+        var options = SustainedUserSpeechScorePauseOptions();
+        options.SustainedUserSpeechScoreDurationMs = 30;
+        var fixture = CreateFixture(
+            options,
+            vad: new AlwaysSpeechNeverTriggeredVadService(),
+            selfSpeechGate: new ScoreSequenceSelfSpeechGate(1.0));
+        fixture.LiveTurnService.BeginTurn("conversation-1", "correlation-1");
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        for (var index = 0; index < 3; index++)
+        {
+            await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
+        }
+
+        Assert.Equal(1, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Playback.ClearQueueCount);
+        Assert.False(fixture.LiveTurnService.IsCancelled("correlation-1"));
     }
 
     [Fact]
@@ -1697,6 +2029,114 @@ public sealed class BargeInCoordinatorTests
 
     [Theory]
     [InlineData("stop")]
+    [InlineData("shut up")]
+    public async Task ProcessMicrophoneFrame_StopWithoutWakePrefixWhileSpeaking_DoesNotCancel_WhenExperimentEnabled(string transcript)
+    {
+        var fixture = CreateFixture(
+            new BargeInOptions
+            {
+                Enabled = true,
+                RequireWakePrefixForStopDuringPlayback = true,
+                StopWakePrefix = "merlin"
+            },
+            transcript,
+            liveUtteranceGate: CreateLiveUtteranceGate());
+        fixture.LiveTurnService.BeginTurn("conversation-1", "correlation-1");
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        await SendUncorrelatedTriggeredSpeechAsync(fixture.Coordinator, 0.22f);
+        await WaitUntilAsync(() => fixture.Stt.CallCount > 0);
+        await Task.Delay(50);
+
+        Assert.Equal(0, fixture.Playback.ClearQueueCount);
+        Assert.False(fixture.LiveTurnService.IsCancelled("correlation-1"));
+        Assert.True(fixture.LiveTurnService.ShouldEmit("correlation-1"));
+        Assert.True(fixture.Playback.ResumeCount > 0);
+    }
+
+    [Theory]
+    [InlineData("Merlin stop")]
+    [InlineData("Merlin shut up")]
+    public async Task ProcessMicrophoneFrame_StopWithWakePrefixWhileSpeaking_Cancels_WhenExperimentEnabled(string transcript)
+    {
+        var fixture = CreateFixture(
+            new BargeInOptions
+            {
+                Enabled = true,
+                RequireWakePrefixForStopDuringPlayback = true,
+                StopWakePrefix = "merlin"
+            },
+            transcript,
+            liveUtteranceGate: CreateLiveUtteranceGate());
+        fixture.LiveTurnService.BeginTurn("conversation-1", "correlation-1");
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        await SendUncorrelatedTriggeredSpeechAsync(fixture.Coordinator, 0.22f);
+        await WaitUntilAsync(() => fixture.Stt.CallCount > 0);
+        await WaitUntilAsync(() => fixture.Playback.ClearQueueCount > 0);
+
+        Assert.Equal(1, fixture.Playback.ClearQueueCount);
+        Assert.True(fixture.LiveTurnService.IsCancelled("correlation-1"));
+        Assert.False(fixture.LiveTurnService.ShouldEmit("correlation-1"));
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_GateClarificationSuppressesLegacySideCommentResume()
+    {
+        var fixture = CreateFixture(
+            new BargeInOptions { Enabled = true },
+            "Wait, that's not what I meant.",
+            liveUtteranceGate: CreateLiveUtteranceGate());
+        fixture.LiveTurnService.BeginTurn("conversation-1", "correlation-1");
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        await SendUncorrelatedTriggeredSpeechAsync(fixture.Coordinator, 0.22f);
+        await WaitUntilAsync(() => fixture.Stt.CallCount > 0);
+        await WaitUntilAsync(() => fixture.Playback.ClearQueueCount > 0);
+
+        Assert.Equal(0, fixture.Playback.ResumeCount);
+        Assert.Equal(1, fixture.Playback.ClearQueueCount);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_EmbeddedShutUpGateCancelsAndSuppressesLegacySideComment()
+    {
+        var fixture = CreateFixture(
+            new BargeInOptions { Enabled = true },
+            "And shut up.",
+            liveUtteranceGate: CreateLiveUtteranceGate());
+        fixture.LiveTurnService.BeginTurn("conversation-1", "correlation-1");
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        await SendUncorrelatedTriggeredSpeechAsync(fixture.Coordinator, 0.22f);
+        await WaitUntilAsync(() => fixture.Stt.CallCount > 0);
+        await WaitUntilAsync(() => fixture.Playback.ClearQueueCount > 0);
+
+        Assert.Equal(0, fixture.Playback.ResumeCount);
+        Assert.True(fixture.LiveTurnService.IsCancelled("correlation-1"));
+        Assert.False(fixture.LiveTurnService.ShouldEmit("correlation-1"));
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_NonDecisiveGateAllowsLegacySideCommentFallback()
+    {
+        var fixture = CreateFixture(
+            new BargeInOptions { Enabled = true },
+            "thanks",
+            liveUtteranceGate: CreateLiveUtteranceGate());
+        fixture.LiveTurnService.BeginTurn("conversation-1", "correlation-1");
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        await SendUncorrelatedTriggeredSpeechAsync(fixture.Coordinator, 0.22f);
+        await WaitUntilAsync(() => fixture.Stt.CallCount > 0);
+        await WaitUntilAsync(() => fixture.Playback.ResumeCount > 0);
+
+        Assert.Equal(0, fixture.Playback.ClearQueueCount);
+        Assert.Equal(1, fixture.Playback.ResumeCount);
+    }
+
+    [Theory]
+    [InlineData("stop")]
     [InlineData("abort")]
     public async Task ProcessMicrophoneFrame_ShortHardStopBurstWhileSpeaking_CancelsCurrentTurn(string transcript)
     {
@@ -1810,6 +2250,105 @@ public sealed class BargeInCoordinatorTests
         Assert.Equal(1, fixture.Stt.CallCount);
         Assert.Equal(1, fixture.Playback.ClearQueueCount);
         Assert.True(fixture.LiveTurnService.IsCancelled("correlation-1"));
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_CapturedWindowSelfPlayback_SkipsSttAndDoesNotCancel()
+    {
+        var fixture = CreateFixture(
+            CapturedWindowSelfPlaybackOptions(),
+            "stop",
+            selfSpeechGate: new SequenceSelfSpeechGate(SelfSpeechDecision.Allow));
+        var routedCount = 0;
+        fixture.Coordinator.LiveUserUtteranceRouted += (_, _) =>
+        {
+            routedCount++;
+            return Task.CompletedTask;
+        };
+        fixture.LiveTurnService.BeginTurn("conversation-1", "correlation-1");
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+        PushReferenceAudio(fixture.Tap, 0.16f, 16000);
+
+        await SendTriggeredSpeechAsync(fixture.Coordinator, 0.16f);
+        await Task.Delay(100);
+
+        Assert.Equal(0, fixture.Stt.CallCount);
+        Assert.Equal(0, fixture.Playback.ClearQueueCount);
+        Assert.Equal(0, routedCount);
+        Assert.True(fixture.LiveTurnService.IsActive("correlation-1"));
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_CapturedWindowLowCorrelation_AllowsStt()
+    {
+        var fixture = CreateFixture(
+            CapturedWindowSelfPlaybackOptions(),
+            "stop",
+            selfSpeechGate: new SequenceSelfSpeechGate(SelfSpeechDecision.Allow));
+        fixture.LiveTurnService.BeginTurn("conversation-1", "correlation-1");
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+        PushReferenceAudio(fixture.Tap, 0.16f, 16000);
+
+        await SendUncorrelatedTriggeredSpeechAsync(fixture.Coordinator, 0.16f);
+        await WaitUntilAsync(() => fixture.Stt.CallCount > 0);
+
+        Assert.Equal(1, fixture.Stt.CallCount);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_CapturedWindowReferenceUnavailable_AllowsStt()
+    {
+        var fixture = CreateFixture(
+            CapturedWindowSelfPlaybackOptions(),
+            "stop",
+            selfSpeechGate: new SequenceSelfSpeechGate(SelfSpeechDecision.Allow));
+        fixture.LiveTurnService.BeginTurn("conversation-1", "correlation-1");
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        await SendTriggeredSpeechAsync(fixture.Coordinator, 0.16f);
+        await WaitUntilAsync(() => fixture.Stt.CallCount > 0);
+
+        Assert.Equal(1, fixture.Stt.CallCount);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_CapturedWindowDelayedPlaybackEcho_SkipsStt()
+    {
+        var options = CapturedWindowSelfPlaybackOptions();
+        options.CapturedWindowSelfPlaybackDelayMsMin = 80;
+        options.CapturedWindowSelfPlaybackDelayMsMax = 120;
+        var fixture = CreateFixture(
+            options,
+            "stop",
+            selfSpeechGate: new SequenceSelfSpeechGate(SelfSpeechDecision.Allow));
+        fixture.LiveTurnService.BeginTurn("conversation-1", "correlation-1");
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+        PushReferenceAudio(fixture.Tap, 0.16f, 16000);
+        PushReferenceAudio(fixture.Tap, 0.0f, 16000, milliseconds: 100);
+
+        await SendTriggeredSpeechAsync(fixture.Coordinator, 0.16f);
+        await Task.Delay(100);
+
+        Assert.Equal(0, fixture.Stt.CallCount);
+        Assert.Equal(0, fixture.Playback.ClearQueueCount);
+        Assert.True(fixture.LiveTurnService.IsActive("correlation-1"));
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_CapturedWindowMixedUserAndPlayback_AllowsStt()
+    {
+        var fixture = CreateFixture(
+            CapturedWindowSelfPlaybackOptions(),
+            "stop",
+            selfSpeechGate: new SequenceSelfSpeechGate(SelfSpeechDecision.Allow));
+        fixture.LiveTurnService.BeginTurn("conversation-1", "correlation-1");
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+        PushReferenceAudio(fixture.Tap, 0.04f, 16000);
+
+        await SendTriggeredSpeechAsync(fixture.Coordinator, 0.16f);
+        await WaitUntilAsync(() => fixture.Stt.CallCount > 0);
+
+        Assert.Equal(1, fixture.Stt.CallCount);
     }
 
     [Fact]
@@ -2163,6 +2702,88 @@ public sealed class BargeInCoordinatorTests
         }
     }
 
+    private static BargeInOptions CapturedWindowSelfPlaybackOptions()
+    {
+        return new BargeInOptions
+        {
+            Enabled = true,
+            AecSampleRate = 16000,
+            RequireWakeWordForFirstVersion = false,
+            AllowNaturalSoftBargeInWhenAecVerified = true,
+            CapturedWindowSelfPlaybackCorrelationThreshold = 0.82,
+            CapturedWindowSelfPlaybackLikelyUserThreshold = 0.35,
+            CapturedWindowSelfPlaybackMinReferenceEnergy = 0.008,
+            CapturedWindowSelfPlaybackMinCaptureEnergy = 0.008,
+            CapturedWindowSelfPlaybackSliceMs = 200,
+            CapturedWindowSelfPlaybackMaxSlices = 4,
+            CapturedWindowSelfPlaybackDelayMsMin = 0,
+            CapturedWindowSelfPlaybackDelayMsMax = 250,
+            CapturedWindowSelfPlaybackDelayStepMs = 10,
+            CapturedWindowSelfPlaybackStrongUserEnergyRatio = 2.25,
+            FastHardStopMinSpeechMs = 120,
+            FastHardStopCaptureWindowMs = 700,
+            FastHardStopPostSpeechPaddingMs = 80
+        };
+    }
+
+    private static BargeInOptions SustainedUserSpeechScoreOptions()
+    {
+        return new BargeInOptions
+        {
+            Enabled = true,
+            RequireSustainedUserSpeechScoreDuringPlayback = true,
+            SustainedUserSpeechScoreThreshold = 0.90,
+            SustainedUserSpeechScoreDurationMs = 250,
+            PauseInsteadOfCancelOnSpeech = true,
+            EnableSpeakerDucking = false,
+            BurstCapturePromotion = new BurstCapturePromotionOptions
+            {
+                Enabled = false
+            },
+            FastNearEndDucking = new FastNearEndDuckingOptions
+            {
+                Enabled = false
+            },
+            ComfortDucking = new ComfortDuckingOptions
+            {
+                Enabled = false
+            }
+        };
+    }
+
+    private static BargeInOptions SustainedUserSpeechScorePauseOptions()
+    {
+        return new BargeInOptions
+        {
+            Enabled = true,
+            PausePlaybackOnSustainedUserSpeechScore = true,
+            RequireSustainedUserSpeechScoreDuringPlayback = false,
+            SustainedUserSpeechScoreThreshold = 0.90,
+            SustainedUserSpeechScoreDurationMs = 250,
+            PauseInsteadOfCancelOnSpeech = false,
+            EnableSpeakerDucking = true,
+            BurstCapturePromotion = new BurstCapturePromotionOptions
+            {
+                Enabled = false
+            },
+            FastNearEndDucking = new FastNearEndDuckingOptions
+            {
+                Enabled = true,
+                MinSpeechMs = 50,
+                MinVadConfidence = 0.4,
+                MinEnergyRatioOverNoise = 4.0,
+                MinAbsoluteEnergy = 0.008,
+                HangoverMs = 220,
+                UseSelfSpeechGate = true
+            },
+            ComfortDucking = new ComfortDuckingOptions
+            {
+                Enabled = true,
+                MinSpeechMs = 50
+            }
+        };
+    }
+
     private static BargeInOptions BurstPromotionOptions()
     {
         return new BargeInOptions
@@ -2200,9 +2821,13 @@ public sealed class BargeInCoordinatorTests
         };
     }
 
-    private static void PushReferenceAudio(PlaybackReferenceTap tap, float amplitude)
+    private static void PushReferenceAudio(
+        PlaybackReferenceTap tap,
+        float amplitude,
+        int sampleRate = 48000,
+        int milliseconds = 1000)
     {
-        var pcm = new byte[48000 * 2];
+        var pcm = new byte[Math.Max(1, sampleRate * milliseconds / 1000) * 2];
         var sample = (short)Math.Clamp((int)Math.Round(amplitude * short.MaxValue), short.MinValue, short.MaxValue);
         for (var offset = 0; offset < pcm.Length; offset += 2)
         {
@@ -2210,7 +2835,7 @@ public sealed class BargeInCoordinatorTests
             pcm[offset + 1] = (byte)((sample >> 8) & 0xff);
         }
 
-        tap.PushPcm16Reference(pcm, 48000, 1, "correlation-1");
+        tap.PushPcm16Reference(pcm, sampleRate, 1, "correlation-1");
     }
 
     internal static TestFixture CreateFixture(
@@ -2219,7 +2844,8 @@ public sealed class BargeInCoordinatorTests
         IAcousticEchoCancellationService? aec = null,
         IBargeInVadService? vad = null,
         IInterruptionCaptureDiagnosticsWriter? captureDiagnosticsWriter = null,
-        ISelfSpeechSuppressionGate? selfSpeechGate = null)
+        ISelfSpeechSuppressionGate? selfSpeechGate = null,
+        ILiveUtteranceGate? liveUtteranceGate = null)
     {
         options.TriggerPostSpeechWaitMs = 0;
         var diagnostics = new NoOpBargeInDiagnosticsLogger();
@@ -2247,9 +2873,17 @@ public sealed class BargeInCoordinatorTests
             captureDiagnosticsWriter ?? new NoOpInterruptionCaptureDiagnosticsWriter(),
             diagnostics,
             NullLogger<BargeInCoordinator>.Instance,
-            new TestOptionsMonitor<BargeInOptions>(options));
+            new TestOptionsMonitor<BargeInOptions>(options),
+            liveUtteranceGate);
 
         return new TestFixture(coordinator, tap, stt, playback, liveTurnService, speakerDucking);
+    }
+
+    private static LiveUtteranceGate CreateLiveUtteranceGate()
+    {
+        return new LiveUtteranceGate(
+            NullLogger<LiveUtteranceGate>.Instance,
+            Options.Create(new LiveUtteranceGateOptions()));
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)
@@ -2601,6 +3235,46 @@ public sealed class BargeInCoordinatorTests
         }
     }
 
+    private sealed class AlwaysTriggeredVadService : IBargeInVadService
+    {
+        public VadFrameResult ProcessFrame(VadFrameInput input, BargeInOptions options)
+        {
+            return new VadFrameResult
+            {
+                IsSpeech = true,
+                IsTriggered = true,
+                Energy = 0.2,
+                NoiseFloor = 0.01,
+                Confidence = 1.0,
+                ConsecutiveSpeechMs = 350
+            };
+        }
+
+        public void Reset()
+        {
+        }
+    }
+
+    private sealed class AlwaysSpeechNeverTriggeredVadService : IBargeInVadService
+    {
+        public VadFrameResult ProcessFrame(VadFrameInput input, BargeInOptions options)
+        {
+            return new VadFrameResult
+            {
+                IsSpeech = true,
+                IsTriggered = false,
+                Energy = 0.2,
+                NoiseFloor = 0.01,
+                Confidence = 1.0,
+                ConsecutiveSpeechMs = 350
+            };
+        }
+
+        public void Reset()
+        {
+        }
+    }
+
     internal sealed class TestSpeakerDuckingService : ISpeakerDuckingService
     {
         public event EventHandler<SpeakerDuckingChangedEventArgs>? DuckingChanged;
@@ -2775,6 +3449,42 @@ public sealed class BargeInCoordinatorTests
                 SustainedUncertainFrames = decision is SelfSpeechDecision.Uncertain ? 1 : 0,
                 CorrelationScore = _correlationScore,
                 CorrelationDecision = _correlationDecision
+            };
+        }
+
+        public void Reset()
+        {
+            _index = 0;
+        }
+    }
+
+    private sealed class ScoreSequenceSelfSpeechGate : ISelfSpeechSuppressionGate
+    {
+        private readonly double[] _scores;
+        private int _index;
+
+        public ScoreSequenceSelfSpeechGate(params double[] scores)
+        {
+            _scores = scores.Length == 0 ? [1.0] : scores;
+        }
+
+        public SelfSpeechGateResult Evaluate(SelfSpeechGateInput input, BargeInOptions options)
+        {
+            var score = _scores[Math.Min(_index, _scores.Length - 1)];
+            _index++;
+            return new SelfSpeechGateResult
+            {
+                Decision = SelfSpeechDecision.Allow,
+                Confidence = 0.9,
+                Reason = "test user speech score gate result",
+                MicEnergy = input.MicEnergy,
+                PlaybackEnergy = input.PlaybackEnergy,
+                EstimatedEchoEnergy = input.PlaybackEnergy * options.SelfSpeechSuppression.EchoLeakageMultiplier,
+                UserSpeechScore = score,
+                SustainedUncertainFrames = 0,
+                CorrelationScore = input.CorrelationScore,
+                BestDelayMs = input.BestDelayMs,
+                CorrelationDecision = input.CorrelationDecision
             };
         }
 

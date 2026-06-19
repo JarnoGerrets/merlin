@@ -1,5 +1,7 @@
+using System.Text.RegularExpressions;
 using Merlin.Backend.Configuration;
 using Merlin.Backend.Models;
+using Merlin.Backend.Services.LiveUtterance;
 using Microsoft.Extensions.Options;
 
 namespace Merlin.Backend.Services.BargeIn;
@@ -15,6 +17,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     private readonly IAcousticEchoCancellationService _aec;
     private readonly IBargeInDiagnosticsLogger _diagnostics;
     private readonly IInterruptionClassifier _interruptionClassifier;
+    private readonly ILiveUtteranceGate? _liveUtteranceGate;
     private readonly ILiveAssistantTurnService _liveTurnService;
     private readonly IOptionsMonitor<BargeInOptions> _options;
     private readonly IAssistantSpeechPlaybackService _playbackService;
@@ -28,6 +31,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     private readonly IBargeInSttService _sttService;
     private readonly IBargeInTriggerBuffer _triggerBuffer;
     private readonly IBargeInVadService _vadService;
+    private readonly IBargeInDebugSnapshotService? _debugSnapshots;
     private readonly object _syncRoot = new();
     private BargeInSpeechContext? _activeContext;
     private BargeInCaptureSession? _activeCaptureSession;
@@ -44,6 +48,9 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     private bool _suppressedVadTriggeredAttemptSaved;
     private int _fastNearEndSpeechMs;
     private DateTimeOffset? _fastNearEndFirstSpeechAt;
+    private int _sustainedUserSpeechScoreMs;
+    private int _sustainedUserSpeechScorePauseMs;
+    private bool _playbackYieldedForSustainedUserSpeechScore;
     private readonly BurstCaptureCandidateState _burstCaptureCandidate = new();
 
     public event Func<CorrectionRegenerationRequested, CancellationToken, Task>? CorrectionRegenerationRequested;
@@ -66,7 +73,9 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         IInterruptionCaptureDiagnosticsWriter captureDiagnosticsWriter,
         IBargeInDiagnosticsLogger diagnostics,
         ILogger<BargeInCoordinator> logger,
-        IOptionsMonitor<BargeInOptions> options)
+        IOptionsMonitor<BargeInOptions> options,
+        ILiveUtteranceGate? liveUtteranceGate = null,
+        IBargeInDebugSnapshotService? debugSnapshots = null)
     {
         _playbackReferenceTap = playbackReferenceTap;
         _assistantPlaybackMonitor = assistantPlaybackMonitor;
@@ -84,6 +93,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         _diagnostics = diagnostics;
         _logger = logger;
         _options = options;
+        _liveUtteranceGate = liveUtteranceGate;
+        _debugSnapshots = debugSnapshots;
 
         _playbackReferenceTap.SpeechStarted += OnSpeechStarted;
         _playbackReferenceTap.SpeechStopped += OnSpeechStopped;
@@ -178,6 +189,16 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 aecResult,
                 correlation,
                 "active_capture_endpointing");
+            PublishDebugSnapshot(
+                context,
+                frame,
+                echoReducedFrame,
+                reference,
+                activeVad,
+                activeGateResult,
+                correlation,
+                "active_capture_endpointing",
+                BargeInState.CapturingInterruption.ToString());
             activeCaptureSession.Observe(CreateCaptureFrameObservation(
                 frame,
                 echoReducedFrame,
@@ -213,6 +234,25 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             correlation,
             options,
             cancellationToken);
+        await EvaluateSustainedUserSpeechScorePauseGateAsync(
+            context,
+            echoReducedFrame,
+            comfortGateResult,
+            options,
+            "comfort_ducking",
+            cancellationToken);
+        PublishDebugSnapshot(
+            context,
+            frame,
+            echoReducedFrame,
+            reference,
+            vad,
+            comfortGateResult,
+            correlation,
+            "mic_frame",
+            IsInterruptionCaptureActive()
+                ? BargeInState.CapturingInterruption.ToString()
+                : BargeInState.Speaking.ToString());
         if (TryPromoteBurstCapture(
                 context,
                 frame,
@@ -224,6 +264,17 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 options,
                 out var burstPromotionSummary))
         {
+            if (!EvaluateSustainedUserSpeechScoreGate(
+                    context,
+                    echoReducedFrame,
+                    comfortGateResult,
+                    options,
+                    "burst_promotion"))
+            {
+                _burstCaptureCandidate.Reset();
+                return;
+            }
+
             _suppressedFastHardStopAttemptSaved = false;
             _suppressedVadTriggeredAttemptSaved = false;
             ResetFastHardStopCandidate();
@@ -246,6 +297,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             {
                 _suppressedFastHardStopAttemptSaved = false;
                 _suppressedVadTriggeredAttemptSaved = false;
+                ResetSustainedUserSpeechScoreGate(context, options, "vad_reported_non_speech", null);
             }
 
             if (vad.IsSpeech)
@@ -256,6 +308,23 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                     aecResult,
                     correlation,
                     "fast_hard_stop_candidate");
+                await EvaluateSustainedUserSpeechScorePauseGateAsync(
+                    context,
+                    echoReducedFrame,
+                    speechGateResult,
+                    options,
+                    "fast_hard_stop_candidate",
+                    cancellationToken);
+                PublishDebugSnapshot(
+                    context,
+                    frame,
+                    echoReducedFrame,
+                    reference,
+                    vad,
+                    speechGateResult,
+                    correlation,
+                    "fast_hard_stop_candidate",
+                    BargeInState.Speaking.ToString());
                 if (speechGateResult.Decision is not SelfSpeechDecision.Allow)
                 {
                     _diagnostics.Ignored(context, $"Fast hard-stop candidate suppressed by self-speech gate. Decision: {speechGateResult.Decision}. Reason: {speechGateResult.Reason}");
@@ -301,6 +370,23 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             aecResult,
             correlation,
             "vad_triggered_capture");
+        await EvaluateSustainedUserSpeechScorePauseGateAsync(
+            context,
+            echoReducedFrame,
+            gateResult,
+            options,
+            "vad_triggered_capture",
+            cancellationToken);
+        PublishDebugSnapshot(
+            context,
+            frame,
+            echoReducedFrame,
+            reference,
+            vad,
+            gateResult,
+            correlation,
+            "vad_triggered_capture",
+            BargeInState.SoftPausedForUserSpeech.ToString());
         if (gateResult.Decision is not SelfSpeechDecision.Allow)
         {
             _diagnostics.Ignored(context, $"Barge-in suppressed by self-speech gate. Decision: {gateResult.Decision}. Reason: {gateResult.Reason}");
@@ -319,6 +405,18 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             }
 
             _vadService.Reset();
+            ResetFastHardStopCandidate();
+            ResetSustainedUserSpeechScoreGate(context, options, "self_speech_gate_blocked_vad_triggered_capture", gateResult);
+            return;
+        }
+
+        if (!EvaluateSustainedUserSpeechScoreGate(
+                context,
+                echoReducedFrame,
+                gateResult,
+                options,
+                "vad_triggered_capture"))
+        {
             ResetFastHardStopCandidate();
             return;
         }
@@ -365,6 +463,9 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             _suppressedFastHardStopAttemptSaved = false;
             _suppressedVadTriggeredAttemptSaved = false;
             ResetFastHardStopCandidate();
+            _sustainedUserSpeechScoreMs = 0;
+            _sustainedUserSpeechScorePauseMs = 0;
+            _playbackYieldedForSustainedUserSpeechScore = false;
             _selfSpeechGate.Reset();
             CancelPendingDuckingRestore();
         }
@@ -412,6 +513,9 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             }
 
             _handlingTrigger = true;
+            _sustainedUserSpeechScoreMs = 0;
+            _sustainedUserSpeechScorePauseMs = 0;
+            _playbackYieldedForSustainedUserSpeechScore = false;
             captureSession = captureKind is CaptureKind.FastHardStop
                 ? BargeInCaptureSession.CreateFastHardStop(echoReducedFrame.Timestamp, options)
                 : BargeInCaptureSession.CreateNormal(echoReducedFrame.Timestamp, options);
@@ -606,6 +710,296 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         return vad.Confidence >= Math.Clamp(options.MinVadConfidence, 0.0, 1.0)
             && vad.Energy >= Math.Max(0.0, options.MinAbsoluteEnergy)
             && energyRatio >= Math.Max(0.0, options.MinEnergyRatioOverNoise);
+    }
+
+    private bool EvaluateSustainedUserSpeechScoreGate(
+        BargeInSpeechContext context,
+        BargeInAudioFrame frame,
+        SelfSpeechGateResult? gateResult,
+        BargeInOptions options,
+        string candidateType)
+    {
+        if (!options.RequireSustainedUserSpeechScoreDuringPlayback)
+        {
+            return true;
+        }
+
+        var assistantWasSpeaking = _assistantPlaybackMonitor.IsPlaybackActive;
+        var threshold = Math.Clamp(options.SustainedUserSpeechScoreThreshold, 0.0, 1.0);
+        var requiredDurationMs = Math.Max(1, options.SustainedUserSpeechScoreDurationMs);
+        var userSpeechScore = gateResult?.UserSpeechScore ?? 0.0;
+
+        _logger.LogInformation(
+            "SustainedUserSpeechScoreGateEvaluated. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore:N3}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}.",
+            candidateType,
+            userSpeechScore,
+            threshold,
+            _sustainedUserSpeechScoreMs,
+            requiredDurationMs,
+            assistantWasSpeaking,
+            gateResult?.Decision.ToString() ?? "Unavailable",
+            gateResult?.Reason ?? "Self-speech gate result unavailable.");
+
+        if (!assistantWasSpeaking)
+        {
+            ResetSustainedUserSpeechScoreGate(context, options, "assistant_playback_inactive", gateResult, candidateType);
+            return true;
+        }
+
+        if (gateResult?.Decision is SelfSpeechDecision.SuppressAsSelfEcho)
+        {
+            ResetSustainedUserSpeechScoreGate(context, options, "self_speech_gate_suppressed_as_echo", gateResult, candidateType);
+            _logger.LogInformation(
+                "SustainedUserSpeechScoreGateBlockedCapture. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore:N3}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}. DecisionReason: {DecisionReason}.",
+                candidateType,
+                userSpeechScore,
+                threshold,
+                _sustainedUserSpeechScoreMs,
+                requiredDurationMs,
+                assistantWasSpeaking,
+                gateResult.Decision,
+                gateResult.Reason,
+                "Self-speech gate suppressed candidate as echo.");
+            return false;
+        }
+
+        if (userSpeechScore < threshold)
+        {
+            ResetSustainedUserSpeechScoreGate(context, options, "user_speech_score_below_threshold", gateResult, candidateType);
+            _logger.LogInformation(
+                "SustainedUserSpeechScoreGateBlockedCapture. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore:N3}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}. DecisionReason: {DecisionReason}.",
+                candidateType,
+                userSpeechScore,
+                threshold,
+                _sustainedUserSpeechScoreMs,
+                requiredDurationMs,
+                assistantWasSpeaking,
+                gateResult?.Decision.ToString() ?? "Unavailable",
+                gateResult?.Reason ?? "Self-speech gate result unavailable.",
+                "UserSpeechScore below sustained threshold.");
+            return false;
+        }
+
+        _sustainedUserSpeechScoreMs += GetFrameDurationMs(frame, options);
+        _logger.LogInformation(
+            "SustainedUserSpeechScoreGateAccumulated. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore:N3}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}.",
+            candidateType,
+            userSpeechScore,
+            threshold,
+            _sustainedUserSpeechScoreMs,
+            requiredDurationMs,
+            assistantWasSpeaking,
+            gateResult?.Decision.ToString() ?? "Unavailable",
+            gateResult?.Reason ?? "Self-speech gate result unavailable.");
+
+        if (_sustainedUserSpeechScoreMs < requiredDurationMs)
+        {
+            _logger.LogInformation(
+                "SustainedUserSpeechScoreGateBlockedCapture. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore:N3}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}. DecisionReason: {DecisionReason}.",
+                candidateType,
+                userSpeechScore,
+                threshold,
+                _sustainedUserSpeechScoreMs,
+                requiredDurationMs,
+                assistantWasSpeaking,
+                gateResult?.Decision.ToString() ?? "Unavailable",
+                gateResult?.Reason ?? "Self-speech gate result unavailable.",
+                "UserSpeechScore has not been sustained long enough.");
+            return false;
+        }
+
+        _logger.LogInformation(
+            "SustainedUserSpeechScoreGateAllowedCapture. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore:N3}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}. DecisionReason: {DecisionReason}.",
+            candidateType,
+            userSpeechScore,
+            threshold,
+            _sustainedUserSpeechScoreMs,
+            requiredDurationMs,
+            assistantWasSpeaking,
+            gateResult?.Decision.ToString() ?? "Unavailable",
+            gateResult?.Reason ?? "Self-speech gate result unavailable.",
+            "UserSpeechScore sustained for required duration.");
+        return true;
+    }
+
+    private async Task EvaluateSustainedUserSpeechScorePauseGateAsync(
+        BargeInSpeechContext context,
+        BargeInAudioFrame frame,
+        SelfSpeechGateResult? gateResult,
+        BargeInOptions options,
+        string candidateType,
+        CancellationToken cancellationToken)
+    {
+        if (!options.PausePlaybackOnSustainedUserSpeechScore)
+        {
+            return;
+        }
+
+        if (gateResult is null || gateResult.UserSpeechScore <= 0.0)
+        {
+            ResetSustainedUserSpeechScorePauseGate(context, options, "user_speech_score_unavailable_or_zero", gateResult, candidateType);
+            return;
+        }
+
+        var assistantWasSpeaking = _assistantPlaybackMonitor.IsPlaybackActive;
+        var threshold = Math.Clamp(options.SustainedUserSpeechScoreThreshold, 0.0, 1.0);
+        var requiredDurationMs = Math.Max(1, options.SustainedUserSpeechScoreDurationMs);
+        var userSpeechScore = gateResult.UserSpeechScore;
+
+        _logger.LogInformation(
+            "SustainedUserSpeechScorePauseGateEvaluated. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore:N3}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. PlaybackAlreadyYielded: {PlaybackAlreadyYielded}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}.",
+            candidateType,
+            userSpeechScore,
+            threshold,
+            _sustainedUserSpeechScorePauseMs,
+            requiredDurationMs,
+            assistantWasSpeaking,
+            _playbackYieldedForSustainedUserSpeechScore,
+            gateResult.Decision.ToString(),
+            gateResult.Reason);
+
+        if (!assistantWasSpeaking)
+        {
+            ResetSustainedUserSpeechScorePauseGate(context, options, "assistant_playback_inactive", gateResult, candidateType);
+            return;
+        }
+
+        if (_playbackYieldedForSustainedUserSpeechScore)
+        {
+            return;
+        }
+
+        if (gateResult.Decision is SelfSpeechDecision.SuppressAsSelfEcho)
+        {
+            ResetSustainedUserSpeechScorePauseGate(context, options, "self_speech_gate_suppressed_as_echo", gateResult, candidateType);
+            return;
+        }
+
+        if (userSpeechScore < threshold)
+        {
+            ResetSustainedUserSpeechScorePauseGate(context, options, "user_speech_score_below_threshold", gateResult, candidateType);
+            return;
+        }
+
+        _sustainedUserSpeechScorePauseMs += GetFrameDurationMs(frame, options);
+        _logger.LogInformation(
+            "SustainedUserSpeechScorePauseGateAccumulated. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore:N3}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}.",
+            candidateType,
+            userSpeechScore,
+            threshold,
+            _sustainedUserSpeechScorePauseMs,
+            requiredDurationMs,
+            assistantWasSpeaking,
+            gateResult.Decision.ToString(),
+            gateResult.Reason);
+
+        if (_sustainedUserSpeechScorePauseMs < requiredDurationMs)
+        {
+            return;
+        }
+
+        _playbackYieldedForSustainedUserSpeechScore = true;
+        _logger.LogInformation(
+            "SustainedUserSpeechScorePauseTriggered. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore:N3}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. AssistantTurnId: {AssistantTurnId}. CorrelationId: {CorrelationId}.",
+            candidateType,
+            userSpeechScore,
+            threshold,
+            _sustainedUserSpeechScorePauseMs,
+            requiredDurationMs,
+            assistantWasSpeaking,
+            context.AssistantTurnId,
+            context.CorrelationId);
+        _diagnostics.StateChanged(
+            context,
+            BargeInState.SoftPausedForUserSpeech,
+            "Playback yielded for sustained UserSpeechScore while preserving the active assistant turn.");
+        await _playbackService.PauseCurrentSpeechAsync(cancellationToken);
+        _logger.LogInformation(
+            "PlaybackYieldedForSustainedUserSpeechScore. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore:N3}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantTurnId: {AssistantTurnId}. CorrelationId: {CorrelationId}.",
+            candidateType,
+            userSpeechScore,
+            threshold,
+            _sustainedUserSpeechScorePauseMs,
+            requiredDurationMs,
+            context.AssistantTurnId,
+            context.CorrelationId);
+    }
+
+    private void ResetSustainedUserSpeechScorePauseGate(
+        BargeInSpeechContext context,
+        BargeInOptions options,
+        string reason,
+        SelfSpeechGateResult? gateResult,
+        string candidateType = "unknown")
+    {
+        if (_sustainedUserSpeechScorePauseMs <= 0 && !_playbackYieldedForSustainedUserSpeechScore)
+        {
+            return;
+        }
+
+        var previousDurationMs = _sustainedUserSpeechScorePauseMs;
+        _sustainedUserSpeechScorePauseMs = 0;
+        _playbackYieldedForSustainedUserSpeechScore = false;
+        var userSpeechScoreText = gateResult is not null && gateResult.UserSpeechScore > 0.0
+            ? gateResult.UserSpeechScore.ToString("N3", System.Globalization.CultureInfo.InvariantCulture)
+            : "UnavailableOrZero";
+        _logger.LogInformation(
+            "SustainedUserSpeechScorePauseGateReset. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}. DecisionReason: {DecisionReason}. AssistantTurnId: {AssistantTurnId}. CorrelationId: {CorrelationId}.",
+            candidateType,
+            userSpeechScoreText,
+            Math.Clamp(options.SustainedUserSpeechScoreThreshold, 0.0, 1.0),
+            previousDurationMs,
+            Math.Max(1, options.SustainedUserSpeechScoreDurationMs),
+            _assistantPlaybackMonitor.IsPlaybackActive,
+            gateResult?.Decision.ToString() ?? "Unavailable",
+            gateResult?.Reason ?? "Self-speech gate result unavailable.",
+            reason,
+            context.AssistantTurnId,
+            context.CorrelationId);
+    }
+
+    private void ResetSustainedUserSpeechScoreGate(
+        BargeInSpeechContext context,
+        BargeInOptions options,
+        string reason,
+        SelfSpeechGateResult? gateResult,
+        string candidateType = "unknown")
+    {
+        if (_sustainedUserSpeechScoreMs <= 0)
+        {
+            return;
+        }
+
+        var previousDurationMs = _sustainedUserSpeechScoreMs;
+        _sustainedUserSpeechScoreMs = 0;
+        _logger.LogInformation(
+            "SustainedUserSpeechScoreGateReset. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore:N3}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}. DecisionReason: {DecisionReason}. AssistantTurnId: {AssistantTurnId}. CorrelationId: {CorrelationId}.",
+            candidateType,
+            gateResult?.UserSpeechScore ?? 0.0,
+            Math.Clamp(options.SustainedUserSpeechScoreThreshold, 0.0, 1.0),
+            previousDurationMs,
+            Math.Max(1, options.SustainedUserSpeechScoreDurationMs),
+            _assistantPlaybackMonitor.IsPlaybackActive,
+            gateResult?.Decision.ToString() ?? "Unavailable",
+            gateResult?.Reason ?? "Self-speech gate result unavailable.",
+            reason,
+            context.AssistantTurnId,
+            context.CorrelationId);
+    }
+
+    private static int GetFrameDurationMs(BargeInAudioFrame frame, BargeInOptions options)
+    {
+        if (frame.DurationMs > 0)
+        {
+            return frame.DurationMs;
+        }
+
+        if (frame.SampleRate > 0 && frame.Samples.Length > 0)
+        {
+            return Math.Max(1, (int)Math.Round(frame.Samples.Length * 1000.0 / frame.SampleRate));
+        }
+
+        return Math.Max(1, options.FrameMs);
     }
 
     private static bool IsStrongSelfEchoSuppression(SelfSpeechGateResult gateResult)
@@ -818,6 +1212,291 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             reason);
     }
 
+    private CapturedWindowSelfPlaybackCheckResult EvaluateCapturedWindowSelfPlayback(
+        IReadOnlyList<BargeInAudioFrame> captured,
+        TimeSpan duration,
+        string sttAudioSource,
+        bool sttAudioIsAecProcessed,
+        BargeInOptions options)
+    {
+        var snapshot = _playbackReferenceTap.GetDebugSnapshot();
+        if (!options.EnableCapturedWindowSelfPlaybackCheck)
+        {
+            return CapturedWindowSelfPlaybackCheckResult.Unavailable(
+                "Captured-window self-playback check is disabled.",
+                snapshot);
+        }
+
+        var playbackRecentlyActive = _assistantPlaybackMonitor.IsPlaybackActive
+            || snapshot.ReferenceNewestAgeMilliseconds <= Math.Max(0, options.CapturedWindowSelfPlaybackRecentPlaybackMs);
+        if (!playbackRecentlyActive)
+        {
+            return CapturedWindowSelfPlaybackCheckResult.Unavailable(
+                "Assistant playback is not active or recent.",
+                snapshot);
+        }
+
+        if (captured.Count == 0)
+        {
+            return CapturedWindowSelfPlaybackCheckResult.Unavailable(
+                "Captured audio window is empty.",
+                snapshot);
+        }
+
+        var sampleRate = captured[0].SampleRate;
+        if (sampleRate <= 0 || captured.Any(frame => frame.SampleRate != sampleRate))
+        {
+            return CapturedWindowSelfPlaybackCheckResult.Unavailable(
+                "Captured audio window has invalid or mixed sample rates.",
+                snapshot);
+        }
+
+        if (snapshot.SampleRate != sampleRate)
+        {
+            return CapturedWindowSelfPlaybackCheckResult.Unavailable(
+                "Captured audio sample rate does not match playback reference sample rate.",
+                snapshot);
+        }
+
+        var samples = captured
+            .SelectMany(frame => frame.Samples.ToArray())
+            .ToArray();
+        if (samples.Length == 0)
+        {
+            return CapturedWindowSelfPlaybackCheckResult.Unavailable(
+                "Captured audio window has no samples.",
+                snapshot);
+        }
+
+        var captureEnergy = CalculateRms(samples);
+        if (captureEnergy < Math.Max(0.0, options.CapturedWindowSelfPlaybackMinCaptureEnergy))
+        {
+            return CapturedWindowSelfPlaybackCheckResult.Unavailable(
+                "Captured audio energy is below the self-playback check minimum.",
+                snapshot) with
+            {
+                CaptureEnergy = captureEnergy,
+                SamplesChecked = samples.Length
+            };
+        }
+
+        var sliceSampleCount = Math.Clamp(
+            sampleRate * Math.Max(10, options.CapturedWindowSelfPlaybackSliceMs) / 1000,
+            1,
+            samples.Length);
+        var sliceOffsets = SelectCapturedWindowSliceOffsets(
+            samples,
+            sliceSampleCount,
+            Math.Max(1, options.CapturedWindowSelfPlaybackMaxSlices));
+        var correlationOptions = CreateCapturedWindowCorrelationOptions(options);
+        SelfSpeechCorrelationResult? bestCorrelation = null;
+        double bestCaptureEnergy = 0.0;
+        var bestOffset = 0;
+        var availableSlices = 0;
+        var samplesChecked = 0;
+
+        foreach (var offset in sliceOffsets)
+        {
+            var slice = samples.AsSpan(offset, sliceSampleCount);
+            var sliceEnergy = CalculateRms(slice);
+            samplesChecked += sliceSampleCount;
+            var correlation = SelfSpeechCorrelationDetector.Analyze(
+                slice,
+                sampleRate,
+                _playbackReferenceTap,
+                correlationOptions);
+            if (correlation.IsAvailable)
+            {
+                availableSlices++;
+            }
+
+            _logger.LogDebug(
+                "CapturedWindowCorrelationSliceEvaluated. SliceOffsetMs: {SliceOffsetMs}. SliceSamples: {SliceSamples}. SliceEnergy: {SliceEnergy:N4}. CorrelationAvailable: {CorrelationAvailable}. CorrelationDecision: {CorrelationDecision}. CorrelationScore: {CorrelationScore:N3}. BestDelayMs: {BestDelayMs}. ReferenceEnergy: {ReferenceEnergy:N4}. Reason: {Reason}. SttAudioSource: {SttAudioSource}. SttAudioIsAecProcessed: {SttAudioIsAecProcessed}.",
+                offset * 1000.0 / sampleRate,
+                sliceSampleCount,
+                sliceEnergy,
+                correlation.IsAvailable,
+                correlation.Decision,
+                correlation.CorrelationScore,
+                correlation.BestDelayMs,
+                correlation.ReferenceWindowEnergy,
+                correlation.Reason,
+                sttAudioSource,
+                sttAudioIsAecProcessed);
+
+            if (!correlation.IsAvailable)
+            {
+                continue;
+            }
+
+            if (bestCorrelation is null
+                || (correlation.CorrelationScore ?? 0.0) > (bestCorrelation.CorrelationScore ?? 0.0))
+            {
+                bestCorrelation = correlation;
+                bestCaptureEnergy = sliceEnergy;
+                bestOffset = offset;
+            }
+        }
+
+        if (bestCorrelation is null)
+        {
+            return CapturedWindowSelfPlaybackCheckResult.Unavailable(
+                "No captured-window correlation slices were available.",
+                snapshot) with
+            {
+                CaptureEnergy = captureEnergy,
+                SliceCount = sliceOffsets.Count,
+                SamplesChecked = samplesChecked
+            };
+        }
+
+        var bestScore = bestCorrelation.CorrelationScore ?? 0.0;
+        var bestReferenceEnergy = bestCorrelation.ReferenceWindowEnergy ?? 0.0;
+        var threshold = Math.Clamp(options.CapturedWindowSelfPlaybackCorrelationThreshold, 0.0, 1.0);
+        var likelyUserThreshold = Math.Clamp(options.CapturedWindowSelfPlaybackLikelyUserThreshold, 0.0, 1.0);
+        var minReferenceEnergy = Math.Max(0.0, options.CapturedWindowSelfPlaybackMinReferenceEnergy);
+        var strongUserEnergy = bestReferenceEnergy > 0.0
+            && bestCaptureEnergy >= bestReferenceEnergy * Math.Max(1.0, options.CapturedWindowSelfPlaybackStrongUserEnergyRatio);
+
+        var baseResult = new CapturedWindowSelfPlaybackCheckResult
+        {
+            IsAvailable = true,
+            ShouldReject = false,
+            Reason = "Captured-window correlation did not meet high-confidence self-playback rejection policy.",
+            CaptureEnergy = captureEnergy,
+            BestCaptureEnergy = bestCaptureEnergy,
+            BestReferenceEnergy = bestReferenceEnergy,
+            BestCorrelationScore = bestScore,
+            BestDelayMs = bestCorrelation.BestDelayMs,
+            BestSliceOffsetMs = bestOffset * 1000.0 / sampleRate,
+            SliceCount = sliceOffsets.Count,
+            AvailableSliceCount = availableSlices,
+            SamplesChecked = samplesChecked,
+            PlaybackReferenceNewestAgeMs = snapshot.ReferenceNewestAgeMilliseconds,
+            PlaybackReferenceOldestAgeMs = snapshot.ReferenceOldestAgeMilliseconds
+        };
+
+        if (bestReferenceEnergy < minReferenceEnergy)
+        {
+            return baseResult with
+            {
+                IsAvailable = false,
+                Reason = "Playback reference energy is below captured-window self-playback minimum."
+            };
+        }
+
+        if (bestScore <= likelyUserThreshold)
+        {
+            return baseResult with
+            {
+                Reason = "Captured-window correlation is low, likely user speech."
+            };
+        }
+
+        if (strongUserEnergy)
+        {
+            return baseResult with
+            {
+                Reason = "Captured-window energy strongly exceeds correlated playback reference; preserving possible near-end user speech."
+            };
+        }
+
+        if (bestScore >= threshold)
+        {
+            return baseResult with
+            {
+                ShouldReject = true,
+                Reason = "Captured audio window strongly correlates with recent assistant playback reference."
+            };
+        }
+
+        return baseResult;
+    }
+
+    private static SelfSpeechSuppressionOptions CreateCapturedWindowCorrelationOptions(BargeInOptions options)
+    {
+        var source = options.SelfSpeechSuppression;
+        return new SelfSpeechSuppressionOptions
+        {
+            Enabled = source.Enabled,
+            SuppressDuringPlayback = source.SuppressDuringPlayback,
+            PlaybackOnsetGraceMs = source.PlaybackOnsetGraceMs,
+            EchoLeakageMultiplier = source.EchoLeakageMultiplier,
+            EchoMargin = source.EchoMargin,
+            UserSpeechRatio = source.UserSpeechRatio,
+            UserSpeechMargin = source.UserSpeechMargin,
+            RequireSustainedUserSpeechFrames = source.RequireSustainedUserSpeechFrames,
+            AllowFastHardStopOverride = source.AllowFastHardStopOverride,
+            LogDecisions = source.LogDecisions,
+            DiagnosticsFileEnabled = source.DiagnosticsFileEnabled,
+            DiagnosticsFilePath = source.DiagnosticsFilePath,
+            DiagnosticsSampleEveryNFrames = source.DiagnosticsSampleEveryNFrames,
+            DiagnosticsIncludeSuppressed = source.DiagnosticsIncludeSuppressed,
+            DiagnosticsIncludeAllowed = source.DiagnosticsIncludeAllowed,
+            DiagnosticsIncludeUncertain = source.DiagnosticsIncludeUncertain,
+            PolicyMode = source.PolicyMode,
+            AllowSustainedUncertainForDucking = source.AllowSustainedUncertainForDucking,
+            AllowSustainedUncertainForCapture = source.AllowSustainedUncertainForCapture,
+            AllowSustainedUncertainForFastHardStop = source.AllowSustainedUncertainForFastHardStop,
+            FastHardStopUncertainFrames = source.FastHardStopUncertainFrames,
+            FastHardStopUncertainExtraMargin = source.FastHardStopUncertainExtraMargin,
+            CorrelationDetectionEnabled = true,
+            CorrelationMinScore = options.CapturedWindowSelfPlaybackCorrelationThreshold,
+            CorrelationSelfEchoThreshold = options.CapturedWindowSelfPlaybackCorrelationThreshold,
+            CorrelationLikelyUserThreshold = options.CapturedWindowSelfPlaybackLikelyUserThreshold,
+            CorrelationMinDelayMs = options.CapturedWindowSelfPlaybackDelayMsMin,
+            CorrelationMaxDelayMs = options.CapturedWindowSelfPlaybackDelayMsMax,
+            CorrelationStepMs = options.CapturedWindowSelfPlaybackDelayStepMs,
+            CorrelationMinReferenceEnergy = options.CapturedWindowSelfPlaybackMinReferenceEnergy,
+            CorrelationMinMicEnergy = options.CapturedWindowSelfPlaybackMinCaptureEnergy
+        };
+    }
+
+    private static IReadOnlyList<int> SelectCapturedWindowSliceOffsets(
+        float[] samples,
+        int sliceSampleCount,
+        int maxSlices)
+    {
+        var offsets = new List<int>();
+        AddOffset(0);
+        AddOffset((samples.Length - sliceSampleCount) / 2);
+        AddOffset(samples.Length - sliceSampleCount);
+        AddOffset(FindHighestEnergySliceOffset(samples, sliceSampleCount));
+        return offsets.Take(maxSlices).ToArray();
+
+        void AddOffset(int offset)
+        {
+            offset = Math.Clamp(offset, 0, Math.Max(0, samples.Length - sliceSampleCount));
+            if (!offsets.Contains(offset))
+            {
+                offsets.Add(offset);
+            }
+        }
+    }
+
+    private static int FindHighestEnergySliceOffset(float[] samples, int sliceSampleCount)
+    {
+        if (samples.Length <= sliceSampleCount)
+        {
+            return 0;
+        }
+
+        var step = Math.Max(1, sliceSampleCount / 2);
+        var bestOffset = 0;
+        var bestEnergy = 0.0;
+        for (var offset = 0; offset <= samples.Length - sliceSampleCount; offset += step)
+        {
+            var energy = CalculateRms(samples.AsSpan(offset, sliceSampleCount));
+            if (energy > bestEnergy)
+            {
+                bestEnergy = energy;
+                bestOffset = offset;
+            }
+        }
+
+        return bestOffset;
+    }
+
     private async Task HandleTriggeredSpeechAsync(
         BargeInSpeechContext context,
         BargeInAudioFrame triggerFrame,
@@ -857,6 +1536,108 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             : triggeredCapture.Frames;
         var duration = CalculateDuration(captured);
         _diagnostics.TriggerBufferCaptured(context, captured.Count, duration);
+        var sttAudioSource = builtFromContinuousRecorder
+            ? "ContinuousMicAudioBufferRaw"
+            : "TriggerBufferProcessed";
+        var sttAudioIsAecProcessed = !builtFromContinuousRecorder;
+        _logger.LogInformation(
+            "CapturedWindowSelfPlaybackCheckStarted. CaptureKind: {CaptureKind}. CorrelationId: {CorrelationId}. DurationMs: {DurationMs}. Frames: {Frames}. SttAudioSource: {SttAudioSource}. SttAudioIsAecProcessed: {SttAudioIsAecProcessed}. ContinuousFrames: {ContinuousFrames}. TriggerFrames: {TriggerFrames}.",
+            captureKind,
+            context.CorrelationId,
+            duration.TotalMilliseconds,
+            captured.Count,
+            sttAudioSource,
+            sttAudioIsAecProcessed,
+            continuousRange.Frames.Count,
+            triggeredCapture.Frames.Count);
+        var capturedWindowCheck = EvaluateCapturedWindowSelfPlayback(
+            captured,
+            duration,
+            sttAudioSource,
+            sttAudioIsAecProcessed,
+            options);
+        PublishDebugSnapshot(
+            context,
+            triggerFrame,
+            triggerFrame,
+            _playbackReferenceTap.GetLatestReferenceFrame(triggerFrame.Samples.Length),
+            vad,
+            null,
+            null,
+            captureKind.ToString(),
+            BargeInState.CapturingInterruption.ToString(),
+            CapturedWindowDecisionText(capturedWindowCheck),
+            capturedWindowCheck.IsAvailable ? capturedWindowCheck.BestCorrelationScore : null,
+            sttAudioSource,
+            sttAudioIsAecProcessed,
+            null,
+            force: true);
+        if (capturedWindowCheck.ShouldReject)
+        {
+            _logger.LogWarning(
+                "CapturedWindowSelfPlaybackRejected. CorrelationId: {CorrelationId}. Reason: {Reason}. DurationMs: {DurationMs}. Frames: {Frames}. SamplesChecked: {SamplesChecked}. SliceCount: {SliceCount}. BestCorrelationScore: {BestCorrelationScore:N3}. BestDelayMs: {BestDelayMs}. BestSliceOffsetMs: {BestSliceOffsetMs}. BestReferenceEnergy: {BestReferenceEnergy:N4}. BestCaptureEnergy: {BestCaptureEnergy:N4}. CaptureEnergy: {CaptureEnergy:N4}. PlaybackReferenceNewestAgeMs: {PlaybackReferenceNewestAgeMs}. PlaybackReferenceOldestAgeMs: {PlaybackReferenceOldestAgeMs}. SttAudioSource: {SttAudioSource}. SttAudioIsAecProcessed: {SttAudioIsAecProcessed}.",
+                context.CorrelationId,
+                capturedWindowCheck.Reason,
+                duration.TotalMilliseconds,
+                captured.Count,
+                capturedWindowCheck.SamplesChecked,
+                capturedWindowCheck.SliceCount,
+                capturedWindowCheck.BestCorrelationScore,
+                capturedWindowCheck.BestDelayMs,
+                capturedWindowCheck.BestSliceOffsetMs,
+                capturedWindowCheck.BestReferenceEnergy,
+                capturedWindowCheck.BestCaptureEnergy,
+                capturedWindowCheck.CaptureEnergy,
+                capturedWindowCheck.PlaybackReferenceNewestAgeMs,
+                capturedWindowCheck.PlaybackReferenceOldestAgeMs,
+                sttAudioSource,
+                sttAudioIsAecProcessed);
+            _logger.LogWarning(
+                "SttSkippedForCapturedWindowSelfPlayback. CorrelationId: {CorrelationId}. CaptureKind: {CaptureKind}. SttAudioSource: {SttAudioSource}. Reason: {Reason}.",
+                context.CorrelationId,
+                captureKind,
+                sttAudioSource,
+                capturedWindowCheck.Reason);
+            await ResumePreviousSpeechAsync(context, "captured_window_self_playback", cancellationToken);
+            _vadService.Reset();
+            return;
+        }
+
+        if (capturedWindowCheck.IsAvailable)
+        {
+            _logger.LogInformation(
+                "CapturedWindowSelfPlaybackAllowed. CorrelationId: {CorrelationId}. Reason: {Reason}. DurationMs: {DurationMs}. Frames: {Frames}. SamplesChecked: {SamplesChecked}. SliceCount: {SliceCount}. BestCorrelationScore: {BestCorrelationScore:N3}. BestDelayMs: {BestDelayMs}. BestSliceOffsetMs: {BestSliceOffsetMs}. BestReferenceEnergy: {BestReferenceEnergy:N4}. BestCaptureEnergy: {BestCaptureEnergy:N4}. CaptureEnergy: {CaptureEnergy:N4}. SttAudioSource: {SttAudioSource}. SttAudioIsAecProcessed: {SttAudioIsAecProcessed}.",
+                context.CorrelationId,
+                capturedWindowCheck.Reason,
+                duration.TotalMilliseconds,
+                captured.Count,
+                capturedWindowCheck.SamplesChecked,
+                capturedWindowCheck.SliceCount,
+                capturedWindowCheck.BestCorrelationScore,
+                capturedWindowCheck.BestDelayMs,
+                capturedWindowCheck.BestSliceOffsetMs,
+                capturedWindowCheck.BestReferenceEnergy,
+                capturedWindowCheck.BestCaptureEnergy,
+                capturedWindowCheck.CaptureEnergy,
+                sttAudioSource,
+                sttAudioIsAecProcessed);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "CapturedWindowSelfPlaybackUnavailable. CorrelationId: {CorrelationId}. Reason: {Reason}. DurationMs: {DurationMs}. Frames: {Frames}. SamplesChecked: {SamplesChecked}. SliceCount: {SliceCount}. PlaybackReferenceNewestAgeMs: {PlaybackReferenceNewestAgeMs}. PlaybackReferenceOldestAgeMs: {PlaybackReferenceOldestAgeMs}. SttAudioSource: {SttAudioSource}. SttAudioIsAecProcessed: {SttAudioIsAecProcessed}.",
+                context.CorrelationId,
+                capturedWindowCheck.Reason,
+                duration.TotalMilliseconds,
+                captured.Count,
+                capturedWindowCheck.SamplesChecked,
+                capturedWindowCheck.SliceCount,
+                capturedWindowCheck.PlaybackReferenceNewestAgeMs,
+                capturedWindowCheck.PlaybackReferenceOldestAgeMs,
+                sttAudioSource,
+                sttAudioIsAecProcessed);
+        }
+
         _diagnostics.GatedSttStarted(context, duration);
         var stt = await _sttService.TranscribeTriggerAsync(captured, options, cancellationToken);
         _diagnostics.GatedSttResult(context, stt);
@@ -876,7 +1657,10 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             utterance.StateWhenCaptured,
             utterance.AssistantWasSpeaking,
             utterance.Confidence);
-        var routeDecision = RouteUtterance(utterance);
+        var gateResult = _liveUtteranceGate?.Evaluate(CreateLiveUtteranceGateInput(utterance, vad.Confidence));
+        var routeDecision = gateResult is not null && _liveUtteranceGate is not null
+            ? _liveUtteranceGate.ToRouteDecision(utterance, gateResult)
+            : RouteUtterance(utterance);
         _logger.LogInformation(
             "UserUtteranceRouted. Text: {Text}. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. StateWhenCaptured: {StateWhenCaptured}. Route: {Route}. Confidence: {Confidence}. Action: {Action}. Reason: {Reason}.",
             utterance.Text,
@@ -900,11 +1684,50 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 IsAecDegraded = !aecResult.IsEchoCancellationActive
             },
             options);
+        if (IsHardStopGatePhrase(normalized))
+        {
+            if (ShouldRejectStopCommandMissingWakePrefix(utterance.AssistantWasSpeaking, normalized, options, out var rejectionReason))
+            {
+                LogStopCommandWakePrefixCheck(utterance.AssistantWasSpeaking, normalized, options, "rejected_missing_wake_prefix", rejectionReason);
+                _logger.LogInformation(
+                    "StopCommandRejectedMissingWakePrefix. NormalizedTranscript: {NormalizedTranscript}. WakePrefix: {WakePrefix}. AssistantWasSpeaking: {AssistantWasSpeaking}. DecisionReason: {DecisionReason}.",
+                    normalized,
+                    InterruptionClassifier.Normalize(options.StopWakePrefix),
+                    utterance.AssistantWasSpeaking,
+                    rejectionReason);
+            }
+            else if (options.RequireWakePrefixForStopDuringPlayback && utterance.AssistantWasSpeaking && HasStopWakePrefix(normalized, options))
+            {
+                LogStopCommandWakePrefixCheck(utterance.AssistantWasSpeaking, normalized, options, "accepted_with_wake_prefix", "Stop command met wake-prefix policy.");
+                _logger.LogInformation(
+                    "StopCommandAcceptedWithWakePrefix. NormalizedTranscript: {NormalizedTranscript}. WakePrefix: {WakePrefix}. AssistantWasSpeaking: {AssistantWasSpeaking}. DecisionReason: {DecisionReason}.",
+                    normalized,
+                    InterruptionClassifier.Normalize(options.StopWakePrefix),
+                    utterance.AssistantWasSpeaking,
+                    "Stop command accepted as playback hard stop.");
+            }
+        }
 
         _diagnostics.ClassificationResult(context, classification);
         var decision = captureKind is CaptureKind.FastHardStop
             ? DecideFastHardStop(context, classification, options)
             : Decide(context, classification, options);
+        PublishDebugSnapshot(
+            context,
+            triggerFrame,
+            triggerFrame,
+            _playbackReferenceTap.GetLatestReferenceFrame(triggerFrame.Samples.Length),
+            vad,
+            null,
+            null,
+            captureKind.ToString(),
+            BargeInState.ClassifyingInterruption.ToString(),
+            CapturedWindowDecisionText(capturedWindowCheck),
+            capturedWindowCheck.IsAvailable ? capturedWindowCheck.BestCorrelationScore : null,
+            sttAudioSource,
+            sttAudioIsAecProcessed,
+            $"{(decision.Accepted ? "accepted" : "rejected")}:{decision.Action}",
+            force: true);
         _diagnostics.ActionSelected(context, decision.Action, decision.Reason);
         await SaveInterruptionCaptureDiagnosticsAsync(
             context,
@@ -926,6 +1749,51 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             captureKind,
             burstPromotionSummary,
             cancellationToken);
+        if (gateResult is not null && IsDecisiveGateDecision(gateResult, utterance))
+        {
+            _logger.LogInformation(
+                "LiveUtteranceGateDecisionApplied. Text: {Text}. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. StateWhenCaptured: {StateWhenCaptured}. GateDecision: {GateDecision}. Route: {Route}. Action: {Action}. LegacyClassificationType: {LegacyClassificationType}. LegacyAction: {LegacyAction}.",
+                utterance.Text,
+                utterance.ActiveTurnId,
+                utterance.CorrelationId,
+                utterance.StateWhenCaptured,
+                gateResult.Decision,
+                routeDecision.Kind,
+                routeDecision.Action,
+                classification.Type,
+                decision.Action);
+            if (decision.Action is BargeInAction.Resume or BargeInAction.SideComment or BargeInAction.Clarification)
+            {
+                _logger.LogInformation(
+                    "LegacyInterruptionClassifierSuppressed. Text: {Text}. GateDecision: {GateDecision}. LegacyClassificationType: {LegacyClassificationType}. LegacyAction: {LegacyAction}. Reason: Decisive LiveUtteranceGate decision controls routing.",
+                    utterance.Text,
+                    gateResult.Decision,
+                    classification.Type,
+                    decision.Action);
+                _logger.LogInformation(
+                    "PlaybackResumeSuppressedByGate. Text: {Text}. GateDecision: {GateDecision}. LegacyAction: {LegacyAction}.",
+                    utterance.Text,
+                    gateResult.Decision,
+                    decision.Action);
+            }
+
+            await ApplyDecisiveGateDecisionAsync(context, utterance, routeDecision, gateResult, cancellationToken);
+            _vadService.Reset();
+            return;
+        }
+
+        if (gateResult is not null)
+        {
+            _logger.LogInformation(
+                "GateDecisionAllowedLegacyFallback. Text: {Text}. GateDecision: {GateDecision}. Route: {Route}. Action: {Action}. LegacyClassificationType: {LegacyClassificationType}. LegacyAction: {LegacyAction}.",
+                utterance.Text,
+                gateResult.Decision,
+                routeDecision.Kind,
+                routeDecision.Action,
+                classification.Type,
+                decision.Action);
+        }
+
         if (await TryHandleLiveUtteranceRouteAsync(context, utterance, routeDecision, cancellationToken))
         {
             _vadService.Reset();
@@ -1679,6 +2547,9 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             _suppressedFastHardStopAttemptSaved = false;
             _suppressedVadTriggeredAttemptSaved = false;
             ResetFastHardStopCandidate();
+            _sustainedUserSpeechScoreMs = 0;
+            _sustainedUserSpeechScorePauseMs = 0;
+            _playbackYieldedForSustainedUserSpeechScore = false;
             _selfSpeechGate.Reset();
             CancelPendingDuckingRestore();
             _bargeInsThisTurn = 0;
@@ -1712,6 +2583,9 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 _suppressedVadTriggeredAttemptSaved = false;
                 _burstCaptureCandidate.Reset();
                 ResetFastHardStopCandidate();
+                _sustainedUserSpeechScoreMs = 0;
+                _sustainedUserSpeechScorePauseMs = 0;
+                _playbackYieldedForSustainedUserSpeechScore = false;
                 _selfSpeechGate.Reset();
                 CancelPendingDuckingRestore();
                 stopped = true;
@@ -1775,6 +2649,239 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             Source = "live_utterance_monitor",
             Confidence = confidence
         };
+    }
+
+    private LiveUtteranceGateInput CreateLiveUtteranceGateInput(UserUtterance utterance, double vadConfidence)
+    {
+        LiveAssistantTurn? activeTurn = null;
+        if (!string.IsNullOrWhiteSpace(utterance.CorrelationId)
+            && _liveTurnService.TryGetActiveTurn(utterance.CorrelationId, out var turn))
+        {
+            activeTurn = turn;
+        }
+        else if (_liveTurnService.TryGetCurrentActiveTurn(out var currentTurn))
+        {
+            activeTurn = currentTurn;
+        }
+
+        return new LiveUtteranceGateInput
+        {
+            Utterance = utterance,
+            ActiveTurn = activeTurn,
+            CurrentSystemState = activeTurn?.State.ToString() ?? utterance.StateWhenCaptured.ToString(),
+            AssistantWasSpeaking = utterance.AssistantWasSpeaking,
+            IsIdleListening = activeTurn is null && utterance.StateWhenCaptured is LiveAssistantTurnState.IdleListening,
+            PendingCommandDescription = activeTurn?.PendingCommandDescription,
+            SttConfidence = utterance.Confidence,
+            AudioSpeechConfidence = vadConfidence
+        };
+    }
+
+    private static bool IsDecisiveGateDecision(LiveUtteranceGateResult gateResult, UserUtterance utterance)
+    {
+        return gateResult.Decision switch
+        {
+            LiveUtteranceGateDecisionKind.AskClarification
+                or LiveUtteranceGateDecisionKind.HoldForMoreSpeech
+                or LiveUtteranceGateDecisionKind.AcceptPlaybackControl
+                or LiveUtteranceGateDecisionKind.AcceptCancellation
+                or LiveUtteranceGateDecisionKind.AcceptReplacement
+                or LiveUtteranceGateDecisionKind.AcceptCorrection
+                or LiveUtteranceGateDecisionKind.AcceptContinuation
+                or LiveUtteranceGateDecisionKind.AcceptStatusQuestion => true,
+            LiveUtteranceGateDecisionKind.AcceptNewRequest => utterance.AssistantWasSpeaking
+                || !string.IsNullOrWhiteSpace(utterance.ActiveTurnId)
+                || utterance.StateWhenCaptured is not LiveAssistantTurnState.IdleListening,
+            _ => false
+        };
+    }
+
+    private async Task ApplyDecisiveGateDecisionAsync(
+        BargeInSpeechContext context,
+        UserUtterance utterance,
+        UtteranceRouteDecision routeDecision,
+        LiveUtteranceGateResult gateResult,
+        CancellationToken cancellationToken)
+    {
+        switch (gateResult.Decision)
+        {
+            case LiveUtteranceGateDecisionKind.AcceptPlaybackControl:
+                if (IsHardStopGatePhrase(gateResult.NormalizedText))
+                {
+                    var stopWakeOptions = _options.CurrentValue;
+                    if (ShouldRejectStopCommandMissingWakePrefix(utterance.AssistantWasSpeaking, gateResult.NormalizedText, stopWakeOptions, out var rejectionReason))
+                    {
+                        LogStopCommandWakePrefixCheck(utterance.AssistantWasSpeaking, gateResult.NormalizedText, stopWakeOptions, "rejected_missing_wake_prefix", rejectionReason);
+                        _logger.LogInformation(
+                            "StopCommandRejectedMissingWakePrefix. NormalizedTranscript: {NormalizedTranscript}. WakePrefix: {WakePrefix}. AssistantWasSpeaking: {AssistantWasSpeaking}. DecisionReason: {DecisionReason}.",
+                            gateResult.NormalizedText,
+                            InterruptionClassifier.Normalize(stopWakeOptions.StopWakePrefix),
+                            utterance.AssistantWasSpeaking,
+                            rejectionReason);
+                        _diagnostics.Ignored(context, rejectionReason);
+                        await ResumePreviousSpeechAsync(context, rejectionReason, cancellationToken);
+                        return;
+                    }
+
+                    if (stopWakeOptions.RequireWakePrefixForStopDuringPlayback && utterance.AssistantWasSpeaking)
+                    {
+                        LogStopCommandWakePrefixCheck(utterance.AssistantWasSpeaking, gateResult.NormalizedText, stopWakeOptions, "accepted_with_wake_prefix", "Stop command met wake-prefix policy.");
+                        _logger.LogInformation(
+                            "StopCommandAcceptedWithWakePrefix. NormalizedTranscript: {NormalizedTranscript}. WakePrefix: {WakePrefix}. AssistantWasSpeaking: {AssistantWasSpeaking}. DecisionReason: {DecisionReason}.",
+                            gateResult.NormalizedText,
+                            InterruptionClassifier.Normalize(stopWakeOptions.StopWakePrefix),
+                            utterance.AssistantWasSpeaking,
+                            "Stop command accepted as playback hard stop.");
+                    }
+
+                    if (string.IsNullOrWhiteSpace(utterance.CorrelationId))
+                    {
+                        await _playbackService.ClearQueueAsync(cancellationToken);
+                    }
+                    else
+                    {
+                        await CancelByUtteranceAsync(utterance, LiveAssistantTurnCancelReason.UserHardStop, null, cancellationToken);
+                    }
+
+                    await RaiseLiveUserUtteranceRoutedAsync(utterance, routeDecision, cancellationToken);
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(utterance.CorrelationId))
+                {
+                    _liveTurnService.UpdateTurnState(utterance.CorrelationId, LiveAssistantTurnState.PausedByUser);
+                }
+
+                if (utterance.AssistantWasSpeaking)
+                {
+                    await _playbackService.ClearQueueAsync(cancellationToken);
+                }
+
+                await RaiseLiveUserUtteranceRoutedAsync(utterance, routeDecision, cancellationToken);
+                return;
+
+            case LiveUtteranceGateDecisionKind.AskClarification:
+            case LiveUtteranceGateDecisionKind.HoldForMoreSpeech:
+                if (!string.IsNullOrWhiteSpace(utterance.CorrelationId))
+                {
+                    _liveTurnService.UpdateTurnState(utterance.CorrelationId, LiveAssistantTurnState.PausedByUser);
+                }
+
+                if (utterance.AssistantWasSpeaking)
+                {
+                    await _playbackService.ClearQueueAsync(cancellationToken);
+                }
+
+                await RaiseLiveUserUtteranceRoutedAsync(utterance, routeDecision, cancellationToken);
+                return;
+
+            case LiveUtteranceGateDecisionKind.AcceptCancellation:
+                if (string.IsNullOrWhiteSpace(utterance.CorrelationId))
+                {
+                    await _playbackService.ClearQueueAsync(cancellationToken);
+                }
+                else
+                {
+                    await CancelByUtteranceAsync(utterance, LiveAssistantTurnCancelReason.UserHardStop, null, cancellationToken);
+                }
+
+                await RaiseLiveUserUtteranceRoutedAsync(utterance, routeDecision, cancellationToken);
+                return;
+
+            case LiveUtteranceGateDecisionKind.AcceptReplacement:
+            case LiveUtteranceGateDecisionKind.AcceptCorrection:
+                await CancelByUtteranceAsync(utterance, LiveAssistantTurnCancelReason.UserCorrection, routeDecision.ReplacementText, cancellationToken);
+                if (!string.IsNullOrWhiteSpace(routeDecision.ReplacementText))
+                {
+                    await RaiseCorrectionRegenerationRequestedAsync(context, routeDecision.ReplacementText, cancellationToken);
+                }
+
+                await RaiseLiveUserUtteranceRoutedAsync(utterance, routeDecision, cancellationToken);
+                return;
+
+            default:
+                await RaiseLiveUserUtteranceRoutedAsync(utterance, routeDecision, cancellationToken);
+                return;
+        }
+    }
+
+    private static bool IsHardStopGatePhrase(string? normalizedText)
+    {
+        return !string.IsNullOrWhiteSpace(normalizedText)
+            && (ContainsWholePhrase(normalizedText, "stop")
+                || ContainsWholePhrase(normalizedText, "shut up")
+                || ContainsWholePhrase(normalizedText, "be quiet")
+                || ContainsWholePhrase(normalizedText, "quiet"));
+    }
+
+    private static bool ShouldRejectStopCommandMissingWakePrefix(
+        bool assistantWasSpeaking,
+        string? normalizedTranscript,
+        BargeInOptions options,
+        out string reason)
+    {
+        reason = string.Empty;
+        if (!assistantWasSpeaking || !options.RequireWakePrefixForStopDuringPlayback)
+        {
+            return false;
+        }
+
+        if (!IsHardStopGatePhrase(normalizedTranscript))
+        {
+            return false;
+        }
+
+        if (HasStopWakePrefix(normalizedTranscript, options))
+        {
+            return false;
+        }
+
+        reason = $"Stop command rejected during assistant playback because wake prefix '{InterruptionClassifier.Normalize(options.StopWakePrefix)}' was missing.";
+        return true;
+    }
+
+    private void LogStopCommandWakePrefixCheck(
+        bool assistantWasSpeaking,
+        string? normalizedTranscript,
+        BargeInOptions options,
+        string decision,
+        string reason)
+    {
+        if (!options.RequireWakePrefixForStopDuringPlayback || !assistantWasSpeaking || !IsHardStopGatePhrase(normalizedTranscript))
+        {
+            return;
+        }
+
+        _logger.LogInformation(
+            "StopCommandWakePrefixCheck. NormalizedTranscript: {NormalizedTranscript}. WakePrefix: {WakePrefix}. AssistantWasSpeaking: {AssistantWasSpeaking}. Decision: {Decision}. DecisionReason: {DecisionReason}.",
+            normalizedTranscript ?? string.Empty,
+            InterruptionClassifier.Normalize(options.StopWakePrefix),
+            assistantWasSpeaking,
+            decision,
+            reason);
+    }
+
+    private static bool HasStopWakePrefix(string? normalizedTranscript, BargeInOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(normalizedTranscript))
+        {
+            return false;
+        }
+
+        var wakePrefix = InterruptionClassifier.Normalize(options.StopWakePrefix);
+        if (string.IsNullOrWhiteSpace(wakePrefix))
+        {
+            return false;
+        }
+
+        return string.Equals(normalizedTranscript, wakePrefix, StringComparison.OrdinalIgnoreCase)
+            || normalizedTranscript.StartsWith($"{wakePrefix} ", StringComparison.OrdinalIgnoreCase)
+            || normalizedTranscript.StartsWith($"hey {wakePrefix} ", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ContainsWholePhrase(string text, string phrase)
+    {
+        return Regex.IsMatch(text, $@"(^|\s){Regex.Escape(phrase)}(\s|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
     private static UtteranceRouteDecision RouteUtterance(UserUtterance utterance)
@@ -2071,6 +3178,104 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     {
         var threshold = Math.Max(0.0001, options.VadEnergyThreshold);
         return CalculateRms(frame.Samples.Span) >= threshold;
+    }
+
+    private void PublishDebugSnapshot(
+        BargeInSpeechContext context,
+        BargeInAudioFrame rawFrame,
+        BargeInAudioFrame echoReducedFrame,
+        ReadOnlyMemory<float> playbackReference,
+        VadFrameResult? vad,
+        SelfSpeechGateResult? gateResult,
+        SelfSpeechCorrelationResult? correlation,
+        string captureSource,
+        string bargeInState,
+        string? capturedWindowSelfPlaybackDecision = null,
+        double? capturedWindowBestCorrelation = null,
+        string? sttAudioSource = null,
+        bool? sttAudioIsAecProcessed = null,
+        string? finalBargeInDecision = null,
+        bool force = false)
+    {
+        if (_debugSnapshots?.IsEnabled != true)
+        {
+            return;
+        }
+
+        var micRms = CalculateRms(rawFrame.Samples.Span);
+        var micPeak = CalculatePeak(rawFrame.Samples.Span);
+        var playbackReferenceRms = playbackReference.IsEmpty
+            ? (double?)null
+            : CalculateRms(playbackReference.Span);
+        var playbackEnergy = Math.Max(_assistantPlaybackMonitor.CurrentPlaybackEnergy, _assistantPlaybackMonitor.RecentPlaybackEnergy);
+        var estimatedEchoRms = gateResult?.EstimatedEchoEnergy;
+        var micToExpectedEchoRatio = estimatedEchoRms is > 0.000001
+            ? micRms / estimatedEchoRms.Value
+            : (double?)null;
+        var userDominanceScore = gateResult?.UserSpeechScore;
+        var correlationScore = gateResult?.CorrelationScore ?? correlation?.CorrelationScore;
+        var bestDelayMs = gateResult?.BestDelayMs ?? correlation?.BestDelayMs;
+
+        _debugSnapshots.Publish(new BargeInDebugSnapshot
+        {
+            TimestampUtc = DateTimeOffset.UtcNow,
+            AssistantWasSpeaking = _assistantPlaybackMonitor.IsPlaybackActive,
+            CaptureSource = captureSource,
+            BargeInState = bargeInState,
+            MicRms = micRms,
+            MicPeak = micPeak,
+            PlaybackReferenceRms = playbackReferenceRms,
+            PlaybackEnergy = playbackEnergy,
+            EstimatedEchoRms = estimatedEchoRms,
+            MicToExpectedEchoRatio = micToExpectedEchoRatio,
+            UserDominanceScore = userDominanceScore,
+            VadConfidence = vad?.Confidence,
+            VadIsSpeech = vad?.IsSpeech,
+            CorrelationScore = correlationScore,
+            BestCorrelationDelayMs = bestDelayMs,
+            SelfSpeechGateDecision = gateResult?.Decision.ToString(),
+            SelfSpeechGateReason = gateResult?.Reason,
+            CapturedWindowSelfPlaybackDecision = capturedWindowSelfPlaybackDecision,
+            CapturedWindowBestCorrelation = capturedWindowBestCorrelation,
+            SttAudioSource = sttAudioSource,
+            SttAudioIsAecProcessed = sttAudioIsAecProcessed,
+            FinalBargeInDecision = finalBargeInDecision,
+            MicRmsPercent = ScaleEnergyPercent(micRms),
+            MicPeakPercent = ScaleEnergyPercent(micPeak),
+            PlaybackReferencePercent = playbackReferenceRms is null ? null : ScaleEnergyPercent(playbackReferenceRms.Value),
+            ExpectedEchoPercent = estimatedEchoRms is null ? null : ScaleEnergyPercent(estimatedEchoRms.Value),
+            VadPercent = vad?.Confidence * 100.0,
+            CorrelationPercent = correlationScore * 100.0,
+            UserDominancePercent = userDominanceScore is null ? null : Math.Clamp(userDominanceScore.Value, 0.0, 1.0) * 100.0
+        }, force);
+    }
+
+    private static double ScaleEnergyPercent(double value)
+    {
+        return Math.Clamp(value / 0.10, 0.0, 1.0) * 100.0;
+    }
+
+    private static string CapturedWindowDecisionText(CapturedWindowSelfPlaybackCheckResult result)
+    {
+        if (result.ShouldReject)
+        {
+            return $"rejected_self_playback: {result.Reason}";
+        }
+
+        return result.IsAvailable
+            ? $"allowed: {result.Reason}"
+            : $"unavailable: {result.Reason}";
+    }
+
+    private static double CalculatePeak(ReadOnlySpan<float> samples)
+    {
+        var peak = 0.0;
+        foreach (var sample in samples)
+        {
+            peak = Math.Max(peak, Math.Abs(sample));
+        }
+
+        return peak;
     }
 
     private static double CalculateRms(ReadOnlySpan<float> samples)
@@ -2629,6 +3834,51 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         public required double BurstStrongSelfEchoRatio { get; init; }
 
         public required string BurstPromotionReason { get; init; }
+    }
+
+    private sealed record CapturedWindowSelfPlaybackCheckResult
+    {
+        public required bool IsAvailable { get; init; }
+
+        public required bool ShouldReject { get; init; }
+
+        public required string Reason { get; init; }
+
+        public double CaptureEnergy { get; init; }
+
+        public double BestCaptureEnergy { get; init; }
+
+        public double BestReferenceEnergy { get; init; }
+
+        public double BestCorrelationScore { get; init; }
+
+        public double? BestDelayMs { get; init; }
+
+        public double? BestSliceOffsetMs { get; init; }
+
+        public int SliceCount { get; init; }
+
+        public int AvailableSliceCount { get; init; }
+
+        public int SamplesChecked { get; init; }
+
+        public double? PlaybackReferenceNewestAgeMs { get; init; }
+
+        public double? PlaybackReferenceOldestAgeMs { get; init; }
+
+        public static CapturedWindowSelfPlaybackCheckResult Unavailable(
+            string reason,
+            PlaybackReferenceDebugSnapshot snapshot)
+        {
+            return new CapturedWindowSelfPlaybackCheckResult
+            {
+                IsAvailable = false,
+                ShouldReject = false,
+                Reason = reason,
+                PlaybackReferenceNewestAgeMs = snapshot.ReferenceNewestAgeMilliseconds,
+                PlaybackReferenceOldestAgeMs = snapshot.ReferenceOldestAgeMilliseconds
+            };
+        }
     }
 
     private sealed record CaptureFrameObservation

@@ -9,6 +9,7 @@ using Merlin.Backend.Infrastructure.Persistence.Seeding;
 using Merlin.Backend.Services;
 using Merlin.Backend.Services.Acknowledgement;
 using Merlin.Backend.Services.BargeIn;
+using Merlin.Backend.Services.LiveUtterance;
 using Merlin.Backend.Services.IntentRouting;
 using Merlin.Backend.Tools;
 using Merlin.Backend.WebSocket;
@@ -52,6 +53,8 @@ builder.Services.PostConfigure<WebSearchOptions>(options =>
 builder.Services.Configure<AcknowledgementSpeechOptions>(
     builder.Configuration.GetSection("AcknowledgementSpeech"));
 builder.Services.Configure<BargeInOptions>(
+    builder.Configuration.GetSection("BargeIn"));
+builder.Services.Configure<BargeInDebugOptions>(
     builder.Configuration.GetSection("BargeIn"));
 builder.Services.PostConfigure<LlmOptions>(options =>
 {
@@ -218,6 +221,7 @@ builder.Services.AddSingleton<ChatterboxTtsProvider>();
 builder.Services.AddSingleton<IVoiceSynthesisService, TtsRouter>();
 builder.Services.AddHostedService<ChatterboxWarmupHostedService>();
 builder.Services.AddSingleton<IBargeInDiagnosticsLogger, BargeInDiagnosticsLogger>();
+builder.Services.AddSingleton<IBargeInDebugSnapshotService, BargeInDebugSnapshotService>();
 builder.Services.AddSingleton<IInterruptionCaptureDiagnosticsWriter, InterruptionCaptureDiagnosticsWriter>();
 builder.Services.AddSingleton<PlaybackReferenceTap>();
 builder.Services.AddSingleton<IPlaybackReferenceTap>(provider => provider.GetRequiredService<PlaybackReferenceTap>());
@@ -249,6 +253,8 @@ builder.Services.AddSingleton<IContinuousMicAudioBuffer, ContinuousMicAudioBuffe
 builder.Services.AddSingleton<IBargeInTriggerBuffer, BargeInTriggerBuffer>();
 builder.Services.AddSingleton<IBargeInSttService, BargeInSttService>();
 builder.Services.AddSingleton<IInterruptionClassifier, InterruptionClassifier>();
+builder.Services.Configure<LiveUtteranceGateOptions>(builder.Configuration.GetSection("LiveUtteranceGate"));
+builder.Services.AddSingleton<ILiveUtteranceGate, LiveUtteranceGate>();
 builder.Services.AddSingleton<IBargeInCoordinator, BargeInCoordinator>();
 builder.Services.AddSingleton<WindowsWasapiAecAudioCaptureService>();
 builder.Services.AddSingleton<WebRtcApmBargeInAudioCaptureService>();

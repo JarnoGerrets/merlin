@@ -83,7 +83,21 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
 
     public Task PauseCurrentSpeechAsync(CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Speech playback soft pause requested. Current backend uses speaker ducking as the safe pause fallback.");
+        CancellationTokenSource? cancellation;
+        lock (_syncRoot)
+        {
+            cancellation = _activeSpeechCancellation;
+        }
+
+        if (cancellation is null)
+        {
+            _logger.LogInformation("Speech playback soft pause requested, but no active playback was available to pause.");
+            return Task.CompletedTask;
+        }
+
+        _logger.LogWarning(
+            "PlaybackYieldUnavailableFallbackUsed. True resumable playback pause is unavailable; cancelling current audio output while keeping the speech queue generation and active turn intact.");
+        cancellation.Cancel();
         return Task.CompletedTask;
     }
 
@@ -291,6 +305,11 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
                     {
                         playbackStarted = true;
                         playbackStopwatch.Start();
+                        if (_speakerDuckingService.IsDucked)
+                        {
+                            _speakerDuckingService.Restore(speechContext, "playback_start_reset_stale_ducking");
+                        }
+
                         SetActiveVolumeSetter(volume => waveOut.Volume = volume);
                         ApplyOutputVolume(_speakerDuckingService.CurrentVolumeMultiplier, "playback_start");
                         waveOut.Play();

@@ -94,7 +94,43 @@ public sealed class BargeInOptions
 
     public SelfSpeechSuppressionOptions SelfSpeechSuppression { get; set; } = new();
 
+    public bool EnableCapturedWindowSelfPlaybackCheck { get; set; } = true;
+
+    public double CapturedWindowSelfPlaybackCorrelationThreshold { get; set; } = 0.82;
+
+    public double CapturedWindowSelfPlaybackLikelyUserThreshold { get; set; } = 0.35;
+
+    public double CapturedWindowSelfPlaybackMinReferenceEnergy { get; set; } = 0.008;
+
+    public double CapturedWindowSelfPlaybackMinCaptureEnergy { get; set; } = 0.008;
+
+    public int CapturedWindowSelfPlaybackMaxSlices { get; set; } = 4;
+
+    public int CapturedWindowSelfPlaybackSliceMs { get; set; } = 250;
+
+    public int CapturedWindowSelfPlaybackDelayMsMin { get; set; } = 0;
+
+    public int CapturedWindowSelfPlaybackDelayMsMax { get; set; } = 250;
+
+    public int CapturedWindowSelfPlaybackDelayStepMs { get; set; } = 10;
+
+    public int CapturedWindowSelfPlaybackRecentPlaybackMs { get; set; } = 750;
+
+    public double CapturedWindowSelfPlaybackStrongUserEnergyRatio { get; set; } = 2.25;
+
     public bool EnableFastHardStopCapture { get; set; } = true;
+
+    public bool RequireSustainedUserSpeechScoreDuringPlayback { get; set; } = false;
+
+    public bool PausePlaybackOnSustainedUserSpeechScore { get; set; } = false;
+
+    public double SustainedUserSpeechScoreThreshold { get; set; } = 0.90;
+
+    public int SustainedUserSpeechScoreDurationMs { get; set; } = 250;
+
+    public bool RequireWakePrefixForStopDuringPlayback { get; set; } = false;
+
+    public string StopWakePrefix { get; set; } = "merlin";
 
     public int FastHardStopMinSpeechMs { get; set; } = 120;
 
