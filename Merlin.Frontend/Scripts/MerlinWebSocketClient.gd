@@ -6,6 +6,7 @@ signal visual_state_received(state: Dictionary)
 signal response_received(response: Dictionary)
 signal voice_transcript_received(transcript: Dictionary)
 signal visual_event_received(event: Dictionary)
+signal barge_in_debug_snapshot_received(snapshot: Dictionary)
 signal malformed_response(raw_message: String, detail: String)
 signal socket_closed(code: int, reason: String)
 signal frontend_work_observed(metrics: Dictionary)
@@ -272,6 +273,9 @@ func _route_raw_message(raw_message: String, packet_size: int, metrics: Dictiona
 			return
 		if String(packet.get("type", "")) == "voice_stream_ack":
 			return
+		if String(packet.get("type", "")) == "barge_in_debug_snapshot":
+			_emit_timed("barge_in_debug_snapshot_received", [packet], packet_size, metrics)
+			return
 		if packet.has("event"):
 			_emit_timed("visual_event_received", [packet], packet_size, metrics)
 			return
@@ -315,6 +319,8 @@ func _emit_timed(signal_name: String, args: Array, packet_size: int, metrics: Di
 			response_received.emit(args[0])
 		"voice_transcript_received":
 			voice_transcript_received.emit(args[0])
+		"barge_in_debug_snapshot_received":
+			barge_in_debug_snapshot_received.emit(args[0])
 		"malformed_response":
 			malformed_response.emit(args[0], args[1])
 		"socket_closed":
@@ -341,6 +347,10 @@ func _looks_like_control_packet(raw_message: String, packet_size: int) -> bool:
 	if raw_message.find("\"type\":\"voice_stream_ack\"") >= 0:
 		return true
 	if raw_message.find("\"type\": \"voice_stream_ack\"") >= 0:
+		return true
+	if raw_message.find("\"type\":\"barge_in_debug_snapshot\"") >= 0:
+		return true
+	if raw_message.find("\"type\": \"barge_in_debug_snapshot\"") >= 0:
 		return true
 	if raw_message.find("\"event\"") >= 0:
 		return true

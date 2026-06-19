@@ -37,6 +37,7 @@ const WAKE_RECORD_END_SILENCE_SECONDS := 1.4
 const WAKE_RECORD_SLEEP_MAX_ACTIVE_SECONDS := 16.0
 const WAKE_RECORD_RESTART_DELAY_SECONDS := 0.08
 const WAKE_ARMED_LISTEN_SECONDS := 5.0
+const WAKE_ARMED_PREROLL_SECONDS := 1.00
 const WAKE_MIN_AUDIO_BYTES := 4096
 const WAKE_MIN_RMS := 0.010
 const WAKE_SPEECH_RMS := 0.010
@@ -63,6 +64,7 @@ const COLOR_RED := Color(1.0, 0.28, 0.34, 1.0)
 const VISUAL_OVERLAY_FADE_SECONDS := 1.2
 const VISUAL_OVERLAY_CONFIRMATION_HOLD_SECONDS := 2.0
 const VOICE_ACKNOWLEDGEMENT_MAX_WORDS := 36
+const BARGE_IN_DEBUG_OVERLAY_SCRIPT := preload("res://Scripts/BargeInDebugOverlay.gd")
 
 @onready var web_socket_client: MerlinWebSocketClient = $MerlinWebSocketClient
 @onready var voice_transcribe_request: HTTPRequest = $VoiceTranscribeRequest
@@ -123,6 +125,7 @@ var _voice_stream_sample_rate := 48000
 var _voice_stream_chunks_sent := 0
 var _voice_stream_bytes_sent := 0
 var _voice_stream_preroll_frames := PackedVector2Array()
+var _wake_armed_preroll_frames := PackedVector2Array()
 var _llm_response_received_usec := 0
 var _stream_poc_client: HTTPClient
 var _stream_poc_active := false
@@ -161,6 +164,7 @@ var _frame_profile_pcm_convert_ms := 0.0
 var _frame_profile_audio_push_ms := 0.0
 var _frame_profile_websocket_packets := 0
 var _frame_profile_websocket_work_ms := 0.0
+var _barge_in_debug_overlay: BargeInDebugOverlay
 
 
 func _ready() -> void:
@@ -184,6 +188,7 @@ func _ready() -> void:
 	web_socket_client.response_received.connect(_profiled_response_received)
 	web_socket_client.voice_transcript_received.connect(_profiled_voice_transcript_received)
 	web_socket_client.visual_event_received.connect(_profiled_visual_event_received)
+	web_socket_client.barge_in_debug_snapshot_received.connect(_profiled_barge_in_debug_snapshot_received)
 	web_socket_client.malformed_response.connect(_profiled_malformed_response)
 	web_socket_client.socket_closed.connect(_profiled_socket_closed)
 	web_socket_client.frontend_work_observed.connect(_profiled_frontend_work_observed)
@@ -302,6 +307,13 @@ func _setup_voice_mode() -> void:
 	voice_control.add_theme_stylebox_override("panel", _panel_style(Color(0.010, 0.052, 0.125, 0.64), COLOR_CYAN, 1.0, 10))
 	_style_button(voice_button)
 	_setup_microphone_recording()
+
+
+func _setup_barge_in_debug_overlay() -> void:
+	if is_instance_valid(_barge_in_debug_overlay) or overlay_container == null:
+		return
+	_barge_in_debug_overlay = BARGE_IN_DEBUG_OVERLAY_SCRIPT.new()
+	overlay_container.add_child(_barge_in_debug_overlay)
 
 
 func _setup_microphone_recording() -> void:
@@ -593,6 +605,7 @@ func _wait_for_wake_recording_turn() -> void:
 
 
 func _wait_for_sleep_double_clap() -> bool:
+	_wake_armed_preroll_frames = PackedVector2Array()
 	if _capture_effect != null and _capture_effect.has_method("clear_buffer"):
 		_capture_effect.call("clear_buffer")
 
@@ -613,6 +626,7 @@ func _wait_for_sleep_double_clap() -> bool:
 			continue
 
 		var frames: PackedVector2Array = _capture_effect.get_buffer(frames_available)
+		_capture_wake_armed_preroll(frames)
 		if _detect_sleep_double_clap(frames):
 			print("Wake listening: double clap armed. WindowSeconds: %.1f" % WAKE_ARMED_LISTEN_SECONDS)
 			_add_notification("Wake armed", "system")
@@ -623,17 +637,32 @@ func _wait_for_sleep_double_clap() -> bool:
 
 func _record_armed_wake_phrase() -> void:
 	_is_recording = true
-	_record_effect.set_recording_active(false)
-	_record_effect.set_recording_active(true)
 	_set_voice_phase("wake_armed")
-	await get_tree().create_timer(WAKE_ARMED_LISTEN_SECONDS).timeout
-	if not _wake_listening_enabled or _record_effect == null:
-		return
+	var frames := _wake_armed_preroll_frames
+	_wake_armed_preroll_frames = PackedVector2Array()
+	if _capture_effect != null:
+		var initial_frames_available := int(_capture_effect.get_frames_available())
+		if initial_frames_available > 0:
+			frames.append_array(_capture_effect.get_buffer(initial_frames_available))
 
-	_record_effect.set_recording_active(false)
-	var recording := _record_effect.get_recording()
+	var started_usec := Time.get_ticks_usec()
+	while _wake_listening_enabled and _capture_effect != null:
+		await get_tree().create_timer(WAKE_RECORD_POLL_SECONDS).timeout
+		if not _wake_listening_enabled or _capture_effect == null:
+			break
+
+		var frames_available := int(_capture_effect.get_frames_available())
+		if frames_available > 0:
+			frames.append_array(_capture_effect.get_buffer(frames_available))
+
+		var elapsed_seconds := float(Time.get_ticks_usec() - started_usec) / 1000000.0
+		if elapsed_seconds >= WAKE_ARMED_LISTEN_SECONDS:
+			break
+
 	_is_recording = false
-	await _process_wake_recording(recording, false)
+	if not _wake_listening_enabled:
+		return
+	await _process_wake_audio_bytes(_frames_to_wav_bytes(frames, int(AudioServer.get_mix_rate())), false)
 
 
 func _start_voice_stream() -> void:
@@ -761,6 +790,29 @@ func _frames_to_mono_pcm16(frames: PackedVector2Array) -> PackedByteArray:
 	return bytes
 
 
+func _frames_to_wav_bytes(frames: PackedVector2Array, sample_rate: int) -> PackedByteArray:
+	var pcm := _frames_to_mono_pcm16(frames)
+	var data_size := pcm.size()
+	var bytes := PackedByteArray()
+	bytes.resize(44 + data_size)
+	_write_ascii(bytes, 0, "RIFF")
+	_write_le_u32(bytes, 4, 36 + data_size)
+	_write_ascii(bytes, 8, "WAVE")
+	_write_ascii(bytes, 12, "fmt ")
+	_write_le_u32(bytes, 16, 16)
+	_write_le_u16(bytes, 20, 1)
+	_write_le_u16(bytes, 22, 1)
+	_write_le_u32(bytes, 24, maxi(8000, sample_rate))
+	_write_le_u32(bytes, 28, maxi(8000, sample_rate) * 2)
+	_write_le_u16(bytes, 32, 2)
+	_write_le_u16(bytes, 34, 16)
+	_write_ascii(bytes, 36, "data")
+	_write_le_u32(bytes, 40, data_size)
+	for index in range(data_size):
+		bytes[44 + index] = pcm[index]
+	return bytes
+
+
 func _process_wake_recording(recording: AudioStreamWAV, already_awake: bool = false) -> void:
 	if recording == null:
 		return
@@ -778,6 +830,10 @@ func _process_wake_recording(recording: AudioStreamWAV, already_awake: bool = fa
 
 	var audio_bytes := file.get_buffer(file.get_length())
 	file.close()
+	await _process_wake_audio_bytes(audio_bytes, already_awake)
+
+
+func _process_wake_audio_bytes(audio_bytes: PackedByteArray, already_awake: bool = false) -> void:
 	if audio_bytes.size() < WAKE_MIN_AUDIO_BYTES:
 		return
 
@@ -1049,6 +1105,16 @@ func _detect_sleep_double_clap(frames: PackedVector2Array) -> bool:
 	return false
 
 
+func _capture_wake_armed_preroll(frames: PackedVector2Array) -> void:
+	if frames.is_empty():
+		return
+
+	_wake_armed_preroll_frames.append_array(frames)
+	var max_frames := int(float(AudioServer.get_mix_rate()) * WAKE_ARMED_PREROLL_SECONDS)
+	if _wake_armed_preroll_frames.size() > max_frames:
+		_wake_armed_preroll_frames = _wake_armed_preroll_frames.slice(_wake_armed_preroll_frames.size() - max_frames, _wake_armed_preroll_frames.size())
+
+
 func _analyze_recording_recent_audio(recording: AudioStreamWAV) -> Dictionary:
 	if recording == null:
 		return { "rms": 0.0, "peak": 0.0 }
@@ -1134,6 +1200,29 @@ func _read_le_i16(bytes: PackedByteArray, offset: int) -> int:
 	if value >= 32768:
 		value -= 65536
 	return value
+
+
+func _write_ascii(bytes: PackedByteArray, offset: int, value: String) -> void:
+	var encoded := value.to_ascii_buffer()
+	for index in range(encoded.size()):
+		if offset + index < bytes.size():
+			bytes[offset + index] = encoded[index]
+
+
+func _write_le_u16(bytes: PackedByteArray, offset: int, value: int) -> void:
+	if offset + 1 >= bytes.size():
+		return
+	bytes[offset] = value & 0xff
+	bytes[offset + 1] = (value >> 8) & 0xff
+
+
+func _write_le_u32(bytes: PackedByteArray, offset: int, value: int) -> void:
+	if offset + 3 >= bytes.size():
+		return
+	bytes[offset] = value & 0xff
+	bytes[offset + 1] = (value >> 8) & 0xff
+	bytes[offset + 2] = (value >> 16) & 0xff
+	bytes[offset + 3] = (value >> 24) & 0xff
 
 
 func _start_streaming_pcm_poc() -> void:
@@ -1390,6 +1479,10 @@ func _profiled_visual_event_received(event: Dictionary) -> void:
 	_profile_signal_handler("_on_visual_event_received", Callable(self, "_on_visual_event_received"), [event])
 
 
+func _profiled_barge_in_debug_snapshot_received(snapshot: Dictionary) -> void:
+	_profile_signal_handler("_on_barge_in_debug_snapshot_received", Callable(self, "_on_barge_in_debug_snapshot_received"), [snapshot])
+
+
 func _profiled_malformed_response(raw_message: String, detail: String) -> void:
 	_profile_signal_handler("_on_malformed_response", Callable(self, "_on_malformed_response"), [raw_message, detail])
 
@@ -1449,6 +1542,13 @@ func _on_visual_state_received(state: Dictionary) -> void:
 			return
 	if core_orb != null and core_orb.has_method("update_visual_state"):
 		core_orb.update_visual_state(state)
+
+
+func _on_barge_in_debug_snapshot_received(snapshot: Dictionary) -> void:
+	if not is_instance_valid(_barge_in_debug_overlay):
+		_setup_barge_in_debug_overlay()
+	if is_instance_valid(_barge_in_debug_overlay):
+		_barge_in_debug_overlay.update_snapshot(snapshot)
 
 
 func _on_response_received(response: Dictionary) -> void:
