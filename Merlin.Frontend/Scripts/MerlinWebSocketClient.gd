@@ -21,6 +21,7 @@ const VISUAL_PACKET_MAX_BYTES := 4096
 const MALFORMED_RAW_PREVIEW_CHARS := 2048
 const FAKE_STRESS_PAYLOAD_BYTES := 128000
 const FAKE_STRESS_PAYLOAD_INTERVAL := 0.05
+const FRONTEND_VOICE_STREAM_ENABLED := false
 
 var url := DEFAULT_URL
 var _socket := WebSocketPeer.new()
@@ -97,6 +98,9 @@ func send_message(
 
 
 func send_voice_stream_start(correlation_id: String, sample_rate: int, channels: int, client_mode: String = "orb") -> bool:
+	if not FRONTEND_VOICE_STREAM_ENABLED:
+		print("VoiceStreamStartSuppressedBackendOwnedMode")
+		return false
 	return _send_json({
 		"type": "voice_stream_start",
 		"correlationId": correlation_id,
@@ -108,6 +112,9 @@ func send_voice_stream_start(correlation_id: String, sample_rate: int, channels:
 
 
 func send_voice_stream_chunk(correlation_id: String, pcm_bytes: PackedByteArray) -> bool:
+	if not FRONTEND_VOICE_STREAM_ENABLED:
+		print("VoiceStreamChunkSuppressedBackendOwnedMode")
+		return false
 	if pcm_bytes.is_empty():
 		return true
 	return _send_json({
@@ -118,6 +125,9 @@ func send_voice_stream_chunk(correlation_id: String, pcm_bytes: PackedByteArray)
 
 
 func send_voice_stream_end(correlation_id: String, client_mode: String = "orb") -> bool:
+	if not FRONTEND_VOICE_STREAM_ENABLED:
+		print("VoiceStreamEndSuppressedBackendOwnedMode")
+		return false
 	return _send_json({
 		"type": "voice_stream_end",
 		"correlationId": correlation_id,
@@ -126,6 +136,9 @@ func send_voice_stream_end(correlation_id: String, client_mode: String = "orb") 
 
 
 func send_voice_stream_cancel(correlation_id: String) -> bool:
+	if not FRONTEND_VOICE_STREAM_ENABLED:
+		print("VoiceStreamEndSuppressedBackendOwnedMode")
+		return false
 	return _send_json({
 		"type": "voice_stream_cancel",
 		"correlationId": correlation_id

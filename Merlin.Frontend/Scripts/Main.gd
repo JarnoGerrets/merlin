@@ -45,6 +45,7 @@ const WAKE_SPEECH_PEAK := 0.045
 const WAKE_RECENT_WINDOW_SECONDS := 0.35
 const VOICE_STREAM_CHUNK_FRAMES := 2048
 const VOICE_STREAM_PREROLL_SECONDS := 0.50
+const FRONTEND_VOICE_INPUT_ENABLED := false
 const WAKE_CLAP_RMS_THRESHOLD := 0.080
 const WAKE_CLAP_PEAK_THRESHOLD := 0.18
 const WAKE_CLAP_PEAK_TO_RMS_RATIO := 2.2
@@ -306,7 +307,11 @@ func _setup_voice_mode() -> void:
 	voice_button.text = "Wake Merlin"
 	voice_control.add_theme_stylebox_override("panel", _panel_style(Color(0.010, 0.052, 0.125, 0.64), COLOR_CYAN, 1.0, 10))
 	_style_button(voice_button)
-	_setup_microphone_recording()
+	if FRONTEND_VOICE_INPUT_ENABLED:
+		_setup_microphone_recording()
+	else:
+		print("FrontendVoiceInputDisabled. Backend-owned voice input mode is active.")
+		voice_button.text = "Backend voice"
 
 
 func _setup_barge_in_debug_overlay() -> void:
@@ -337,6 +342,10 @@ func _setup_microphone_recording() -> void:
 
 
 func _on_voice_button_down() -> void:
+	if not FRONTEND_VOICE_INPUT_ENABLED:
+		print("FrontendWakeRecordingSuppressedBackendOwnedMode")
+		_add_notification("Backend voice input is active", "system")
+		return
 	if not web_socket_client.is_backend_connected():
 		_show_error("Cannot listen: Merlin.Backend is not connected.")
 		_add_notification("Backend offline", "error")
@@ -370,6 +379,10 @@ func _on_voice_button_up() -> void:
 
 
 func _send_recording_for_transcription(recording: AudioStreamWAV) -> void:
+	if not FRONTEND_VOICE_INPUT_ENABLED:
+		print("FrontendVoiceTranscriptSubmitSuppressedBackendOwnedMode")
+		_reset_voice_button()
+		return
 	if recording == null:
 		_add_notification("No audio captured", "error")
 		_reset_voice_button()
@@ -466,6 +479,11 @@ func _send_recording_for_transcription(recording: AudioStreamWAV) -> void:
 		_set_merlin_state(MerlinState.IDLE)
 		return
 
+	if not FRONTEND_VOICE_INPUT_ENABLED:
+		print("FrontendVoiceTranscriptSubmitSuppressedBackendOwnedMode")
+		_reset_voice_button()
+		return
+
 	_add_notification("Heard: %s" % transcript, "system")
 	_send_backend_message(transcript, false)
 	_set_voice_phase("waiting_llm")
@@ -474,7 +492,10 @@ func _send_recording_for_transcription(recording: AudioStreamWAV) -> void:
 
 
 func _reset_voice_button() -> void:
-	voice_button.disabled = false
+	voice_button.disabled = not FRONTEND_VOICE_INPUT_ENABLED
+	if not FRONTEND_VOICE_INPUT_ENABLED:
+		voice_button.text = "Backend voice"
+		return
 	if _wake_listening_enabled:
 		voice_button.text = "Awake: listening" if _merlin_awake else "Sleeping: wake ready"
 	else:
@@ -482,6 +503,10 @@ func _reset_voice_button() -> void:
 
 
 func _start_wake_listening() -> void:
+	if not FRONTEND_VOICE_INPUT_ENABLED:
+		print("FrontendWakeRecordingSuppressedBackendOwnedMode")
+		_reset_voice_button()
+		return
 	if _wake_listening_enabled:
 		return
 	_clear_transient_visual_overlay()
@@ -666,6 +691,9 @@ func _record_armed_wake_phrase() -> void:
 
 
 func _start_voice_stream() -> void:
+	if not FRONTEND_VOICE_INPUT_ENABLED:
+		print("VoiceStreamStartSuppressedBackendOwnedMode")
+		return
 	if _voice_stream_active or _capture_effect == null or not web_socket_client.is_backend_connected():
 		return
 
@@ -689,6 +717,13 @@ func _start_voice_stream() -> void:
 
 
 func _finish_voice_stream() -> bool:
+	if not FRONTEND_VOICE_INPUT_ENABLED:
+		if _voice_stream_active:
+			print("VoiceStreamEndSuppressedBackendOwnedMode")
+		_voice_stream_active = false
+		_voice_stream_correlation_id = ""
+		_voice_stream_preroll_frames = PackedVector2Array()
+		return false
 	if not _voice_stream_active:
 		return false
 
@@ -715,11 +750,19 @@ func _cancel_voice_stream() -> void:
 	_voice_stream_correlation_id = ""
 	_voice_stream_preroll_frames = PackedVector2Array()
 	_pending_requests.erase(correlation_id)
+	if not FRONTEND_VOICE_INPUT_ENABLED:
+		print("VoiceStreamEndSuppressedBackendOwnedMode")
+		_update_pending_state()
+		return
 	web_socket_client.send_voice_stream_cancel(correlation_id)
 	_update_pending_state()
 
 
 func _send_available_voice_stream_chunks() -> void:
+	if not FRONTEND_VOICE_INPUT_ENABLED:
+		if _voice_stream_active:
+			print("VoiceStreamChunkSuppressedBackendOwnedMode")
+		return
 	if not _voice_stream_active or _capture_effect == null:
 		return
 
@@ -732,6 +775,8 @@ func _send_available_voice_stream_chunks() -> void:
 
 
 func _capture_voice_stream_preroll() -> void:
+	if not FRONTEND_VOICE_INPUT_ENABLED:
+		return
 	if _capture_effect == null:
 		return
 
@@ -750,6 +795,11 @@ func _capture_voice_stream_preroll() -> void:
 
 
 func _send_voice_stream_preroll() -> void:
+	if not FRONTEND_VOICE_INPUT_ENABLED:
+		if not _voice_stream_preroll_frames.is_empty():
+			print("VoiceStreamChunkSuppressedBackendOwnedMode")
+		_voice_stream_preroll_frames = PackedVector2Array()
+		return
 	if _voice_stream_preroll_frames.is_empty():
 		return
 
@@ -761,6 +811,9 @@ func _send_voice_stream_preroll() -> void:
 
 
 func _send_voice_stream_frames(frames: PackedVector2Array) -> bool:
+	if not FRONTEND_VOICE_INPUT_ENABLED:
+		print("VoiceStreamChunkSuppressedBackendOwnedMode")
+		return false
 	var offset := 0
 	while offset < frames.size():
 		var end := mini(offset + VOICE_STREAM_CHUNK_FRAMES, frames.size())
@@ -834,6 +887,9 @@ func _process_wake_recording(recording: AudioStreamWAV, already_awake: bool = fa
 
 
 func _process_wake_audio_bytes(audio_bytes: PackedByteArray, already_awake: bool = false) -> void:
+	if not FRONTEND_VOICE_INPUT_ENABLED:
+		print("FrontendVoiceTranscriptSubmitSuppressedBackendOwnedMode")
+		return
 	if audio_bytes.size() < WAKE_MIN_AUDIO_BYTES:
 		return
 
