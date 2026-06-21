@@ -10,11 +10,12 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
 {
     private static readonly string[] Fillers = ["uh", "um", "erm", "hmm", "well"];
     private static readonly string[] LeadingFillers = ["hey", "okay", "ok", "yo", "please", "merlin"];
-    private static readonly string[] ShortControlPhrases = ["stop", "pause", "wait", "hold on", "hang on", "one second", "shut up", "be quiet", "quiet", "no stop", "no no", "no no no", "wait wait"];
+    private static readonly string[] ShortControlPhrases = ["stop", "pause", "wait", "hold on", "hang on", "one second", "shut up", "be quiet", "quiet", "no stop", "wait wait"];
     private static readonly string[] CancellationPhrases = ["cancel", "cancel that", "never mind", "nevermind", "forget it", "abort", "dont do that", "don't do that", "stop doing that"];
     private static readonly string[] ContinuationPhrases = ["continue", "go on", "resume", "keep going", "carry on"];
     private static readonly string[] StatusPhrases = ["what are you doing", "what are you working on", "did you hear me", "are you still there"];
     private static readonly string[] ReplacementPrefixes = ["sorry i meant ", "i meant ", "i mean ", "actually ", "no open ", "no ", "not ", "instead "];
+    private static readonly string[] CorrectionContentPrefixes = ["what i meant was ", "what i meant is ", "what i meant ", "i meant was ", "i meant is ", "i meant ", "i mean "];
     private static readonly string[] IncompletePhrases = ["yeah but", "but", "no no wait", "sorry i meant", "i meant", "i mean", "can you open", "open the", "but that means"];
     private static readonly HashSet<string> QuestionStarters = new(StringComparer.Ordinal)
     {
@@ -111,6 +112,7 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
                     LiveAssistantTurnState.Speaking => "StopSpeechOnlyNoConfirmation",
                     LiveAssistantTurnState.AwaitingToolCommit or LiveAssistantTurnState.PlanningTool => "PauseAndConfirmCancel",
                     LiveAssistantTurnState.ExecutingTool => "TryCancelThenClarifyIfNeeded",
+                    LiveAssistantTurnState.ProcessingTurn or LiveAssistantTurnState.Interpreting => "CancelPendingResponseQuietly",
                     _ => "PauseActiveTurn"
                 }),
             LiveUtteranceGateDecisionKind.AcceptCancellation => Decision(UtteranceRouteKind.CancelActiveTurn, result.Confidence, result.Reason, "CancelActiveTurn"),
@@ -144,6 +146,66 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
         var analysisText = string.IsNullOrWhiteSpace(stripped) ? normalized : stripped;
         var sourceContext = strictness.ToString();
 
+        if (TryStripRepeatedNoCorrectionPrefix(analysisText, out var correctionContent))
+        {
+            if (string.IsNullOrWhiteSpace(correctionContent))
+            {
+                var holdMs = paused ? _options.PausedClarificationHoldWindowMs : _options.ActiveFlowHoldWindowMs;
+                return Result(
+                    LiveUtteranceGateDecisionKind.HoldForMoreSpeech,
+                    0.82,
+                    "Matched repeated-no floor-taking correction prefix.",
+                    normalized,
+                    stripped,
+                    sourceContext,
+                    positiveSignals: ["floor_taking_correction"],
+                    holdWindow: TimeSpan.FromMilliseconds(holdMs));
+            }
+
+            if (TryExtractReplacement(correctionContent, openUrlFlow, out var correctionReplacement))
+            {
+                return Result(LiveUtteranceGateDecisionKind.AcceptReplacement, 0.91, "Matched correction/replacement phrase after repeated-no prefix.", normalized, correctionContent, sourceContext, positiveSignals: ["floor_taking_correction", "replacement_phrase"], replacementText: correctionReplacement);
+            }
+
+            var correctionAnalysis = AnalyzeGeneralRequest(correctionContent);
+            if (correctionAnalysis.IsCoherent)
+            {
+                return Result(
+                    LiveUtteranceGateDecisionKind.AcceptCorrection,
+                    0.88,
+                    "Matched repeated-no correction prefix with coherent corrected request.",
+                    normalized,
+                    correctionContent,
+                    sourceContext,
+                    positiveSignals: AddSignal(correctionAnalysis.PositiveSignals, "floor_taking_correction"),
+                    negativeSignals: correctionAnalysis.NegativeSignals,
+                    shouldCallDeepInfra: true,
+                    shouldRouteToCommandRouter: _options.RouteClearIdleRequestsToCommandRouter,
+                    replacementText: correctionContent);
+            }
+
+            if (openUrlFlow && IsSingleUsefulTarget(correctionContent))
+            {
+                return Result(LiveUtteranceGateDecisionKind.AcceptReplacement, 0.86, "Single target accepted as replacement after repeated-no prefix during active OpenUrl flow.", normalized, correctionContent, sourceContext, positiveSignals: ["floor_taking_correction", "single_open_url_target", "active_open_url_context"], replacementText: $"open {correctionContent}");
+            }
+
+            if (LooksLikeLikelyIntent(correctionContent))
+            {
+                return Result(
+                    LiveUtteranceGateDecisionKind.AcceptCorrection,
+                    0.78,
+                    "Matched repeated-no correction prefix with likely corrected request.",
+                    normalized,
+                    correctionContent,
+                    sourceContext,
+                    positiveSignals: AddSignal(correctionAnalysis.PositiveSignals, "floor_taking_correction"),
+                    negativeSignals: correctionAnalysis.NegativeSignals,
+                    shouldCallDeepInfra: true,
+                    shouldRouteToCommandRouter: _options.RouteClearIdleRequestsToCommandRouter,
+                    replacementText: correctionContent);
+            }
+        }
+
         if (TryMatchEmbeddedPhrase(normalized, CancellationPhrases, out var cancellationPhrase))
         {
             LogEmbeddedControlPhraseMatched(normalized, cancellationPhrase);
@@ -166,7 +228,7 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
 
         if (TryMatchEmbeddedPhrase(normalized, ShortControlPhrases, out var controlPhrase)
             || TryMatchEmbeddedPhrase(analysisText, ShortControlPhrases, out controlPhrase)
-            || ((normalized is "no" or "no no" || analysisText is "no" or "no no") && activeFlow))
+            || (normalized is "no" or "no no" || analysisText is "no" or "no no") && activeFlow)
         {
             if (!string.IsNullOrWhiteSpace(controlPhrase))
             {
@@ -254,6 +316,22 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
                 shouldRouteToCommandRouter: _options.RouteClearIdleRequestsToCommandRouter);
         }
 
+        if (IsProcessingReplacementContext(input, speaking) && analysis.IsCoherent)
+        {
+            return Result(
+                LiveUtteranceGateDecisionKind.AcceptCorrection,
+                0.82,
+                "Coherent utterance during pending response treated as correction/replacement.",
+                normalized,
+                stripped,
+                sourceContext,
+                positiveSignals: AddSignal(analysis.PositiveSignals, "processing_turn_replacement"),
+                negativeSignals: analysis.NegativeSignals,
+                shouldCallDeepInfra: true,
+                shouldRouteToCommandRouter: _options.RouteClearIdleRequestsToCommandRouter,
+                replacementText: analysisText);
+        }
+
         if (activeFlow && LooksLikeLikelyIntent(analysisText))
         {
             return Result(
@@ -310,6 +388,12 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
             : !string.IsNullOrWhiteSpace(utterance.ActiveTurnId)
                 ? utterance.ActiveTurnId
                 : "idle";
+    }
+
+    private static bool IsProcessingReplacementContext(LiveUtteranceGateInput input, bool speaking)
+    {
+        return !speaking
+            && input.Utterance.StateWhenCaptured is LiveAssistantTurnState.ProcessingTurn or LiveAssistantTurnState.Interpreting;
     }
 
     private static bool IsActiveFlow(LiveUtteranceGateInput input)
@@ -369,6 +453,34 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
         }
 
         return false;
+    }
+
+    private static bool TryStripRepeatedNoCorrectionPrefix(string normalized, out string correctionContent)
+    {
+        correctionContent = string.Empty;
+        var words = SplitWords(normalized);
+        var index = 0;
+        while (index < words.Length && string.Equals(words[index], "no", StringComparison.Ordinal))
+        {
+            index++;
+        }
+
+        if (index < 2)
+        {
+            return false;
+        }
+
+        correctionContent = string.Join(' ', words.Skip(index)).Trim();
+        foreach (var prefix in CorrectionContentPrefixes.OrderByDescending(static prefix => prefix.Length))
+        {
+            if (correctionContent.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                correctionContent = correctionContent[prefix.Length..].Trim();
+                break;
+            }
+        }
+
+        return true;
     }
 
     private static bool IsSingleUsefulTarget(string normalized)
@@ -633,7 +745,8 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
         var source = input.Utterance.Source ?? string.Empty;
         if (string.Equals(source, "voice", StringComparison.OrdinalIgnoreCase)
             || string.Equals(source, "voice_stream", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(source, "voice_stream_request", StringComparison.OrdinalIgnoreCase))
+            || string.Equals(source, "voice_stream_request", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(source, "backend_idle_voice", StringComparison.OrdinalIgnoreCase))
         {
             return LiveUtteranceGateStrictness.IntentionalVoiceRequest;
         }

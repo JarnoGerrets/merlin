@@ -56,6 +56,28 @@ public sealed class SpeechPolicyServiceTests
     }
 
     [Fact]
+    public void Decide_WhenBackendIdleVoiceOrbResponseIsSpeakable_QueuesSpeech()
+    {
+        var service = new SpeechPolicyService();
+
+        var decision = service.Decide(
+            new AssistantRequest
+            {
+                InteractionSource = "backend_idle_voice",
+                ClientMode = "orb"
+            },
+            new AssistantResponse
+            {
+                Success = true,
+                ResponseType = "assistant",
+                Message = "Speak this."
+            });
+
+        Assert.True(decision.ShouldSpeak);
+        Assert.True(decision.ShouldQueue);
+    }
+
+    [Fact]
     public void Decide_WhenTextChatResponse_DoesNotQueueSpeech()
     {
         var service = new SpeechPolicyService();

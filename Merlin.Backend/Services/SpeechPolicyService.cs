@@ -7,6 +7,7 @@ public sealed class SpeechPolicyService : ISpeechPolicyService
     private const string SourceVoice = "voice";
     private const string SourceVoiceStream = "voice_stream";
     private const string SourceVoiceCorrection = "voice_correction";
+    private const string SourceBackendIdleVoice = "backend_idle_voice";
     private const string ModeOrb = "orb";
 
     public SpeechPolicyDecision Decide(AssistantRequest? request, AssistantResponse response)
@@ -58,7 +59,8 @@ public sealed class SpeechPolicyService : ISpeechPolicyService
     {
         return interactionSource == SourceVoice
             || interactionSource == SourceVoiceStream
-            || interactionSource == SourceVoiceCorrection;
+            || interactionSource == SourceVoiceCorrection
+            || interactionSource == SourceBackendIdleVoice;
     }
 
     private static bool ShouldSpeakResponse(AssistantResponse response)

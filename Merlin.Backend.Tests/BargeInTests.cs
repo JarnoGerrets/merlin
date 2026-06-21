@@ -5,6 +5,7 @@ using Merlin.Backend.Services.BargeIn;
 using Merlin.Backend.Services.LiveUtterance;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NAudio.CoreAudioApi;
@@ -1102,6 +1103,35 @@ public sealed class BargeInCoordinatorTests
     }
 
     [Fact]
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScoreGate_MissingScoreBlocksCandidateWithoutBelowThresholdReason()
+    {
+        var options = SustainedUserSpeechScoreOptions();
+        options.PausePlaybackOnRollingUserSpeechEvidence = true;
+        options.BurstCapturePromotion = new BurstCapturePromotionOptions
+        {
+            Enabled = true,
+            MinBurstMs = 1,
+            MaxWindowMs = 350,
+            MinCandidateFrames = 1,
+            MinVadSpeechFrameRatio = 0.01,
+            RequireAssistantPlayback = true
+        };
+        var logger = new RecordingLogger<BargeInCoordinator>();
+        var fixture = CreateFixture(
+            options,
+            vad: new AlwaysSpeechNeverTriggeredVadService(),
+            logger: logger);
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, 0));
+
+        Assert.Equal(0, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Stt.CallCount);
+        Assert.Contains(logger.Messages, message => message.Contains("missing_user_speech_score", StringComparison.Ordinal));
+        Assert.DoesNotContain(logger.Messages, message => message.Contains("UserSpeechScore below sustained threshold", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_Disabled_DoesNotYieldPlayback()
     {
         var options = SustainedUserSpeechScorePauseOptions();
@@ -1185,6 +1215,29 @@ public sealed class BargeInCoordinatorTests
     }
 
     [Fact]
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_MissingScoreDoesNotResetRollingEvidence()
+    {
+        var options = SustainedUserSpeechScorePauseOptions();
+        options.FloorYieldRequiredHighScoreMs = 30;
+        options.FloorYieldEvidenceWindowMs = 350;
+        var logger = new RecordingLogger<BargeInCoordinator>();
+        var fixture = CreateFixture(
+            options,
+            vad: new SequenceVadService(true, true, false, true),
+            selfSpeechGate: new FrameScoreSequenceSelfSpeechGate(1.0, 1.0, 1.0),
+            logger: logger);
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        for (var index = 0; index < 4; index++)
+        {
+            await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
+        }
+
+        Assert.Equal(1, fixture.Playback.PauseCount);
+        Assert.Contains(logger.Messages, message => message.Contains("missing_score_ignored", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_FragmentedHighScoreIslands_YieldPlayback()
     {
         var options = SustainedUserSpeechScorePauseOptions();
@@ -1229,6 +1282,39 @@ public sealed class BargeInCoordinatorTests
         }
 
         Assert.Equal(1, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Stt.CallCount);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScoreGate_MeasuredLowScoreStillBlocks()
+    {
+        var logger = new RecordingLogger<BargeInCoordinator>();
+        var fixture = CreateFixture(
+            SustainedUserSpeechScoreOptions(),
+            vad: new AlwaysTriggeredVadService(),
+            selfSpeechGate: new ScoreSequenceSelfSpeechGate(0.0),
+            logger: logger);
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, 0));
+
+        Assert.Equal(0, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Stt.CallCount);
+        Assert.Contains(logger.Messages, message => message.Contains("measured_score_below_threshold", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScoreGate_SuppressAsSelfEchoStillBlocks()
+    {
+        var fixture = CreateFixture(
+            SustainedUserSpeechScoreOptions(),
+            vad: new AlwaysTriggeredVadService(),
+            selfSpeechGate: new SequenceSelfSpeechGate(SelfSpeechDecision.SuppressAsSelfEcho));
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, 0));
+
+        Assert.Equal(0, fixture.Playback.PauseCount);
         Assert.Equal(0, fixture.Stt.CallCount);
     }
 
@@ -2624,6 +2710,30 @@ public sealed class BargeInCoordinatorTests
     }
 
     [Fact]
+    public async Task ProcessMicrophoneFrame_BackendIdleVoice_RaisesBackendVoiceRequest()
+    {
+        var fixture = CreateFixture(
+            new BargeInOptions { Enabled = true },
+            "What is the meaning of life?",
+            liveUtteranceGate: CreateLiveUtteranceGate());
+        var requests = new List<BackendVoiceRequestCaptured>();
+        fixture.Coordinator.BackendVoiceRequestCaptured += (request, _) =>
+        {
+            requests.Add(request);
+            return Task.CompletedTask;
+        };
+
+        await fixture.Coordinator.StartLiveMonitoringAsync();
+        await SendTriggeredSpeechAsync(fixture.Coordinator);
+        await WaitUntilAsync(() => requests.Count > 0);
+
+        var request = Assert.Single(requests);
+        Assert.Equal("What is the meaning of life?", request.Text);
+        Assert.Equal("backend_idle_voice", request.InteractionSource);
+        Assert.Equal(LiveAssistantTurnState.IdleListening, request.Utterance.StateWhenCaptured);
+    }
+
+    [Fact]
     public async Task ProcessMicrophoneFrame_Clarification_ResumesAndDoesNotCancel()
     {
         var fixture = CreateFixture(new BargeInOptions { Enabled = true }, "merlin what does that mean");
@@ -2881,7 +2991,8 @@ public sealed class BargeInCoordinatorTests
         IBargeInVadService? vad = null,
         IInterruptionCaptureDiagnosticsWriter? captureDiagnosticsWriter = null,
         ISelfSpeechSuppressionGate? selfSpeechGate = null,
-        ILiveUtteranceGate? liveUtteranceGate = null)
+        ILiveUtteranceGate? liveUtteranceGate = null,
+        ILogger<BargeInCoordinator>? logger = null)
     {
         options.TriggerPostSpeechWaitMs = 0;
         var diagnostics = new NoOpBargeInDiagnosticsLogger();
@@ -2908,8 +3019,9 @@ public sealed class BargeInCoordinatorTests
             playback,
             captureDiagnosticsWriter ?? new NoOpInterruptionCaptureDiagnosticsWriter(),
             diagnostics,
-            NullLogger<BargeInCoordinator>.Instance,
+            logger ?? NullLogger<BargeInCoordinator>.Instance,
             new TestOptionsMonitor<BargeInOptions>(options),
+            new TestOptionsMonitor<VoiceInputOptions>(new VoiceInputOptions()),
             liveUtteranceGate);
 
         return new TestFixture(coordinator, tap, stt, playback, liveTurnService, speakerDucking);
@@ -3311,6 +3423,36 @@ public sealed class BargeInCoordinatorTests
         }
     }
 
+    private sealed class SequenceVadService : IBargeInVadService
+    {
+        private readonly bool[] _speech;
+        private int _index;
+
+        public SequenceVadService(params bool[] speech)
+        {
+            _speech = speech.Length == 0 ? [false] : speech;
+        }
+
+        public VadFrameResult ProcessFrame(VadFrameInput input, BargeInOptions options)
+        {
+            var isSpeech = _speech[Math.Min(_index, _speech.Length - 1)];
+            _index++;
+            return new VadFrameResult
+            {
+                IsSpeech = isSpeech,
+                IsTriggered = false,
+                Energy = isSpeech ? 0.2 : 0.001,
+                NoiseFloor = 0.01,
+                Confidence = isSpeech ? 1.0 : 0.0,
+                ConsecutiveSpeechMs = isSpeech ? 350 : 0
+            };
+        }
+
+        public void Reset()
+        {
+        }
+    }
+
     internal sealed class TestSpeakerDuckingService : ISpeakerDuckingService
     {
         public event EventHandler<SpeakerDuckingChangedEventArgs>? DuckingChanged;
@@ -3596,6 +3738,32 @@ public sealed class BargeInCoordinatorTests
         public IDisposable? OnChange(Action<T, string?> listener)
         {
             return null;
+        }
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull
+        {
+            return null;
+        }
+
+        public bool IsEnabled(LogLevel logLevel)
+        {
+            return true;
+        }
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            Messages.Add(formatter(state, exception));
         }
     }
 

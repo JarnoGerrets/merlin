@@ -56,6 +56,8 @@ builder.Services.Configure<BargeInOptions>(
     builder.Configuration.GetSection("BargeIn"));
 builder.Services.Configure<BargeInDebugOptions>(
     builder.Configuration.GetSection("BargeIn"));
+builder.Services.Configure<VoiceInputOptions>(
+    builder.Configuration.GetSection("VoiceInput"));
 builder.Services.PostConfigure<LlmOptions>(options =>
 {
     options.Provider = Environment.GetEnvironmentVariable("MERLIN_LLM_PROVIDER") ?? options.Provider;

@@ -183,7 +183,6 @@ public sealed class LiveUtteranceGateTests
 
     [Theory]
     [InlineData("wait wait")]
-    [InlineData("no no no")]
     [InlineData("hold on")]
     public void FloorTakingControlPhrases_ArePlaybackControl(string text)
     {
@@ -191,6 +190,75 @@ public sealed class LiveUtteranceGateTests
 
         Assert.Equal(LiveUtteranceGateDecisionKind.AcceptPlaybackControl, result.Decision);
         Assert.False(result.ShouldCallDeepInfra);
+    }
+
+    [Theory]
+    [InlineData("no no")]
+    [InlineData("no no no")]
+    public void RepeatedNoAlone_TakesFloorWithoutHardStop(string text)
+    {
+        var result = Evaluate(text, LiveAssistantTurnState.Speaking, assistantWasSpeaking: true);
+        var route = _gate.ToRouteDecision(CreateUtteranceForRoute(text, LiveAssistantTurnState.Speaking, assistantWasSpeaking: true), result);
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.HoldForMoreSpeech, result.Decision);
+        Assert.Equal("HoldForMoreSpeech", route.Action);
+        Assert.NotEqual("StopSpeechOnlyNoConfirmation", route.Action);
+        Assert.False(result.ShouldCallDeepInfra);
+    }
+
+    [Fact]
+    public void RepeatedNoWhatIMeantWasOpenUrl_PreservesReplacement()
+    {
+        var result = Evaluate("No no no, what I meant was Google.", LiveAssistantTurnState.AwaitingToolCommit, pendingCommand: "Open URL: open facebook");
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AcceptReplacement, result.Decision);
+        Assert.Equal("open google", result.ReplacementText);
+    }
+
+    [Fact]
+    public void RepeatedNoWhatIMeantWasQuestion_PreservesCorrectedRequest()
+    {
+        var result = Evaluate("No no no, what I meant was, what is the meaning of a wife?", LiveAssistantTurnState.Speaking, assistantWasSpeaking: true);
+        var route = _gate.ToRouteDecision(CreateUtteranceForRoute("No no no, what I meant was, what is the meaning of a wife?", LiveAssistantTurnState.Speaking, assistantWasSpeaking: true), result);
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AcceptCorrection, result.Decision);
+        Assert.Equal("what is the meaning of a wife", result.ReplacementText);
+        Assert.Equal("CancelPendingCommandAndStartReplacement", route.Action);
+        Assert.NotEqual("StopSpeechOnlyNoConfirmation", route.Action);
+        Assert.True(result.ShouldCallDeepInfra);
+    }
+
+    [Fact]
+    public void CoherentQuestionDuringProcessing_IsCorrectionReplacement()
+    {
+        var result = Evaluate("What is the meaning of life?", LiveAssistantTurnState.ProcessingTurn);
+        var route = _gate.ToRouteDecision(CreateUtteranceForRoute("What is the meaning of life?", LiveAssistantTurnState.ProcessingTurn), result);
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AcceptCorrection, result.Decision);
+        Assert.Equal("what is the meaning of life", result.ReplacementText);
+        Assert.True(result.ShouldCallDeepInfra);
+        Assert.Equal(UtteranceRouteKind.ReplaceActiveTurn, route.Kind);
+        Assert.Equal("CancelPendingCommandAndStartReplacement", route.Action);
+    }
+
+    [Fact]
+    public void LikelyQuestionDuringSpeaking_StillAsksClarification()
+    {
+        var result = Evaluate("What is the meaning of life?", LiveAssistantTurnState.Speaking, assistantWasSpeaking: true);
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AskClarification, result.Decision);
+        Assert.False(result.ShouldRouteToCommandRouter);
+    }
+
+    [Fact]
+    public void StopDuringProcessing_RoutesAsCancelPendingResponse()
+    {
+        var result = Evaluate("Merlin stop", LiveAssistantTurnState.ProcessingTurn);
+        var route = _gate.ToRouteDecision(CreateUtteranceForRoute("Merlin stop", LiveAssistantTurnState.ProcessingTurn), result);
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AcceptPlaybackControl, result.Decision);
+        Assert.Equal("CancelPendingResponseQuietly", route.Action);
+        Assert.NotEqual("PauseActiveTurn", route.Action);
     }
 
     [Theory]
@@ -257,5 +325,23 @@ public sealed class LiveUtteranceGateTests
             SttConfidence = utterance.Confidence,
             AudioSpeechConfidence = utterance.Confidence
         });
+    }
+
+    private static UserUtterance CreateUtteranceForRoute(
+        string text,
+        LiveAssistantTurnState state,
+        bool assistantWasSpeaking = false)
+    {
+        return new UserUtterance
+        {
+            Text = text,
+            TimestampUtc = DateTimeOffset.UtcNow,
+            ActiveTurnId = "test-turn",
+            CorrelationId = "test-correlation",
+            StateWhenCaptured = state,
+            AssistantWasSpeaking = assistantWasSpeaking,
+            Source = "test",
+            Confidence = 0.9
+        };
     }
 }

@@ -586,6 +586,19 @@ public sealed record CorrectionRegenerationRequested
     public required BargeInSpeechContext SpeechContext { get; init; }
 }
 
+public sealed record BackendVoiceRequestCaptured
+{
+    public required string CorrelationId { get; init; }
+
+    public required string Text { get; init; }
+
+    public required string InteractionSource { get; init; }
+
+    public required UserUtterance Utterance { get; init; }
+
+    public required BargeInSpeechContext SpeechContext { get; init; }
+}
+
 public enum UtteranceRouteKind
 {
     PauseAndClarify,

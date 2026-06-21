@@ -3,9 +3,11 @@ using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using Merlin.Backend.Models;
+using Merlin.Backend.Configuration;
 using Merlin.Backend.Services;
 using Merlin.Backend.Services.BargeIn;
 using Merlin.Backend.Services.LiveUtterance;
+using Microsoft.Extensions.Options;
 
 namespace Merlin.Backend.WebSocket;
 
@@ -22,6 +24,7 @@ public sealed class WebSocketHandler
     private readonly ISpeechPolicyService _speechPolicyService;
     private readonly ILogger<WebSocketHandler> _logger;
     private readonly IRuntimeStateService _runtimeStateService;
+    private readonly IOptionsMonitor<VoiceInputOptions> _voiceInputOptions;
     private readonly VoiceStreamSessionService _voiceStreamSessionService;
     private readonly ConcurrentDictionary<string, AssistantRequest> _recentRequestsByCorrelationId = new(StringComparer.OrdinalIgnoreCase);
 
@@ -36,7 +39,8 @@ public sealed class WebSocketHandler
         ICorrectionRequestBuilder? correctionRequestBuilder = null,
         IBargeInCoordinator? bargeInCoordinator = null,
         ILiveUtteranceGate? liveUtteranceGate = null,
-        IBargeInDebugSnapshotService? bargeInDebugSnapshots = null)
+        IBargeInDebugSnapshotService? bargeInDebugSnapshots = null,
+        IOptionsMonitor<VoiceInputOptions>? voiceInputOptions = null)
     {
         _commandRouter = commandRouter;
         _bargeInCoordinator = bargeInCoordinator;
@@ -47,6 +51,7 @@ public sealed class WebSocketHandler
         _speechPolicyService = speechPolicyService;
         _logger = logger;
         _runtimeStateService = runtimeStateService;
+        _voiceInputOptions = voiceInputOptions ?? new StaticOptionsMonitor<VoiceInputOptions>(new VoiceInputOptions());
         _voiceStreamSessionService = voiceStreamSessionService;
         _bargeInDebugSnapshots = bargeInDebugSnapshots;
     }
@@ -65,6 +70,7 @@ public sealed class WebSocketHandler
         ConcurrentDictionary<string, byte>? connectionCorrelationIds = null;
         CancellationTokenSource? devVisualFlowCancellation = null;
         Func<CorrectionRegenerationRequested, CancellationToken, Task>? correctionHandler = null;
+        Func<BackendVoiceRequestCaptured, CancellationToken, Task>? backendVoiceHandler = null;
         Func<LiveUserUtteranceRouted, CancellationToken, Task>? liveUtteranceHandler = null;
         Func<BargeInDebugSnapshot, CancellationToken, Task>? bargeInDebugHandler = null;
         _runtimeStateService.IncrementActiveWebSocketConnections();
@@ -86,6 +92,13 @@ public sealed class WebSocketHandler
                     oldCaptureToken,
                     sessionCancellationToken);
                 _bargeInCoordinator.CorrectionRegenerationRequested += correctionHandler;
+                backendVoiceHandler = (request, token) => DispatchBackendVoiceRequestAsync(
+                    request,
+                    webSocket,
+                    sendGate,
+                    connectionCorrelationIds,
+                    token);
+                _bargeInCoordinator.BackendVoiceRequestCaptured += backendVoiceHandler;
                 liveUtteranceHandler = (routed, token) => DispatchLiveUtteranceRouteAsync(
                     routed,
                     webSocket,
@@ -120,6 +133,11 @@ public sealed class WebSocketHandler
             if (_bargeInCoordinator is not null && correctionHandler is not null)
             {
                 _bargeInCoordinator.CorrectionRegenerationRequested -= correctionHandler;
+            }
+
+            if (_bargeInCoordinator is not null && backendVoiceHandler is not null)
+            {
+                _bargeInCoordinator.BackendVoiceRequestCaptured -= backendVoiceHandler;
             }
 
             if (_bargeInCoordinator is not null && liveUtteranceHandler is not null)
@@ -226,6 +244,33 @@ public sealed class WebSocketHandler
         var correlationId = string.IsNullOrWhiteSpace(envelope.CorrelationId)
             ? Guid.NewGuid().ToString("N")
             : envelope.CorrelationId;
+
+        if (ShouldRejectFrontendVoiceStream())
+        {
+            if (string.Equals(envelope.Type, "voice_stream_chunk", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogDebug(
+                    "VoiceStreamRejectedBackendOwnedVoiceMode. Type: {Type}. CorrelationId: {CorrelationId}.",
+                    envelope.Type,
+                    correlationId);
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "VoiceStreamRejectedBackendOwnedVoiceMode. Type: {Type}. CorrelationId: {CorrelationId}. Owner: {Owner}. FrontendVoiceInputEnabled: {FrontendVoiceInputEnabled}.",
+                    envelope.Type,
+                    correlationId,
+                    _voiceInputOptions.CurrentValue.Owner,
+                    _voiceInputOptions.CurrentValue.FrontendVoiceInputEnabled);
+            }
+
+            if (string.Equals(envelope.Type, "voice_stream_cancel", StringComparison.OrdinalIgnoreCase))
+            {
+                _voiceStreamSessionService.Cancel(correlationId);
+            }
+
+            return true;
+        }
 
         try
         {
@@ -361,6 +406,11 @@ public sealed class WebSocketHandler
         return true;
     }
 
+    internal bool ShouldRejectFrontendVoiceStream()
+    {
+        return _voiceInputOptions.CurrentValue.IsBackendOwnedMode;
+    }
+
     internal async Task DispatchCorrectionRegenerationAsync(
         CorrectionRegenerationRequested correction,
         System.Net.WebSockets.WebSocket webSocket,
@@ -395,6 +445,35 @@ public sealed class WebSocketHandler
             connectionCorrelationIds,
             _ => { },
             sessionCancellationToken);
+    }
+
+    internal async Task DispatchBackendVoiceRequestAsync(
+        BackendVoiceRequestCaptured request,
+        System.Net.WebSockets.WebSocket webSocket,
+        SemaphoreSlim sendGate,
+        ConcurrentDictionary<string, byte> connectionCorrelationIds,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation(
+            "Dispatching backend idle voice request. CorrelationId: {CorrelationId}. Source: {Source}. Text: {Text}.",
+            request.CorrelationId,
+            request.InteractionSource,
+            request.Text);
+
+        await ProcessAndEmitLiveRequestAsync(
+            webSocket,
+            sendGate,
+            new AssistantRequest
+            {
+                Message = request.Text,
+                CorrelationId = request.CorrelationId,
+                InteractionSource = request.InteractionSource,
+                ClientMode = "orb",
+                ReceivedAtUtc = request.Utterance.TimestampUtc
+            },
+            connectionCorrelationIds,
+            _ => { },
+            cancellationToken);
     }
 
     internal async Task DispatchLiveUtteranceRouteAsync(
@@ -1008,6 +1087,8 @@ public sealed class WebSocketHandler
     {
         return string.Equals(request.InteractionSource, "voice", StringComparison.OrdinalIgnoreCase)
             || string.Equals(request.InteractionSource, "voice_stream", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(request.InteractionSource, "voice_correction", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(request.InteractionSource, "backend_idle_voice", StringComparison.OrdinalIgnoreCase)
             || string.Equals(request.ClientMode, "voice", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -1139,5 +1220,25 @@ public sealed class WebSocketHandler
         public string? Data { get; init; }
 
         public string? ClientMode { get; init; }
+    }
+
+    private sealed class StaticOptionsMonitor<T> : IOptionsMonitor<T>
+    {
+        public StaticOptionsMonitor(T currentValue)
+        {
+            CurrentValue = currentValue;
+        }
+
+        public T CurrentValue { get; }
+
+        public T Get(string? name)
+        {
+            return CurrentValue;
+        }
+
+        public IDisposable? OnChange(Action<T, string?> listener)
+        {
+            return null;
+        }
     }
 }

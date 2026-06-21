@@ -139,6 +139,8 @@ public interface IBargeInCoordinator
 {
     event Func<CorrectionRegenerationRequested, CancellationToken, Task>? CorrectionRegenerationRequested;
 
+    event Func<BackendVoiceRequestCaptured, CancellationToken, Task>? BackendVoiceRequestCaptured;
+
     event Func<LiveUserUtteranceRouted, CancellationToken, Task>? LiveUserUtteranceRouted;
 
     bool IsMonitoring { get; }

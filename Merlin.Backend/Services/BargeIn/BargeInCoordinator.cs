@@ -28,6 +28,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     private readonly ISpeakerDuckingService _speakerDuckingService;
     private readonly ISelfSpeechSuppressionGate _selfSpeechGate;
     private readonly IContinuousMicAudioBuffer _continuousMicAudioBuffer;
+    private readonly IOptionsMonitor<VoiceInputOptions> _voiceInputOptions;
     private readonly IBargeInSttService _sttService;
     private readonly IBargeInTriggerBuffer _triggerBuffer;
     private readonly IBargeInVadService _vadService;
@@ -55,6 +56,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
 
     public event Func<CorrectionRegenerationRequested, CancellationToken, Task>? CorrectionRegenerationRequested;
 
+    public event Func<BackendVoiceRequestCaptured, CancellationToken, Task>? BackendVoiceRequestCaptured;
+
     public event Func<LiveUserUtteranceRouted, CancellationToken, Task>? LiveUserUtteranceRouted;
 
     public BargeInCoordinator(
@@ -74,6 +77,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         IBargeInDiagnosticsLogger diagnostics,
         ILogger<BargeInCoordinator> logger,
         IOptionsMonitor<BargeInOptions> options,
+        IOptionsMonitor<VoiceInputOptions> voiceInputOptions,
         ILiveUtteranceGate? liveUtteranceGate = null,
         IBargeInDebugSnapshotService? debugSnapshots = null)
     {
@@ -93,6 +97,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         _diagnostics = diagnostics;
         _logger = logger;
         _options = options;
+        _voiceInputOptions = voiceInputOptions;
         _liveUtteranceGate = liveUtteranceGate;
         _debugSnapshots = debugSnapshots;
 
@@ -464,6 +469,18 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             return;
         }
 
+        var voiceInput = _voiceInputOptions.CurrentValue;
+        _logger.LogInformation(
+            "VoiceInputOwnerMode. Owner: {Owner}. BackendVoiceInputEnabled: {BackendVoiceInputEnabled}. FrontendVoiceInputEnabled: {FrontendVoiceInputEnabled}. BackendIdleVoiceInteractionSource: {BackendIdleVoiceInteractionSource}.",
+            voiceInput.Owner,
+            voiceInput.BackendVoiceInputEnabled,
+            voiceInput.FrontendVoiceInputEnabled,
+            voiceInput.BackendIdleVoiceInteractionSource);
+        if (voiceInput.BackendVoiceInputEnabled)
+        {
+            _logger.LogInformation("BackendVoiceInputEnabled. Owner: {Owner}.", voiceInput.Owner);
+        }
+
         await _aec.InitializeAsync(new AecConfiguration(options.AecSampleRate, options.FrameMs, options.AecProvider), cancellationToken);
         var context = new BargeInSpeechContext
         {
@@ -505,6 +522,13 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         CancellationToken cancellationToken)
     {
         _diagnostics.VadPossibleSpeech(context, vad, aecResult.Mode);
+        if (IsLiveMonitorContext(context) && !_liveTurnService.TryGetCurrentActiveTurn(out _))
+        {
+            _logger.LogInformation(
+                "BackendIdleVoiceCaptureStarted. AssistantTurnId: {AssistantTurnId}. VadConfidence: {VadConfidence}.",
+                context.AssistantTurnId,
+                vad.Confidence);
+        }
         if (options.EnableSpeakerDucking)
         {
             CancelPendingDuckingRestore();
@@ -745,12 +769,13 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         var assistantWasSpeaking = _assistantPlaybackMonitor.IsPlaybackActive;
         var threshold = Math.Clamp(options.SustainedUserSpeechScoreThreshold, 0.0, 1.0);
         var requiredDurationMs = Math.Max(1, options.SustainedUserSpeechScoreDurationMs);
-        var userSpeechScore = gateResult?.UserSpeechScore ?? 0.0;
+        var userSpeechScore = gateResult?.UserSpeechScore;
+        var userSpeechScoreText = FormatUserSpeechScore(userSpeechScore);
 
         _logger.LogInformation(
-            "SustainedUserSpeechScoreGateEvaluated. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore:N3}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}.",
+            "SustainedUserSpeechScoreGateEvaluated. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}.",
             candidateType,
-            userSpeechScore,
+            userSpeechScoreText,
             threshold,
             _sustainedUserSpeechScoreMs,
             requiredDurationMs,
@@ -768,41 +793,57 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         {
             ResetSustainedUserSpeechScoreGate(context, options, "self_speech_gate_suppressed_as_echo", gateResult, candidateType);
             _logger.LogInformation(
-                "SustainedUserSpeechScoreGateBlockedCapture. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore:N3}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}. DecisionReason: {DecisionReason}.",
+                "SustainedUserSpeechScoreGateBlockedCapture. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}. DecisionReason: {DecisionReason}.",
                 candidateType,
-                userSpeechScore,
+                userSpeechScoreText,
                 threshold,
                 _sustainedUserSpeechScoreMs,
                 requiredDurationMs,
                 assistantWasSpeaking,
                 gateResult.Decision,
                 gateResult.Reason,
-                "Self-speech gate suppressed candidate as echo.");
+                "suppressed_as_self_echo");
             return false;
         }
 
-        if (userSpeechScore < threshold)
+        if (userSpeechScore is null)
         {
-            ResetSustainedUserSpeechScoreGate(context, options, "user_speech_score_below_threshold", gateResult, candidateType);
             _logger.LogInformation(
-                "SustainedUserSpeechScoreGateBlockedCapture. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore:N3}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}. DecisionReason: {DecisionReason}.",
+                "SustainedUserSpeechScoreGateBlockedCapture. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}. DecisionReason: {DecisionReason}.",
                 candidateType,
-                userSpeechScore,
+                userSpeechScoreText,
+                threshold,
+                _sustainedUserSpeechScoreMs,
+                requiredDurationMs,
+                assistantWasSpeaking,
+                "Unavailable",
+                "Self-speech gate result unavailable.",
+                "missing_user_speech_score");
+            return false;
+        }
+
+        if (userSpeechScore.Value < threshold)
+        {
+            ResetSustainedUserSpeechScoreGate(context, options, "measured_score_below_threshold", gateResult, candidateType);
+            _logger.LogInformation(
+                "SustainedUserSpeechScoreGateBlockedCapture. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}. DecisionReason: {DecisionReason}.",
+                candidateType,
+                userSpeechScoreText,
                 threshold,
                 _sustainedUserSpeechScoreMs,
                 requiredDurationMs,
                 assistantWasSpeaking,
                 gateResult?.Decision.ToString() ?? "Unavailable",
                 gateResult?.Reason ?? "Self-speech gate result unavailable.",
-                "UserSpeechScore below sustained threshold.");
+                "measured_score_below_threshold");
             return false;
         }
 
         _sustainedUserSpeechScoreMs += GetFrameDurationMs(frame, options);
         _logger.LogInformation(
-            "SustainedUserSpeechScoreGateAccumulated. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore:N3}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}.",
+            "SustainedUserSpeechScoreGateAccumulated. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}.",
             candidateType,
-            userSpeechScore,
+            userSpeechScoreText,
             threshold,
             _sustainedUserSpeechScoreMs,
             requiredDurationMs,
@@ -813,9 +854,9 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         if (_sustainedUserSpeechScoreMs < requiredDurationMs)
         {
             _logger.LogInformation(
-                "SustainedUserSpeechScoreGateBlockedCapture. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore:N3}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}. DecisionReason: {DecisionReason}.",
+                "SustainedUserSpeechScoreGateBlockedCapture. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}. DecisionReason: {DecisionReason}.",
                 candidateType,
-                userSpeechScore,
+                userSpeechScoreText,
                 threshold,
                 _sustainedUserSpeechScoreMs,
                 requiredDurationMs,
@@ -827,9 +868,9 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         }
 
         _logger.LogInformation(
-            "SustainedUserSpeechScoreGateAllowedCapture. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore:N3}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}. DecisionReason: {DecisionReason}.",
+            "SustainedUserSpeechScoreGateAllowedCapture. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}. DecisionReason: {DecisionReason}.",
             candidateType,
-            userSpeechScore,
+            userSpeechScoreText,
             threshold,
             _sustainedUserSpeechScoreMs,
             requiredDurationMs,
@@ -909,6 +950,18 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 gateResult?.Reason ?? "Self-speech gate result unavailable.",
                 snapshot.DecisionReason);
         }
+        else if (gateResult is null)
+        {
+            _logger.LogInformation(
+                "RollingUserSpeechEvidenceSampleIgnored. EvidenceSource: {EvidenceSource}. UserSpeechScore: {UserSpeechScore}. WindowMs: {WindowMs}. ObservedMsInWindow: {ObservedMsInWindow}. AssistantWasSpeaking: {AssistantWasSpeaking}. PlaybackAlreadyYielded: {PlaybackAlreadyYielded}. DecisionReason: {DecisionReason}.",
+                evidenceSource,
+                "Unavailable",
+                snapshot.WindowMs,
+                snapshot.ObservedMsInWindow,
+                assistantWasSpeaking,
+                _playbackYieldedForRollingUserSpeechEvidence,
+                "missing_score_ignored");
+        }
         else if (snapshot.ObservedMsInWindow <= 0)
         {
             return;
@@ -939,9 +992,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         _logger.LogInformation(
             "RollingUserSpeechEvidenceTriggered. EvidenceSource: {EvidenceSource}. UserSpeechScore: {UserSpeechScore}. WindowMs: {WindowMs}. HighScoreThreshold: {HighScoreThreshold:N3}. HighScoreMsInWindow: {HighScoreMsInWindow}. RequiredHighScoreMs: {RequiredHighScoreMs}. AverageScore: {AverageScore:N3}. AverageScoreThreshold: {AverageScoreThreshold:N3}. RecentHighFramePresent: {RecentHighFramePresent}. RecentHighFrameWindowMs: {RecentHighFrameWindowMs}. ObservedMsInWindow: {ObservedMsInWindow}. AssistantWasSpeaking: {AssistantWasSpeaking}. DecisionReason: {DecisionReason}. AssistantTurnId: {AssistantTurnId}. CorrelationId: {CorrelationId}.",
             evidenceSource,
-            userSpeechScore is > 0.0
-                ? userSpeechScore.Value.ToString("N3", System.Globalization.CultureInfo.InvariantCulture)
-                : "UnavailableOrZero",
+            FormatUserSpeechScore(userSpeechScore),
             snapshot.WindowMs,
             snapshot.HighScoreThreshold,
             snapshot.HighScoreMsInWindow,
@@ -963,9 +1014,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         _logger.LogInformation(
             "PlaybackYieldedForRollingUserSpeechEvidence. EvidenceSource: {EvidenceSource}. UserSpeechScore: {UserSpeechScore}. WindowMs: {WindowMs}. HighScoreThreshold: {HighScoreThreshold:N3}. HighScoreMsInWindow: {HighScoreMsInWindow}. RequiredHighScoreMs: {RequiredHighScoreMs}. AverageScore: {AverageScore:N3}. AverageScoreThreshold: {AverageScoreThreshold:N3}. RecentHighFramePresent: {RecentHighFramePresent}. RecentHighFrameWindowMs: {RecentHighFrameWindowMs}. AssistantTurnId: {AssistantTurnId}. CorrelationId: {CorrelationId}.",
             evidenceSource,
-            userSpeechScore is > 0.0
-                ? userSpeechScore.Value.ToString("N3", System.Globalization.CultureInfo.InvariantCulture)
-                : "UnavailableOrZero",
+            FormatUserSpeechScore(userSpeechScore),
             snapshot.WindowMs,
             snapshot.HighScoreThreshold,
             snapshot.HighScoreMsInWindow,
@@ -998,9 +1047,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
 
         _playbackYieldedForRollingUserSpeechEvidence = false;
         var snapshot = _rollingUserSpeechEvidence.Reset(DateTimeOffset.UtcNow, options);
-        var userSpeechScoreText = gateResult is not null && gateResult.UserSpeechScore > 0.0
-            ? gateResult.UserSpeechScore.ToString("N3", System.Globalization.CultureInfo.InvariantCulture)
-            : "UnavailableOrZero";
+        var userSpeechScoreText = FormatUserSpeechScore(gateResult?.UserSpeechScore);
         _logger.LogInformation(
             "RollingUserSpeechEvidenceReset. EvidenceSource: {EvidenceSource}. UserSpeechScore: {UserSpeechScore}. WindowMs: {WindowMs}. HighScoreThreshold: {HighScoreThreshold:N3}. HighScoreMsInWindow: {HighScoreMsInWindow}. RequiredHighScoreMs: {RequiredHighScoreMs}. AverageScore: {AverageScore:N3}. AverageScoreThreshold: {AverageScoreThreshold:N3}. RecentHighFramePresent: {RecentHighFramePresent}. RecentHighFrameWindowMs: {RecentHighFrameWindowMs}. ObservedMsInWindow: {ObservedMsInWindow}. PreviousObservedMsInWindow: {PreviousObservedMsInWindow}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}. ResetReason: {ResetReason}. AssistantTurnId: {AssistantTurnId}. CorrelationId: {CorrelationId}.",
             evidenceSource,
@@ -1038,9 +1085,9 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         var previousDurationMs = _sustainedUserSpeechScoreMs;
         _sustainedUserSpeechScoreMs = 0;
         _logger.LogInformation(
-            "SustainedUserSpeechScoreGateReset. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore:N3}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}. DecisionReason: {DecisionReason}. AssistantTurnId: {AssistantTurnId}. CorrelationId: {CorrelationId}.",
+            "SustainedUserSpeechScoreGateReset. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}. DecisionReason: {DecisionReason}. AssistantTurnId: {AssistantTurnId}. CorrelationId: {CorrelationId}.",
             candidateType,
-            gateResult?.UserSpeechScore ?? 0.0,
+            FormatUserSpeechScore(gateResult?.UserSpeechScore),
             Math.Clamp(options.SustainedUserSpeechScoreThreshold, 0.0, 1.0),
             previousDurationMs,
             Math.Max(1, options.SustainedUserSpeechScoreDurationMs),
@@ -1050,6 +1097,13 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             reason,
             context.AssistantTurnId,
             context.CorrelationId);
+    }
+
+    private static string FormatUserSpeechScore(double? userSpeechScore)
+    {
+        return userSpeechScore is null
+            ? "Unavailable"
+            : userSpeechScore.Value.ToString("N3", System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private static int GetFrameDurationMs(BargeInAudioFrame frame, BargeInOptions options)
@@ -1706,6 +1760,13 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         _diagnostics.GatedSttStarted(context, duration);
         var stt = await _sttService.TranscribeTriggerAsync(captured, options, cancellationToken);
         _diagnostics.GatedSttResult(context, stt);
+        if (IsLiveMonitorContext(context) && !_liveTurnService.TryGetCurrentActiveTurn(out _))
+        {
+            _logger.LogInformation(
+                "BackendIdleVoiceTranscript. Transcript: {Transcript}. AudioMs: {AudioMs}.",
+                stt.Transcript,
+                stt.AudioDuration.TotalMilliseconds);
+        }
         _diagnostics.StateChanged(context, BargeInState.ClassifyingInterruption, $"Interruption transcript captured: {stt.Transcript}");
 
         var normalized = InterruptionClassifier.Normalize(stt.Transcript);
@@ -2189,6 +2250,65 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         };
 
         foreach (Func<CorrectionRegenerationRequested, CancellationToken, Task> handler in handlers.GetInvocationList())
+        {
+            await handler(request, cancellationToken);
+        }
+    }
+
+    private async Task RaiseBackendVoiceRequestCapturedAsync(
+        BargeInSpeechContext context,
+        UserUtterance utterance,
+        CancellationToken cancellationToken)
+    {
+        var text = utterance.Text.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            _logger.LogInformation(
+                "BackendIdleVoiceRequestIgnored. Reason: Empty transcript. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}.",
+                utterance.ActiveTurnId,
+                utterance.CorrelationId);
+            return;
+        }
+
+        var options = _voiceInputOptions.CurrentValue;
+        if (!options.BackendVoiceInputEnabled)
+        {
+            _logger.LogInformation(
+                "BackendIdleVoiceRequestIgnored. Text: {Text}. Reason: Backend voice input disabled. Owner: {Owner}.",
+                text,
+                options.Owner);
+            return;
+        }
+
+        var handlers = BackendVoiceRequestCaptured;
+        if (handlers is null)
+        {
+            _logger.LogInformation(
+                "BackendIdleVoiceRequestIgnored. Text: {Text}. Reason: No backend voice request handler attached.",
+                text);
+            return;
+        }
+
+        var correlationId = $"backend_voice:{Guid.NewGuid():N}";
+        var source = string.IsNullOrWhiteSpace(options.BackendIdleVoiceInteractionSource)
+            ? "backend_idle_voice"
+            : options.BackendIdleVoiceInteractionSource.Trim();
+        var request = new BackendVoiceRequestCaptured
+        {
+            CorrelationId = correlationId,
+            Text = text,
+            InteractionSource = source,
+            Utterance = utterance,
+            SpeechContext = context
+        };
+
+        _logger.LogInformation(
+            "BackendIdleVoiceRequestAccepted. Text: {Text}. CorrelationId: {CorrelationId}. Source: {Source}.",
+            text,
+            correlationId,
+            source);
+
+        foreach (Func<BackendVoiceRequestCaptured, CancellationToken, Task> handler in handlers.GetInvocationList())
         {
             await handler(request, cancellationToken);
         }
@@ -2685,7 +2805,9 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     {
         LiveAssistantTurnState state = _assistantPlaybackMonitor.IsPlaybackActive
             ? LiveAssistantTurnState.Speaking
-            : LiveAssistantTurnState.ProcessingTurn;
+            : IsLiveMonitorContext(context)
+                ? LiveAssistantTurnState.IdleListening
+                : LiveAssistantTurnState.ProcessingTurn;
         string? activeTurnId = context.AssistantTurnId;
         string? correlationId = context.CorrelationId;
         var playbackActive = _assistantPlaybackMonitor.IsPlaybackActive;
@@ -2713,6 +2835,12 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             Source = "live_utterance_monitor",
             Confidence = confidence
         };
+    }
+
+    private static bool IsLiveMonitorContext(BargeInSpeechContext context)
+    {
+        return string.Equals(context.AssistantTurnId, "live-utterance-monitor", StringComparison.OrdinalIgnoreCase)
+            && string.IsNullOrWhiteSpace(context.CorrelationId);
     }
 
     private LiveUtteranceGateInput CreateLiveUtteranceGateInput(UserUtterance utterance, double vadConfidence)
@@ -2860,6 +2988,11 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                     await RaiseCorrectionRegenerationRequestedAsync(context, routeDecision.ReplacementText, cancellationToken);
                 }
 
+                await RaiseLiveUserUtteranceRoutedAsync(utterance, routeDecision, cancellationToken);
+                return;
+
+            case LiveUtteranceGateDecisionKind.AcceptNewRequest:
+                await RaiseBackendVoiceRequestCapturedAsync(context, utterance, cancellationToken);
                 await RaiseLiveUserUtteranceRoutedAsync(utterance, routeDecision, cancellationToken);
                 return;
 

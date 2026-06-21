@@ -1,7 +1,9 @@
+using Merlin.Backend.Configuration;
 using Merlin.Backend.Services;
 using Merlin.Backend.WebSocket;
 using Merlin.Backend.Models;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace Merlin.Backend.Tests;
@@ -56,6 +58,35 @@ public sealed class WebSocketHandlerTests
         Assert.DoesNotContain("EMPTY_TRANSCRIPT", speechText);
     }
 
+    [Fact]
+    public void ShouldRejectFrontendVoiceStream_WhenBackendOwnsVoiceInput_ReturnsTrue()
+    {
+        var runtimeStateService = new RuntimeStateService();
+        var handler = new WebSocketHandler(
+            new CommandRouter(
+                new RuleBasedIntentParser(TestApplicationLaunchOptions.Create()),
+                new ToolRegistry([]),
+                NullLogger<CommandRouter>.Instance,
+                runtimeStateService,
+                new NoOpResponsePolisher()),
+            new LiveAssistantTurnService(NullLogger<LiveAssistantTurnService>.Instance),
+            new NoOpAssistantSpeechPlaybackService(),
+            new SpeechPolicyService(),
+            NullLogger<WebSocketHandler>.Instance,
+            runtimeStateService,
+            new VoiceStreamSessionService(
+                new NoOpVoiceTranscriptionService(),
+                NullLogger<VoiceStreamSessionService>.Instance),
+            voiceInputOptions: new TestOptionsMonitor<VoiceInputOptions>(new VoiceInputOptions
+            {
+                Owner = "backend",
+                BackendVoiceInputEnabled = true,
+                FrontendVoiceInputEnabled = false
+            }));
+
+        Assert.True(handler.ShouldRejectFrontendVoiceStream());
+    }
+
     private sealed class NoOpAssistantSpeechPlaybackService : IAssistantSpeechPlaybackService
     {
         public Task EnqueueAsync(
@@ -100,6 +131,26 @@ public sealed class WebSocketHandlerTests
             CancellationToken cancellationToken)
         {
             return Task.FromResult(new VoiceTranscriptionResponse());
+        }
+    }
+
+    private sealed class TestOptionsMonitor<T> : IOptionsMonitor<T>
+    {
+        public TestOptionsMonitor(T currentValue)
+        {
+            CurrentValue = currentValue;
+        }
+
+        public T CurrentValue { get; }
+
+        public T Get(string? name)
+        {
+            return CurrentValue;
+        }
+
+        public IDisposable? OnChange(Action<T, string?> listener)
+        {
+            return null;
         }
     }
 }

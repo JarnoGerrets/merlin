@@ -529,7 +529,8 @@ public sealed class CommandRouter
     {
         return request.InteractionSource is not null
             && (string.Equals(request.InteractionSource, "voice", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(request.InteractionSource, "voice_stream", StringComparison.OrdinalIgnoreCase));
+                || string.Equals(request.InteractionSource, "voice_stream", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(request.InteractionSource, "backend_idle_voice", StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsVoiceMode(AssistantRequest request)
