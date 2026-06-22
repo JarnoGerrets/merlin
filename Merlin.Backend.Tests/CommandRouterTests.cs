@@ -187,15 +187,12 @@ public sealed class CommandRouterTests
         var services = new ServiceCollection();
         services.AddSingleton(TestApplicationLaunchOptions.Create());
         services.AddSingleton(Options.Create(new Merlin.Backend.Configuration.LocalAIOptions()));
+        services.AddSingleton(Options.Create(new Merlin.Backend.Configuration.CoreMemoryOptions()));
         services.AddSingleton(TestCapabilityOptions.Create());
         services.AddSingleton<IWebHostEnvironment>(new FakeWebHostEnvironment());
         services.AddSingleton<ILogger<StatusTool>>(NullLogger<StatusTool>.Instance);
         services.AddSingleton<ILocalAIHealthService>(new FakeLocalAIHealthService());
         services.AddSingleton<ILocalAIChatService, FakeLocalAIChatService>();
-        services.AddSingleton<IConversationSummaryStore, FakeConversationSummaryStore>();
-        services.AddSingleton<IConversationSessionService, ConversationSessionService>();
-        services.AddSingleton<ILongTermMemoryStore, FakeLongTermMemoryStore>();
-        services.AddSingleton<IMemoryExtractionService, FakeMemoryExtractionService>();
         services.AddSingleton<IRuntimeStateService, RuntimeStateService>();
         services.AddSingleton<ISystemResourceProvider, FakeSystemResourceProvider>();
         services.AddSingleton<IProcessLauncher, FakeProcessLauncher>();

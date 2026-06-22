@@ -12,6 +12,7 @@ public sealed class LocalConceptExtractionService : IConceptExtractionService
         var lowerText = text.ToLowerInvariant();
         return SeedConceptNames.All
             .Where(concept => lowerText.Contains(concept.ToLowerInvariant(), StringComparison.Ordinal))
+            .Concat(ProjectIdentifierNormalizer.ExtractIdentifiers(text))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
     }

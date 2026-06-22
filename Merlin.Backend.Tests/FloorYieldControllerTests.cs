@@ -51,6 +51,101 @@ public sealed class FloorYieldControllerTests
     }
 
     [Fact]
+    public async Task HandleOfficialDecisionAsync_WhenLowVadCandidateReachesDefaultSustain_DoesNotYieldYet()
+    {
+        var playback = new RecordingPlaybackService();
+        var monitor = new TestPlaybackMonitor { IsPlaybackActive = true };
+        var controller = CreateController(monitor, playback);
+
+        await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 1, shouldYield: true, vadConfidence: 0.27));
+        await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 4, shouldYield: true, vadConfidence: 0.27));
+
+        Assert.Equal(0, playback.PauseCount);
+        var debug = controller.GetDebugState();
+        Assert.True(debug.CandidateActive);
+        Assert.Equal(30, debug.CandidateDurationMs);
+        Assert.Equal(60, debug.RequiredSustainedMs);
+        Assert.Equal(0.27, debug.CandidatePeakVadConfidence);
+    }
+
+    [Fact]
+    public async Task HandleOfficialDecisionAsync_WhenLowVadCandidateReachesAdaptiveSustain_Yields()
+    {
+        var playback = new RecordingPlaybackService();
+        var monitor = new TestPlaybackMonitor { IsPlaybackActive = true };
+        var controller = CreateController(monitor, playback);
+
+        await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 1, shouldYield: true, vadConfidence: 0.27));
+        await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 4, shouldYield: true, vadConfidence: 0.27));
+        await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 7, shouldYield: true, vadConfidence: 0.27));
+
+        Assert.Equal(1, playback.PauseCount);
+        var debug = controller.GetDebugState();
+        Assert.True(debug.Triggered);
+        Assert.Equal(60, debug.CandidateDurationMs);
+        Assert.Equal(60, debug.RequiredSustainedMs);
+        Assert.Equal(0.27, debug.CandidatePeakVadConfidence);
+    }
+
+    [Fact]
+    public async Task HandleOfficialDecisionAsync_WhenVeryLowVadCandidateReachesSixtyMs_DoesNotYieldYet()
+    {
+        var playback = new RecordingPlaybackService();
+        var monitor = new TestPlaybackMonitor { IsPlaybackActive = true };
+        var controller = CreateController(monitor, playback);
+
+        await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 1, shouldYield: true, vadConfidence: 0.10));
+        await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 7, shouldYield: true, vadConfidence: 0.10));
+
+        Assert.Equal(0, playback.PauseCount);
+        var debug = controller.GetDebugState();
+        Assert.True(debug.CandidateActive);
+        Assert.Equal(60, debug.CandidateDurationMs);
+        Assert.Equal(90, debug.RequiredSustainedMs);
+        Assert.Equal(0.10, debug.CandidatePeakVadConfidence);
+    }
+
+    [Fact]
+    public async Task HandleOfficialDecisionAsync_WhenVadPeakImproves_AdaptiveSustainShortens()
+    {
+        var playback = new RecordingPlaybackService();
+        var monitor = new TestPlaybackMonitor { IsPlaybackActive = true };
+        var controller = CreateController(monitor, playback);
+
+        await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 1, shouldYield: true, vadConfidence: 0.27));
+        await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 2, shouldYield: true, vadConfidence: 0.45));
+        await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 4, shouldYield: true, vadConfidence: 0.20));
+
+        Assert.Equal(1, playback.PauseCount);
+        var debug = controller.GetDebugState();
+        Assert.True(debug.Triggered);
+        Assert.Equal(30, debug.CandidateDurationMs);
+        Assert.Equal(30, debug.RequiredSustainedMs);
+        Assert.Equal(0.45, debug.CandidatePeakVadConfidence);
+    }
+
+    [Fact]
+    public async Task HandleOfficialDecisionAsync_WhenCandidateResets_ClearsPeakVad()
+    {
+        var playback = new RecordingPlaybackService();
+        var monitor = new TestPlaybackMonitor { IsPlaybackActive = true };
+        var controller = CreateController(monitor, playback);
+
+        await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 1, shouldYield: true, vadConfidence: 0.80));
+        await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 2, shouldYield: false));
+        await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 3, shouldYield: true, vadConfidence: 0.27));
+        await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 6, shouldYield: true, vadConfidence: 0.27));
+
+        Assert.Equal(0, playback.PauseCount);
+        var debug = controller.GetDebugState();
+        Assert.True(debug.CandidateActive);
+        Assert.Equal(3, debug.CandidateStartFrameId);
+        Assert.Equal(30, debug.CandidateDurationMs);
+        Assert.Equal(60, debug.RequiredSustainedMs);
+        Assert.Equal(0.27, debug.CandidatePeakVadConfidence);
+    }
+
+    [Fact]
     public async Task HandleOfficialDecisionAsync_WhenDecisionIsNotAuthoritative_DoesNotYield()
     {
         var playback = new RecordingPlaybackService();
@@ -233,9 +328,11 @@ public sealed class FloorYieldControllerTests
 
     private static SpeechPresenceOfficialDecision CreateOfficialDecision(
         long frameId = 1,
-        bool shouldYield = true)
+        bool shouldYield = true,
+        double? vadConfidence = null)
     {
         var state = shouldYield ? SpeechPresenceState.Yes : SpeechPresenceState.No;
+        var resolvedVadConfidence = vadConfidence ?? (shouldYield ? 0.7 : 0.0);
         var evidence = new SpeechPresenceEvidence
         {
             FrameId = frameId,
@@ -244,7 +341,7 @@ public sealed class FloorYieldControllerTests
             RawMicRms = shouldYield ? 0.03 : 0.001,
             EchoReducedRms = shouldYield ? 0.02 : 0.001,
             PlaybackReferenceRms = 0.04,
-            VadConfidence = shouldYield ? 0.7 : 0.0,
+            VadConfidence = resolvedVadConfidence,
             VadSpeechDetected = shouldYield,
             SourcePath = "official_frame_decision"
         };

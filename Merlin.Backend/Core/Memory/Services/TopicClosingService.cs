@@ -7,9 +7,10 @@ public sealed class TopicSummaryBuilder
 {
     public string Build(ConversationTopicRecord topic, IReadOnlyCollection<string> concepts, string closeReason)
     {
-        var summary = string.IsNullOrWhiteSpace(topic.Summary)
+        var summary = TopicSummarySanitizer.SanitizeForSession(topic.Summary, topic.Title);
+        summary = string.IsNullOrWhiteSpace(summary)
             ? $"The topic '{topic.Title}' was active but had little captured discussion."
-            : topic.Summary.Trim();
+            : summary;
         var conceptText = concepts.Count == 0 ? "none captured" : string.Join(", ", concepts.Take(20));
         return $"Topic: {topic.Title}\n\nSummary:\n{summary}\n\nKey concepts: {conceptText}\n\nOutcome: Closed because {closeReason}.";
     }
@@ -37,7 +38,7 @@ public sealed class TopicImportanceScorer
             score += 0.2;
         }
 
-        if ((topic.Summary?.Length ?? 0) > 300)
+        if (TopicSummarySanitizer.SanitizeForSession(topic.Summary, topic.Title).Length > 300)
         {
             score += 0.1;
         }
@@ -99,6 +100,42 @@ public sealed class TopicClosingService
         var concepts = state.ActiveConcepts.Count > 0 ? state.ActiveConcepts : ExtractConceptsFromSummary(topic.Summary);
         var summary = _summaryBuilder.Build(topic, concepts, reason);
         var now = DateTimeOffset.UtcNow;
+        var quality = MediumMemoryQualityGate.EvaluateTopicClose(new MediumMemoryQualityInput
+        {
+            Title = topic.Title,
+            Summary = topic.Summary,
+            Concepts = concepts,
+            CloseReason = reason,
+            UserConfirmed = userConfirmed
+        });
+        if (quality.Decision is MediumMemoryQualityDecision.Skip)
+        {
+            await _conversationStore.EndTopicAsync(topic.Id, "closed", topic.Summary, cancellationToken);
+            return new TopicCloseResult
+            {
+                Closed = true,
+                TopicId = topic.Id,
+                Summary = summary,
+                Concepts = concepts,
+                Reason = $"Skipped medium memory: {quality.Reason}"
+            };
+        }
+
+        var duplicateMemory = await FindDuplicateEpisodeMemoryAsync(topic, summary, cancellationToken);
+        if (duplicateMemory is not null)
+        {
+            await _conversationStore.EndTopicAsync(topic.Id, "closed", topic.Summary, cancellationToken);
+            return new TopicCloseResult
+            {
+                Closed = true,
+                TopicId = topic.Id,
+                MediumMemoryId = duplicateMemory.Id,
+                Summary = summary,
+                Concepts = concepts,
+                Reason = $"{reason}; duplicate episode memory already existed"
+            };
+        }
+
         var memory = new MemoryRecord
         {
             Id = Guid.NewGuid().ToString("N"),
@@ -136,6 +173,25 @@ public sealed class TopicClosingService
         };
     }
 
+    private async Task<MemoryRecord?> FindDuplicateEpisodeMemoryAsync(
+        ConversationTopicRecord topic,
+        string summary,
+        CancellationToken cancellationToken)
+    {
+        var candidates = await _memoryStore.SearchMemoriesAsync(new MemorySearchRequest
+        {
+            Query = topic.Title,
+            MemoryTypes = ["episode"],
+            Limit = 20
+        }, cancellationToken);
+
+        return candidates
+            .Select(candidate => candidate.Memory)
+            .FirstOrDefault(memory =>
+                string.Equals(NormalizeMemoryText(memory.Title), NormalizeMemoryText(topic.Title), StringComparison.Ordinal) &&
+                string.Equals(NormalizeMemoryText(memory.Content), NormalizeMemoryText(summary), StringComparison.Ordinal));
+    }
+
     public async Task<TopicCloseResult?> CloseIfUserRequestedAsync(string userMessage, CancellationToken cancellationToken = default)
     {
         var lower = userMessage.ToLowerInvariant();
@@ -152,21 +208,24 @@ public sealed class TopicClosingService
 
     private static bool IsMeaningful(ConversationTopicRecord topic)
     {
-        return !string.IsNullOrWhiteSpace(topic.Summary) && topic.Summary.Length >= 10 &&
-            !string.Equals(topic.Title, "General conversation", StringComparison.OrdinalIgnoreCase);
+        return TopicSummarySanitizer.HasMeaningfulTopicSummary(topic.Summary);
     }
 
     private static IReadOnlyList<string> ExtractConceptsFromSummary(string? summary)
     {
-        if (string.IsNullOrWhiteSpace(summary))
+        var cleaned = TopicSummarySanitizer.SanitizeForSession(summary);
+        if (string.IsNullOrWhiteSpace(cleaned))
         {
             return [];
         }
 
-        return summary.Split([' ', ',', '.', ':', ';', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries)
+        return cleaned.Split([' ', ',', '.', ':', ';', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries)
             .Where(word => word.Length > 3)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(20)
             .ToList();
     }
+
+    private static string NormalizeMemoryText(string? value) =>
+        string.Join(" ", (value ?? string.Empty).ToLowerInvariant().Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
 }

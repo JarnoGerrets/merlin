@@ -3,6 +3,8 @@ using Merlin.Backend.Models;
 
 namespace Merlin.Backend.Services;
 
+// Legacy JSON conversation memory. Quarantined after Memory Refactor PR 5.
+// Do not use for normal conversation. Core SQLite memory is the active brain.
 public sealed class LongTermMemoryStore : ILongTermMemoryStore
 {
     private static readonly HashSet<string> SupportedCategories = new(StringComparer.OrdinalIgnoreCase)

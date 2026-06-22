@@ -20,6 +20,7 @@ public sealed class MerlinDbContext : DbContext
     public DbSet<ConversationTopicEntity> ConversationTopics => Set<ConversationTopicEntity>();
     public DbSet<AssistantTurnEntity> AssistantTurns => Set<AssistantTurnEntity>();
     public DbSet<PromptCompilationEntity> PromptCompilations => Set<PromptCompilationEntity>();
+    public DbSet<UserProfileFactEntity> UserProfileFacts => Set<UserProfileFactEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

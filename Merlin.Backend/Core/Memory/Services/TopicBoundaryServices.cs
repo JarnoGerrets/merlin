@@ -135,7 +135,6 @@ public sealed class TopicBoundaryDetector
 
 public sealed class CurrentConversationMemoryService
 {
-    private const int SummaryLimit = 1200;
     private readonly ActiveConceptMerger _conceptMerger;
     private readonly IConceptExtractionService _conceptExtractor;
     private readonly TopicBoundaryDetector _topicBoundaryDetector;
@@ -176,6 +175,11 @@ public sealed class CurrentConversationMemoryService
         CancellationToken cancellationToken = default)
     {
         var state = await GetOrCreateCurrentStateAsync(cancellationToken);
+        if (TopicSummarySanitizer.IsLowValueUserMessage(userMessage))
+        {
+            return state;
+        }
+
         var concepts = _conceptExtractor.ExtractConceptNames(userMessage);
         var decision = _topicBoundaryDetector.Analyze(userMessage, state, concepts);
         ConversationTopicRecord topic;
@@ -195,7 +199,7 @@ public sealed class CurrentConversationMemoryService
         }
 
         var mergedConcepts = _conceptMerger.Merge(ParseConcepts(topic.Summary).Concat(state.ActiveConcepts).ToList(), concepts);
-        var summary = BuildRollingSummary(topic.Summary, userMessage, mergedConcepts);
+        var summary = TopicSummarySanitizer.BuildRollingUserSummary(topic.Summary, userMessage, mergedConcepts);
         await _conversationStore.UpdateTopicSummaryAsync(topic.Id, summary, cancellationToken);
 
         return ToState(state.ConversationId, topic with { Summary = summary }, mergedConcepts);
@@ -217,9 +221,14 @@ public sealed class CurrentConversationMemoryService
             return state;
         }
 
+        if (TopicSummarySanitizer.IsClarificationBoilerplate(assistantResponse))
+        {
+            return ToState(state.ConversationId, topic, state.ActiveConcepts);
+        }
+
         var concepts = _conceptExtractor.ExtractConceptNames(assistantResponse);
         var merged = _conceptMerger.Merge(state.ActiveConcepts, concepts);
-        var summary = BuildRollingSummary(topic.Summary, assistantResponse, merged, prefix: "Assistant response touched on");
+        var summary = TopicSummarySanitizer.BuildRollingAssistantSummary(topic.Summary, assistantResponse, merged);
         await _conversationStore.UpdateTopicSummaryAsync(topic.Id, summary, cancellationToken);
         return ToState(state.ConversationId, topic with { Summary = summary }, merged);
     }
@@ -232,49 +241,41 @@ public sealed class CurrentConversationMemoryService
             ConversationId = conversationId,
             ActiveTopicId = topic.Id,
             ActiveTopicTitle = topic.Title,
-            RecentSummary = topic.Summary,
+            RecentSummary = TopicSummarySanitizer.SanitizeForSession(topic.Summary, topic.Title),
             ActiveConcepts = parsedConcepts,
             CurrentGoal = topic.Title,
             LastUpdatedUtc = DateTimeOffset.UtcNow
         };
     }
 
-    private static string BuildRollingSummary(
-        string? existingSummary,
-        string text,
-        IReadOnlyCollection<string> concepts,
-        string prefix = "User discussed")
-    {
-        var compactText = Regex.Replace(text.Trim(), "\\s+", " ");
-        if (compactText.Length > 220)
-        {
-            compactText = compactText[..217] + "...";
-        }
-
-        var conceptText = concepts.Count == 0 ? "general conversation" : string.Join(", ", concepts.Take(12));
-        var sentence = $"{prefix} {conceptText}: {compactText}";
-        var next = string.IsNullOrWhiteSpace(existingSummary)
-            ? sentence
-            : $"{existingSummary.Trim()} {sentence}";
-
-        return next.Length <= SummaryLimit ? next : next[^SummaryLimit..];
-    }
-
     private static IReadOnlyList<string> ParseConcepts(string? summary)
     {
-        if (string.IsNullOrWhiteSpace(summary))
+        var cleaned = TopicSummarySanitizer.CleanText(summary);
+        if (string.IsNullOrWhiteSpace(cleaned))
         {
             return [];
         }
 
-        var markerIndex = summary.IndexOf(':');
+        if (cleaned.StartsWith("User discussed ", StringComparison.OrdinalIgnoreCase))
+        {
+            cleaned = cleaned["User discussed ".Length..];
+        }
+        else if (cleaned.StartsWith("Assistant response touched on ", StringComparison.OrdinalIgnoreCase))
+        {
+            cleaned = cleaned["Assistant response touched on ".Length..];
+        }
+
+        var markerIndex = cleaned.IndexOf(':');
         if (markerIndex < 0)
         {
             return [];
         }
 
-        return summary[..markerIndex]
+        return cleaned[..markerIndex]
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(value => value.StartsWith("User discussed ", StringComparison.OrdinalIgnoreCase)
+                ? value["User discussed ".Length..].Trim()
+                : value)
             .Where(value => value.Length is > 1 and < 80)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(40)

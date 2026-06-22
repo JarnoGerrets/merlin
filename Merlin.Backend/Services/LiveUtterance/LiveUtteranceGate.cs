@@ -17,6 +17,7 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
     private static readonly string[] ReplacementPrefixes = ["sorry i meant ", "i meant ", "i mean ", "actually ", "no open ", "no ", "not ", "instead "];
     private static readonly string[] CorrectionContentPrefixes = ["what i meant was ", "what i meant is ", "what i meant ", "i meant was ", "i meant is ", "i meant ", "i mean "];
     private static readonly string[] IncompletePhrases = ["yeah but", "but", "no no wait", "sorry i meant", "i meant", "i mean", "can you open", "open the", "but that means"];
+    private static readonly string[] ExplicitProfileRequestPrefixes = ["i prefer ", "from now on ", "remember that "];
     private static readonly HashSet<string> QuestionStarters = new(StringComparer.Ordinal)
     {
         "what", "who", "where", "when", "why", "how"
@@ -299,6 +300,21 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
             return Result(LiveUtteranceGateDecisionKind.IgnoreAsGarbageTranscript, 0.78, "Malformed transcript should not route to general conversation.", normalized, stripped, sourceContext, positiveSignals: analysis.PositiveSignals, negativeSignals: AddSignal(analysis.NegativeSignals, "malformed_transcript"));
         }
 
+        if (IsExplicitProfileRequest(analysisText))
+        {
+            return Result(
+                LiveUtteranceGateDecisionKind.AcceptNewRequest,
+                input.IsIdleListening ? 0.82 : 0.74,
+                "Explicit profile or memory preference request.",
+                normalized,
+                stripped,
+                sourceContext,
+                positiveSignals: AddSignal(analysis.PositiveSignals, "explicit_profile_request"),
+                negativeSignals: analysis.NegativeSignals,
+                shouldCallDeepInfra: true,
+                shouldRouteToCommandRouter: _options.RouteClearIdleRequestsToCommandRouter);
+        }
+
         if (input.IsIdleListening && analysis.IsCoherent)
         {
             return Result(
@@ -535,6 +551,13 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
     private static bool IsClearIdleRequest(string normalized)
     {
         return AnalyzeGeneralRequest(normalized).IsCoherent;
+    }
+
+    private static bool IsExplicitProfileRequest(string normalized)
+    {
+        return ExplicitProfileRequestPrefixes.Any(prefix =>
+            normalized.StartsWith(prefix, StringComparison.Ordinal)
+            && normalized.Length > prefix.Length);
     }
 
     private static GeneralRequestAnalysis AnalyzeGeneralRequest(string normalized)

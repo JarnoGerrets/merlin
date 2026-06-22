@@ -10,6 +10,8 @@ public sealed class PromptCompilationEntity
     public int? EstimatedInputTokens { get; set; }
     public string? IncludedMemoryIdsJson { get; set; }
     public string? IncludedConceptIdsJson { get; set; }
+    public string? IncludedProfileFactIdsJson { get; set; }
+    public string? CompiledBlocksJson { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public ConversationEntity Conversation { get; set; } = default!;
     public AssistantTurnEntity? Turn { get; set; }

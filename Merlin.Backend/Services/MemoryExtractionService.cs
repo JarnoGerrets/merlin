@@ -2,6 +2,8 @@ using Merlin.Backend.Models;
 
 namespace Merlin.Backend.Services;
 
+// Legacy JSON conversation memory extraction. Quarantined after Memory Refactor PR 5.
+// Do not use for normal conversation. Core SQLite memory is the active brain.
 public sealed class MemoryExtractionService : IMemoryExtractionService
 {
     private readonly object _syncRoot = new();

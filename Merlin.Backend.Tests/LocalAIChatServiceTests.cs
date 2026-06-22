@@ -1,6 +1,16 @@
 using Merlin.Backend.Configuration;
+using Merlin.Backend.Core.Conversation;
+using Merlin.Backend.Core.Memory.Services;
+using Merlin.Backend.Core.Memory.Search;
+using Merlin.Backend.Core.Memory.Stores;
+using Merlin.Backend.Infrastructure.Persistence;
+using Merlin.Backend.Infrastructure.Persistence.Repositories;
 using Merlin.Backend.Models;
 using Merlin.Backend.Services;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -67,6 +77,43 @@ public sealed class LocalAIChatServiceTests
     }
 
     [Fact]
+    public async Task GenerateResponseAsync_WhenCoreMemoryUnavailable_FailsClosedBeforeLlmOrLegacyMemory()
+    {
+        var client = new FakeLocalAIClient("This should not be used.");
+        var service = CreateService(
+            client,
+            enabled: true,
+            available: true,
+            requireCoreMemory: true,
+            coreMemoryHealthy: false);
+
+        var result = await service.GenerateResponseAsync("tell me a joke");
+
+        Assert.False(result.Success);
+        Assert.Equal(LocalAIChatService.CoreMemoryUnavailableErrorCode, result.ErrorCode);
+        Assert.Equal(LocalAIChatService.CoreMemoryUnavailableMessage, result.Message);
+        Assert.Equal(0, client.CallCount);
+    }
+
+    [Fact]
+    public async Task GenerateResponseAsync_WhenCoreMemoryHealthy_UsesNormalConversationPath()
+    {
+        var client = new FakeLocalAIClient("Core memory is healthy.");
+        var service = CreateService(
+            client,
+            enabled: true,
+            available: true,
+            requireCoreMemory: true,
+            coreMemoryHealthy: true);
+
+        var result = await service.GenerateResponseAsync("tell me a joke");
+
+        Assert.True(result.Success);
+        Assert.Equal("Core memory is healthy.", result.Message);
+        Assert.Equal(1, client.CallCount);
+    }
+
+    [Fact]
     public async Task GenerateResponseAsync_WhenLocalAIIsCold_WarmsOnDemand()
     {
         var service = CreateService(new FakeLocalAIClient("Local answer."), enabled: true, available: false, warmupSucceeds: true);
@@ -95,81 +142,51 @@ public sealed class LocalAIChatServiceTests
     }
 
     [Fact]
-    public async Task GenerateResponseAsync_PromptIncludesRunningSummaryRecentMessagesAndCurrentMessage()
+    public async Task GenerateResponseAsync_PromptExcludesLegacyJsonSessionAndIncludesCurrentMessage()
     {
         var client = new FakeLocalAIClient("The first tool opens applications.");
-        var sessionService = new ConversationSessionService(new FakeConversationSummaryStore());
-        sessionService.UpdateRunningSummary("User asked about Merlin tools.");
-        sessionService.AddUserMessage("What tools do you have?");
-        sessionService.AddAssistantMessage("Open Application is listed first.");
         var service = CreateService(
             client,
             enabled: true,
-            available: true,
-            sessionService: sessionService);
+            available: true);
 
         await service.GenerateResponseAsync("Tell me more about the first one.");
 
-        Assert.Contains("Conversation summary:", client.LastPrompt);
-        Assert.Contains("User asked about Merlin tools.", client.LastPrompt);
-        Assert.Contains("Recent conversation messages:", client.LastPrompt);
-        Assert.Contains("USER:\nWhat tools do you have?", client.LastPrompt);
-        Assert.Contains("ASSISTANT:\nOpen Application is listed first.", client.LastPrompt);
+        Assert.DoesNotContain("Conversation summary:", client.LastPrompt);
+        Assert.DoesNotContain("Recent conversation messages:", client.LastPrompt);
+        Assert.DoesNotContain("Relevant long-term memories:", client.LastPrompt);
         Assert.Contains("USER:\nTell me more about the first one.", client.LastPrompt);
         Assert.Contains("Tell me more about the first one.", client.LastPrompt);
     }
 
     [Fact]
-    public async Task GenerateResponseAsync_StoresUserAndAssistantMessages()
+    public async Task GenerateResponseAsync_DoesNotUseLegacyJsonSessionAsFallbackBrain()
     {
-        var sessionService = new ConversationSessionService(new FakeConversationSummaryStore());
-        var service = CreateService(
-            new FakeLocalAIClient("I am Merlin."),
-            enabled: true,
-            available: true,
-            sessionService: sessionService);
-
-        await service.GenerateResponseAsync("Who are you?");
-
-        var messages = sessionService.GetRecentMessages();
-        Assert.Equal(2, messages.Count);
-        Assert.Equal("User", messages[0].Role);
-        Assert.Equal("Who are you?", messages[0].Content);
-        Assert.Equal("Assistant", messages[1].Role);
-        Assert.Equal("I am Merlin.", messages[1].Content);
-    }
-
-    [Fact]
-    public async Task GenerateResponseAsync_PromptIncludesOnlyRelevantMemories()
-    {
-        var client = new FakeLocalAIClient("Merlin uses Godot.");
-        var memoryStore = new FakeLongTermMemoryStore();
-        memoryStore.SaveMemory(new MemoryRecord
-        {
-            Category = "project",
-            Key = "frontend",
-            Value = "Merlin uses Godot frontend.",
-            Source = "test",
-            Confidence = 0.9
-        });
-        memoryStore.SaveMemory(new MemoryRecord
-        {
-            Category = "fact",
-            Key = "ollama_endpoint",
-            Value = "Ollama hosts LocalAI on localhost:11434.",
-            Source = "test",
-            Confidence = 0.9
-        });
+        var client = new FakeLocalAIClient("I am Merlin.");
         var service = CreateService(
             client,
             enabled: true,
-            available: true,
-            memoryStore: memoryStore);
+            available: true);
+
+        await service.GenerateResponseAsync("Who are you?");
+
+        Assert.DoesNotContain("Conversation summary:", client.LastPrompt);
+        Assert.DoesNotContain("Recent conversation messages:", client.LastPrompt);
+    }
+
+    [Fact]
+    public async Task GenerateResponseAsync_DoesNotUseLegacyJsonLongTermMemory()
+    {
+        var client = new FakeLocalAIClient("Merlin uses Godot.");
+        var service = CreateService(
+            client,
+            enabled: true,
+            available: true);
 
         await service.GenerateResponseAsync("What frontend does Merlin use?");
 
-        Assert.Contains("Relevant long-term memories:", client.LastPrompt);
-        Assert.Contains("Merlin uses Godot frontend.", client.LastPrompt);
+        Assert.DoesNotContain("Relevant long-term memories:", client.LastPrompt);
+        Assert.DoesNotContain("Merlin uses Godot frontend.", client.LastPrompt);
         Assert.DoesNotContain("localhost:11434", client.LastPrompt);
     }
 
@@ -179,21 +196,77 @@ public sealed class LocalAIChatServiceTests
         bool available,
         bool warmupSucceeds = true,
         string policy = "TEST POLICY",
-        IConversationSessionService? sessionService = null,
-        ILongTermMemoryStore? memoryStore = null,
-        LlmOptions? llmOptions = null)
+        LlmOptions? llmOptions = null,
+        bool requireCoreMemory = false,
+        bool coreMemoryHealthy = true)
     {
         var localOptions = Options.Create(new LocalAIOptions { Enabled = enabled });
         var configuredLlmOptions = Options.Create(llmOptions ?? new LlmOptions { Provider = "local" });
+        var coreMemoryOptions = Options.Create(new CoreMemoryOptions
+        {
+            RequireCoreMemoryForConversation = requireCoreMemory
+        });
         var healthService = new FakeLocalAIHealthService(available, warmupSucceeds);
         return new LocalAIChatService(
             new DeepInfraLlmProvider(new HttpClient(), configuredLlmOptions, NullLogger<DeepInfraLlmProvider>.Instance),
             new LocalLlmProvider(client, healthService, localOptions, NullLogger<LocalLlmProvider>.Instance),
             configuredLlmOptions,
             new FakeAssistantPolicyProvider(policy),
-            sessionService ?? new ConversationSessionService(new FakeConversationSummaryStore()),
-            memoryStore ?? new FakeLongTermMemoryStore(),
-            NullLogger<LocalAIChatService>.Instance);
+            NullLogger<LocalAIChatService>.Instance,
+            coreMemoryOptions,
+            requireCoreMemory ? CreateCoreMemoryScopeFactory(coreMemoryHealthy) : null);
+    }
+
+    private static IServiceScopeFactory CreateCoreMemoryScopeFactory(bool healthy)
+    {
+        if (healthy)
+        {
+            return CreateHealthyCoreMemoryScopeFactory();
+        }
+
+        var services = new ServiceCollection();
+        services.AddSingleton<ICoreMemoryHealthService>(new FakeCoreMemoryHealthService(healthy));
+        return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    }
+
+    private static IServiceScopeFactory CreateHealthyCoreMemoryScopeFactory()
+    {
+        var services = new ServiceCollection();
+        var connection = new SqliteConnection("Data Source=:memory:");
+        connection.Open();
+        services.AddSingleton(connection);
+        services.AddDbContext<MerlinDbContext>(options => options.UseSqlite(connection));
+        services.AddLogging();
+        services.AddScoped<IMemoryStore, EfMemoryStore>();
+        services.AddScoped<IConceptStore, EfConceptStore>();
+        services.AddScoped<IConversationStateStore, EfConversationStateStore>();
+        services.AddScoped<IPromptCompilationStore, EfPromptCompilationStore>();
+        services.AddScoped<IUserProfileFactStore, EfUserProfileFactStore>();
+        services.AddSingleton<IConceptExtractionService, LocalConceptExtractionService>();
+        services.AddScoped<FollowUpCueDetector>();
+        services.AddScoped<ActiveConceptMerger>();
+        services.AddScoped<TopicBoundaryDetector>();
+        services.AddScoped<CurrentConversationMemoryService>();
+        services.AddScoped<ExplicitMemoryRequestDetector>();
+        services.AddScoped<MemoryTypeClassifier>();
+        services.AddScoped<MemoryWriter>();
+        services.AddScoped<UserProfileFactDetector>();
+        services.AddScoped<UserProfileFactService>();
+        services.AddScoped<TopicSummaryBuilder>();
+        services.AddScoped<TopicImportanceScorer>();
+        services.AddScoped<TopicClosingService>();
+        services.AddScoped<ConceptGraphActivationService>();
+        services.AddScoped<AssociativeRetriever>();
+        services.AddSingleton<ITokenEstimator, SimpleTokenEstimator>();
+        services.AddScoped<TokenBudgetService>();
+        services.AddScoped<PromptRenderer>();
+        services.AddScoped<PromptCompiler>();
+        services.AddScoped<ICoreMemoryHealthService, CoreMemoryHealthService>();
+        services.AddScoped<MemoryOrchestrator>();
+        var serviceProvider = services.BuildServiceProvider();
+        using var scope = serviceProvider.CreateScope();
+        scope.ServiceProvider.GetRequiredService<MerlinDbContext>().Database.EnsureCreated();
+        return serviceProvider.GetRequiredService<IServiceScopeFactory>();
     }
 
     private sealed class FakeLocalAIClient : ILocalAIClient
@@ -217,6 +290,28 @@ public sealed class LocalAIChatServiceTests
             cancellationToken.ThrowIfCancellationRequested();
             LastPrompt = prompt;
             return Task.FromResult(_response);
+        }
+    }
+
+    private sealed class FakeCoreMemoryHealthService : ICoreMemoryHealthService
+    {
+        private readonly bool _healthy;
+
+        public FakeCoreMemoryHealthService(bool healthy)
+        {
+            _healthy = healthy;
+        }
+
+        public Task<CoreMemoryHealthStatus> CheckAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new CoreMemoryHealthStatus
+            {
+                IsHealthy = _healthy,
+                DatabaseAvailable = _healthy,
+                CanQueryMemory = _healthy,
+                CanQueryProfileFacts = _healthy,
+                FailureReason = _healthy ? null : "test core memory unavailable"
+            });
         }
     }
 

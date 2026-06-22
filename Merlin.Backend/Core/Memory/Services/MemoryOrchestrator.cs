@@ -9,6 +9,8 @@ public sealed class MemoryOrchestrator
     private readonly MemoryWriter _memoryWriter;
     private readonly PromptCompiler _promptCompiler;
     private readonly TopicClosingService _topicClosingService;
+    private readonly UserProfileFactDetector? _profileFactDetector;
+    private readonly UserProfileFactService? _profileFactService;
     private readonly ILogger<MemoryOrchestrator> _logger;
 
     public MemoryOrchestrator(
@@ -17,7 +19,9 @@ public sealed class MemoryOrchestrator
         TopicClosingService topicClosingService,
         AssociativeRetriever retriever,
         PromptCompiler promptCompiler,
-        ILogger<MemoryOrchestrator> logger)
+        ILogger<MemoryOrchestrator> logger,
+        UserProfileFactDetector? profileFactDetector = null,
+        UserProfileFactService? profileFactService = null)
     {
         _currentConversation = currentConversation;
         _memoryWriter = memoryWriter;
@@ -25,6 +29,8 @@ public sealed class MemoryOrchestrator
         _retriever = retriever;
         _promptCompiler = promptCompiler;
         _logger = logger;
+        _profileFactDetector = profileFactDetector;
+        _profileFactService = profileFactService;
     }
 
     public async Task<MemoryPreparationResult> PrepareForModelCallAsync(
@@ -35,6 +41,33 @@ public sealed class MemoryOrchestrator
         try
         {
             var stateBefore = await _currentConversation.GetOrCreateCurrentStateAsync(cancellationToken);
+            if (_profileFactDetector?.TryDetect(userMessage, out var profileFactCandidate) == true &&
+                _profileFactService is not null)
+            {
+                var upsertResult = await _profileFactService.UpsertAsync(profileFactCandidate, cancellationToken);
+                var compiled = await _promptCompiler.CompileAsync(new PromptCompileRequest
+                {
+                    CurrentUserMessage = userMessage,
+                    PromptType = "profile_fact_ack",
+                    ConversationId = stateBefore.ConversationId,
+                    MaxInputTokens = 500,
+                    MaxMemoryTokens = 0,
+                    RetrievedMemories = []
+                }, cancellationToken);
+
+                return new MemoryPreparationResult
+                {
+                    ConversationId = stateBefore.ConversationId,
+                    TopicId = stateBefore.ActiveTopicId,
+                    CompiledPrompt = compiled.CompiledPrompt,
+                    EstimatedInputTokens = compiled.EstimatedInputTokens,
+                    IncludedMemoryIds = compiled.IncludedMemoryIds,
+                    IncludedConceptIds = compiled.IncludedConceptIds,
+                    RetrievedMemories = [],
+                    LocalResponse = upsertResult.AcknowledgementText
+                };
+            }
+
             var explicitRequest = _memoryWriter.DetectExplicitRequest(userMessage);
             if (explicitRequest.IsExplicitMemoryRequest)
             {
@@ -67,14 +100,23 @@ public sealed class MemoryOrchestrator
                 };
             }
 
-            _ = await _topicClosingService.CloseIfUserRequestedAsync(userMessage, cancellationToken);
-            var boundaryDecision = await _currentConversation.AnalyzeUserMessageAsync(userMessage, cancellationToken);
-            if (boundaryDecision.IsNewTopic && boundaryDecision.ShouldClosePreviousTopic)
+            CurrentConversationState state;
+            if (TopicSummarySanitizer.IsLowValueUserMessage(userMessage))
             {
-                await _topicClosingService.CloseCurrentTopicAsync(TopicCloseReasons.TopicSwitch, cancellationToken: cancellationToken);
+                state = stateBefore;
+            }
+            else
+            {
+                _ = await _topicClosingService.CloseIfUserRequestedAsync(userMessage, cancellationToken);
+                var boundaryDecision = await _currentConversation.AnalyzeUserMessageAsync(userMessage, cancellationToken);
+                if (boundaryDecision.IsNewTopic && boundaryDecision.ShouldClosePreviousTopic)
+                {
+                    await _topicClosingService.CloseCurrentTopicAsync(TopicCloseReasons.TopicSwitch, cancellationToken: cancellationToken);
+                }
+
+                state = await _currentConversation.ApplyUserMessageAsync(userMessage, cancellationToken);
             }
 
-            var state = await _currentConversation.ApplyUserMessageAsync(userMessage, cancellationToken);
             var memories = await _retriever.RetrieveAsync(new MemoryRetrievalRequest
             {
                 Query = userMessage,

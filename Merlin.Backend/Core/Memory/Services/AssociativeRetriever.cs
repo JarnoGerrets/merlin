@@ -82,6 +82,36 @@ public sealed class ConceptGraphActivationService
 
 public sealed class AssociativeRetriever
 {
+    private static readonly HashSet<string> KeywordStopwords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "about",
+        "after",
+        "again",
+        "also",
+        "because",
+        "before",
+        "could",
+        "does",
+        "doing",
+        "from",
+        "have",
+        "into",
+        "just",
+        "like",
+        "memory",
+        "remember",
+        "should",
+        "that",
+        "there",
+        "this",
+        "what",
+        "when",
+        "where",
+        "which",
+        "with",
+        "would"
+    };
+
     private readonly ConceptGraphActivationService _activationService;
     private readonly IConceptExtractionService _conceptExtractor;
     private readonly IConceptStore _conceptStore;
@@ -115,7 +145,8 @@ public sealed class AssociativeRetriever
             {
                 Query = term,
                 Limit = 50,
-                IncludeExpired = request.IncludeArchived
+                IncludeExpired = request.IncludeArchived,
+                IncludeInactive = request.IncludeArchived
             }, cancellationToken);
             foreach (var result in results)
             {
@@ -129,7 +160,8 @@ public sealed class AssociativeRetriever
             {
                 ConceptIds = allIds,
                 Limit = 100,
-                IncludeExpired = request.IncludeArchived
+                IncludeExpired = request.IncludeArchived,
+                IncludeInactive = request.IncludeArchived
             }, cancellationToken);
             foreach (var result in results)
             {
@@ -184,6 +216,7 @@ public sealed class AssociativeRetriever
             MemoryType = memory.MemoryType,
             Title = memory.Title,
             Content = memory.Content,
+            CompactContent = memory.CompactContent,
             Summary = memory.Summary,
             Score = Math.Round(Math.Clamp(final, 0, 1), 4),
             MatchedConcepts = candidate.Concepts.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
@@ -193,12 +226,14 @@ public sealed class AssociativeRetriever
 
     private static IReadOnlyList<string> BuildKeywordTerms(string query)
     {
-        var terms = query.Split([' ', ',', '.', '?', '!', ';', ':'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(term => term.Length > 3)
+        var normalizedQuery = ProjectIdentifierNormalizer.NormalizeText(query);
+        var terms = normalizedQuery.Split([' ', ',', '.', '?', '!', ';', ':'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(term => term.Length > 3 || ProjectIdentifierNormalizer.IsCompactIdentifier(term))
+            .Where(term => !KeywordStopwords.Contains(term))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(8)
             .ToList();
-        return terms.Count == 0 ? [query] : terms;
+        return terms;
     }
 
     private static double KeywordScore(MemoryRecord memory, string query, string term)

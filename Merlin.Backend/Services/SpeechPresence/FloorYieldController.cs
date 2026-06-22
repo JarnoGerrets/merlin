@@ -15,6 +15,7 @@ public sealed class FloorYieldController : IFloorYieldController
     private bool _yieldedCurrentPlayback;
     private long? _candidateStartFrameId;
     private DateTimeOffset? _candidateStartTimestampUtc;
+    private double? _candidatePeakVadConfidence;
     private FloorYieldDebugState _debugState = new();
 
     public FloorYieldController(
@@ -34,7 +35,7 @@ public sealed class FloorYieldController : IFloorYieldController
         CancellationToken cancellationToken = default)
     {
         var options = _options.CurrentValue;
-        var requiredSustainedMs = Math.Max(0, options.FloorYieldMinSustainedMs);
+        var defaultRequiredSustainedMs = Math.Max(0, options.FloorYieldMinSustainedMs);
         if (!options.EnableFloorYield)
         {
             ResetStateWhenPlaybackInactive("playback_inactive", decision);
@@ -74,6 +75,8 @@ public sealed class FloorYieldController : IFloorYieldController
 
         long candidateStartFrameId;
         double candidateDurationMs;
+        double candidatePeakVadConfidence;
+        int requiredSustainedMs;
         lock (_syncRoot)
         {
             if (_yieldedCurrentPlayback)
@@ -86,33 +89,52 @@ public sealed class FloorYieldController : IFloorYieldController
             {
                 _candidateStartTimestampUtc = decision.TimestampUtc;
                 _candidateStartFrameId = decision.FrameId;
+                _candidatePeakVadConfidence = ClampConfidence(decision.Result.Evidence.VadConfidence);
                 candidateDurationMs = 0;
                 candidateStartFrameId = decision.FrameId;
+                candidatePeakVadConfidence = _candidatePeakVadConfidence.Value;
+                requiredSustainedMs = RequiredSustainedMs(defaultRequiredSustainedMs, candidatePeakVadConfidence);
                 _debugState = _debugState with
                 {
                     CandidateActive = true,
                     CandidateStartFrameId = candidateStartFrameId,
                     CandidateDurationMs = candidateDurationMs,
-                    RequiredSustainedMs = requiredSustainedMs
+                    RequiredSustainedMs = requiredSustainedMs,
+                    LastVadConfidence = ClampConfidence(decision.Result.Evidence.VadConfidence),
+                    CandidatePeakVadConfidence = candidatePeakVadConfidence
                 };
-                LogCandidateStarted(decision, requiredSustainedMs);
+                LogCandidateStarted(decision, requiredSustainedMs, candidatePeakVadConfidence);
             }
             else
             {
                 candidateStartFrameId = _candidateStartFrameId.Value;
+                _candidatePeakVadConfidence = Math.Max(
+                    _candidatePeakVadConfidence ?? 0.0,
+                    ClampConfidence(decision.Result.Evidence.VadConfidence));
+                candidatePeakVadConfidence = _candidatePeakVadConfidence.Value;
+                requiredSustainedMs = RequiredSustainedMs(defaultRequiredSustainedMs, candidatePeakVadConfidence);
                 candidateDurationMs = GetCandidateDurationMs(decision.TimestampUtc, _candidateStartTimestampUtc.Value);
                 _debugState = _debugState with
                 {
                     CandidateActive = true,
                     CandidateStartFrameId = candidateStartFrameId,
                     CandidateDurationMs = candidateDurationMs,
-                    RequiredSustainedMs = requiredSustainedMs
+                    RequiredSustainedMs = requiredSustainedMs,
+                    LastVadConfidence = ClampConfidence(decision.Result.Evidence.VadConfidence),
+                    CandidatePeakVadConfidence = candidatePeakVadConfidence
                 };
             }
 
             if (candidateDurationMs < requiredSustainedMs)
             {
-                LogCandidateProgress(candidateStartFrameId, decision.FrameId, candidateDurationMs, requiredSustainedMs);
+                LogCandidateProgress(
+                    candidateStartFrameId,
+                    decision.FrameId,
+                    candidateDurationMs,
+                    requiredSustainedMs,
+                    decision.Result.Evidence.VadConfidence,
+                    candidatePeakVadConfidence,
+                    defaultRequiredSustainedMs);
                 return;
             }
 
@@ -127,13 +149,16 @@ public sealed class FloorYieldController : IFloorYieldController
                 CandidateActive = false,
                 CandidateStartFrameId = candidateStartFrameId,
                 CandidateDurationMs = candidateDurationMs,
-                RequiredSustainedMs = requiredSustainedMs
+                RequiredSustainedMs = requiredSustainedMs,
+                LastVadConfidence = ClampConfidence(decision.Result.Evidence.VadConfidence),
+                CandidatePeakVadConfidence = candidatePeakVadConfidence
             };
             _candidateStartFrameId = null;
             _candidateStartTimestampUtc = null;
+            _candidatePeakVadConfidence = null;
         }
 
-        LogTriggered(decision, options, candidateStartFrameId, candidateDurationMs, requiredSustainedMs);
+        LogTriggered(decision, options, candidateStartFrameId, candidateDurationMs, requiredSustainedMs, candidatePeakVadConfidence);
         await _playbackService.PauseCurrentSpeechAsync(cancellationToken);
     }
 
@@ -186,11 +211,13 @@ public sealed class FloorYieldController : IFloorYieldController
         var resetFrameId = decision?.FrameId;
         _candidateStartTimestampUtc = null;
         _candidateStartFrameId = null;
+        _candidatePeakVadConfidence = null;
         _debugState = _debugState with
         {
             CandidateActive = false,
             CandidateStartFrameId = startFrameId,
-            CandidateDurationMs = durationMs
+            CandidateDurationMs = durationMs,
+            CandidatePeakVadConfidence = null
         };
 
         _logger.LogInformation(
@@ -206,14 +233,15 @@ public sealed class FloorYieldController : IFloorYieldController
         SpeechPresenceOptions options,
         long candidateStartFrameId,
         double candidateDurationMs,
-        int requiredSustainedMs)
+        int requiredSustainedMs,
+        double candidatePeakVadConfidence)
     {
         var result = decision.Result;
         var evidence = result.Evidence;
         if (options.FloorYieldLogEvidence)
         {
             _logger.LogInformation(
-                "FloorYieldTriggered. CandidateStartFrameId: {CandidateStartFrameId}. TriggerFrameId: {TriggerFrameId}. CandidateDurationMs: {CandidateDurationMs:N1}. RequiredSustainedMs: {RequiredSustainedMs}. TimestampUtc: {TimestampUtc}. SpeechPresenceState: {SpeechPresenceState}. Confidence: {Confidence:N2}. Reason: {Reason}. RawMicRms: {RawMicRms:N4}. EchoReducedRms: {EchoReducedRms:N4}. PlaybackReferenceRms: {PlaybackReferenceRms:N4}. VadConfidence: {VadConfidence:N2}. PlaybackCorrelationScore: {PlaybackCorrelationScore}. AssistantPlaybackActive: {AssistantPlaybackActive}. PlaybackYieldMode: {PlaybackYieldMode}. Source: {Source}.",
+                "FloorYieldTriggered. CandidateStartFrameId: {CandidateStartFrameId}. TriggerFrameId: {TriggerFrameId}. CandidateDurationMs: {CandidateDurationMs:N1}. RequiredSustainedMs: {RequiredSustainedMs}. TimestampUtc: {TimestampUtc}. SpeechPresenceState: {SpeechPresenceState}. Confidence: {Confidence:N2}. Reason: {Reason}. RawMicRms: {RawMicRms:N4}. EchoReducedRms: {EchoReducedRms:N4}. PlaybackReferenceRms: {PlaybackReferenceRms:N4}. VadConfidence: {VadConfidence:N2}. CandidatePeakVadConfidence: {CandidatePeakVadConfidence:N2}. PlaybackCorrelationScore: {PlaybackCorrelationScore}. AssistantPlaybackActive: {AssistantPlaybackActive}. PlaybackYieldMode: {PlaybackYieldMode}. Source: {Source}.",
                 candidateStartFrameId,
                 decision.FrameId,
                 candidateDurationMs,
@@ -226,6 +254,7 @@ public sealed class FloorYieldController : IFloorYieldController
                 evidence.EchoReducedRms,
                 evidence.PlaybackReferenceRms,
                 evidence.VadConfidence,
+                candidatePeakVadConfidence,
                 evidence.PlaybackCorrelationScore,
                 _assistantPlaybackMonitor.IsPlaybackActive,
                 PlaybackYieldMode,
@@ -234,7 +263,7 @@ public sealed class FloorYieldController : IFloorYieldController
         }
 
         _logger.LogInformation(
-            "FloorYieldTriggered. CandidateStartFrameId: {CandidateStartFrameId}. TriggerFrameId: {TriggerFrameId}. CandidateDurationMs: {CandidateDurationMs:N1}. RequiredSustainedMs: {RequiredSustainedMs}. TimestampUtc: {TimestampUtc}. SpeechPresenceState: {SpeechPresenceState}. Confidence: {Confidence:N2}. Reason: {Reason}. AssistantPlaybackActive: {AssistantPlaybackActive}. PlaybackYieldMode: {PlaybackYieldMode}. Source: {Source}.",
+            "FloorYieldTriggered. CandidateStartFrameId: {CandidateStartFrameId}. TriggerFrameId: {TriggerFrameId}. CandidateDurationMs: {CandidateDurationMs:N1}. RequiredSustainedMs: {RequiredSustainedMs}. TimestampUtc: {TimestampUtc}. SpeechPresenceState: {SpeechPresenceState}. Confidence: {Confidence:N2}. Reason: {Reason}. VadConfidence: {VadConfidence:N2}. CandidatePeakVadConfidence: {CandidatePeakVadConfidence:N2}. AssistantPlaybackActive: {AssistantPlaybackActive}. PlaybackYieldMode: {PlaybackYieldMode}. Source: {Source}.",
             candidateStartFrameId,
             decision.FrameId,
             candidateDurationMs,
@@ -243,6 +272,8 @@ public sealed class FloorYieldController : IFloorYieldController
             result.State,
             result.Confidence,
             result.Reason,
+            result.Evidence.VadConfidence,
+            candidatePeakVadConfidence,
             _assistantPlaybackMonitor.IsPlaybackActive,
             PlaybackYieldMode,
             "official_speech_presence");
@@ -261,15 +292,18 @@ public sealed class FloorYieldController : IFloorYieldController
 
     private void LogCandidateStarted(
         SpeechPresenceOfficialDecision decision,
-        int requiredSustainedMs)
+        int requiredSustainedMs,
+        double candidatePeakVadConfidence)
     {
         _logger.LogInformation(
-            "FloorYieldCandidateStarted. StartFrameId: {StartFrameId}. TimestampUtc: {TimestampUtc}. SpeechPresenceState: {SpeechPresenceState}. Confidence: {Confidence:N2}. Reason: {Reason}. RequiredSustainedMs: {RequiredSustainedMs}.",
+            "FloorYieldCandidateStarted. StartFrameId: {StartFrameId}. TimestampUtc: {TimestampUtc}. SpeechPresenceState: {SpeechPresenceState}. Confidence: {Confidence:N2}. Reason: {Reason}. VadConfidence: {VadConfidence:N2}. CandidatePeakVadConfidence: {CandidatePeakVadConfidence:N2}. RequiredSustainedMs: {RequiredSustainedMs}.",
             decision.FrameId,
             decision.TimestampUtc,
             decision.Result.State,
             decision.Result.Confidence,
             decision.Result.Reason,
+            decision.Result.Evidence.VadConfidence,
+            candidatePeakVadConfidence,
             requiredSustainedMs);
     }
 
@@ -277,15 +311,38 @@ public sealed class FloorYieldController : IFloorYieldController
         long candidateStartFrameId,
         long currentFrameId,
         double candidateDurationMs,
-        int requiredSustainedMs)
+        int requiredSustainedMs,
+        double vadConfidence,
+        double candidatePeakVadConfidence,
+        int defaultRequiredSustainedMs)
     {
         _logger.LogDebug(
-            "FloorYieldCandidateProgress. StartFrameId: {StartFrameId}. CurrentFrameId: {CurrentFrameId}. CandidateDurationMs: {CandidateDurationMs:N1}. RequiredSustainedMs: {RequiredSustainedMs}.",
+            "FloorYieldCandidateProgress. StartFrameId: {StartFrameId}. CurrentFrameId: {CurrentFrameId}. CandidateDurationMs: {CandidateDurationMs:N1}. RequiredSustainedMs: {RequiredSustainedMs}. VadConfidence: {VadConfidence:N2}. CandidatePeakVadConfidence: {CandidatePeakVadConfidence:N2}. Reason: {Reason}.",
             candidateStartFrameId,
             currentFrameId,
             candidateDurationMs,
-            requiredSustainedMs);
+            requiredSustainedMs,
+            vadConfidence,
+            candidatePeakVadConfidence,
+            requiredSustainedMs > defaultRequiredSustainedMs ? "low_vad_extended_sustain" : "default_sustain");
     }
+
+    private static int RequiredSustainedMs(int defaultRequiredSustainedMs, double peakVadConfidence)
+    {
+        if (peakVadConfidence < 0.20)
+        {
+            return Math.Max(defaultRequiredSustainedMs, 90);
+        }
+
+        if (peakVadConfidence < 0.40)
+        {
+            return Math.Max(defaultRequiredSustainedMs, 60);
+        }
+
+        return defaultRequiredSustainedMs;
+    }
+
+    private static double ClampConfidence(double value) => Math.Clamp(value, 0.0, 1.0);
 
     private static double GetCandidateDurationMs(
         DateTimeOffset currentTimestampUtc,

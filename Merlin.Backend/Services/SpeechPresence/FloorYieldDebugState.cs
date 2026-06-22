@@ -19,4 +19,8 @@ public sealed record FloorYieldDebugState
     public double? CandidateDurationMs { get; init; }
 
     public int RequiredSustainedMs { get; init; }
+
+    public double? LastVadConfidence { get; init; }
+
+    public double? CandidatePeakVadConfidence { get; init; }
 }

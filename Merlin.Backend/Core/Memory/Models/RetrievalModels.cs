@@ -15,6 +15,7 @@ public sealed record RetrievedMemory
     public required string MemoryType { get; init; }
     public string? Title { get; init; }
     public required string Content { get; init; }
+    public string? CompactContent { get; init; }
     public string? Summary { get; init; }
     public double Score { get; init; }
     public IReadOnlyList<string> MatchedConcepts { get; init; } = [];

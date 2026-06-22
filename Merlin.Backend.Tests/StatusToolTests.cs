@@ -1,7 +1,11 @@
 using Merlin.Backend.Configuration;
+using Merlin.Backend.Core.Memory.Services;
+using Merlin.Backend.Infrastructure.Persistence;
 using Merlin.Backend.Services;
 using Merlin.Backend.Tools;
+using Microsoft.Data.Sqlite;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
@@ -79,13 +83,23 @@ public sealed class StatusToolTests
         Assert.Equal("Configured, Trusted, StartMenu, PATH", result.Diagnostics.ResolverStatus);
         Assert.Equal(0, result.Diagnostics.TrustedApplicationCount);
         Assert.Equal(0, result.Diagnostics.TrustedCommandCount);
-        Assert.False(string.IsNullOrWhiteSpace(result.Diagnostics.ConversationSessionId));
+        Assert.Equal(string.Empty, result.Diagnostics.ConversationSessionId);
         Assert.Equal(0, result.Diagnostics.ConversationMessageCount);
         Assert.Equal(0, result.Diagnostics.ConversationSummaryLength);
-        Assert.True(result.Diagnostics.ConversationSessionCreatedUtc <= DateTimeOffset.UtcNow);
-        Assert.Equal(0, result.Diagnostics.MemoryCount);
+        Assert.Equal(default, result.Diagnostics.ConversationSessionCreatedUtc);
+        Assert.Equal(1, result.Diagnostics.MemoryCount);
+        Assert.Equal("sqlite-core", result.Diagnostics.MemoryMode);
+        Assert.True(result.Diagnostics.CoreDatabaseAvailable);
+        Assert.True(result.Diagnostics.CoreMemoryHealthy);
+        Assert.True(result.Diagnostics.RequireCoreMemoryForConversation);
+        Assert.Equal(1, result.Diagnostics.CoreMemoryCount);
+        Assert.Equal(1, result.Diagnostics.ActiveProfileFactCount);
+        Assert.Equal(1, result.Diagnostics.ConceptCount);
+        Assert.Equal(0, result.Diagnostics.LegacyJsonMemoryCount);
+        Assert.False(result.Diagnostics.LegacyJsonEnabled);
+        Assert.False(result.Diagnostics.DegradedFallbackEnabled);
         Assert.Equal(0, result.Diagnostics.MemoryCandidateCount);
-        Assert.True(result.Diagnostics.MemoryStoreHealthy);
+        Assert.False(result.Diagnostics.MemoryStoreHealthy);
         Assert.True(result.Diagnostics.SystemResourceProviderEnabled);
     }
 
@@ -126,16 +140,19 @@ public sealed class StatusToolTests
         var services = new ServiceCollection();
         services.AddSingleton(TestApplicationLaunchOptions.Create());
         services.AddSingleton(Options.Create(new LocalAIOptions { Enabled = false }));
+        services.AddSingleton(Options.Create(new CoreMemoryOptions()));
         services.AddSingleton(TestCapabilityOptions.Create());
+        var connection = new SqliteConnection("Data Source=:memory:");
+        connection.Open();
+        services.AddSingleton(connection);
+        services.AddDbContext<MerlinDbContext>(options => options.UseSqlite(connection));
+        services.AddScoped<ICoreMemoryHealthService, CoreMemoryHealthService>();
         services.AddSingleton<IWebHostEnvironment>(new FakeWebHostEnvironment());
         services.AddSingleton<ILogger<StatusTool>>(NullLogger<StatusTool>.Instance);
+        services.AddSingleton<ILogger<CoreMemoryHealthService>>(NullLogger<CoreMemoryHealthService>.Instance);
         services.AddSingleton<ICapabilityClassifier, CapabilityClassifier>();
         services.AddSingleton<ILocalAIHealthService>(new FakeLocalAIHealthService());
         services.AddSingleton<ILocalAIChatService, FakeLocalAIChatService>();
-        services.AddSingleton<IConversationSummaryStore, FakeConversationSummaryStore>();
-        services.AddSingleton<IConversationSessionService, ConversationSessionService>();
-        services.AddSingleton<ILongTermMemoryStore, FakeLongTermMemoryStore>();
-        services.AddSingleton<IMemoryExtractionService, FakeMemoryExtractionService>();
         services.AddSingleton<IRuntimeStateService, RuntimeStateService>();
         services.AddSingleton<ISystemResourceProvider, FakeSystemResourceProvider>();
         services.AddSingleton<IConfirmationService, ConfirmationService>();
@@ -152,7 +169,53 @@ public sealed class StatusToolTests
         services.AddSingleton<ITool, GeneralConversationTool>();
         services.AddSingleton<ToolRegistry>();
 
-        return services.BuildServiceProvider();
+        var serviceProvider = services.BuildServiceProvider();
+        using var scope = serviceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MerlinDbContext>();
+        db.Database.EnsureCreated();
+        SeedCoreMemoryDiagnostics(db);
+        return serviceProvider;
+    }
+
+    private static void SeedCoreMemoryDiagnostics(MerlinDbContext db)
+    {
+        var now = DateTimeOffset.UtcNow;
+        db.Memories.Add(new()
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            MemoryType = "project_decision",
+            Title = "Status diagnostic memory",
+            Content = "Merlin tracks Core Memory diagnostics.",
+            Importance = 0.8,
+            Confidence = 1.0,
+            UserConfirmed = true,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+        db.Concepts.Add(new()
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Name = "diagnostics",
+            ConceptType = "system_component",
+            CreatedAt = now
+        });
+        db.UserProfileFacts.Add(new()
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            ProfileId = "default",
+            Key = "response.length.default",
+            Category = "response_preferences",
+            Value = "short",
+            DisplayText = "Jarno prefers short responses by default.",
+            Priority = 0.9,
+            Confidence = 1.0,
+            Status = "active",
+            CreatedAt = now,
+            UpdatedAt = now,
+            LastConfirmedAt = now,
+            SourceType = "explicit_user_instruction"
+        });
+        db.SaveChanges();
     }
 
     private sealed class FakeProcessLauncher : IProcessLauncher

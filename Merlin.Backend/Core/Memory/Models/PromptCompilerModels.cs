@@ -15,9 +15,11 @@ public sealed record PromptCompileRequest
 public sealed record PromptCompileResult
 {
     public required string CompiledPrompt { get; init; }
+    public IReadOnlyList<PromptBlock> Blocks { get; init; } = [];
     public required int EstimatedInputTokens { get; init; }
     public IReadOnlyList<string> IncludedMemoryIds { get; init; } = [];
     public IReadOnlyList<string> IncludedConceptIds { get; init; } = [];
+    public IReadOnlyList<string> IncludedProfileFactIds { get; init; } = [];
     public IReadOnlyList<string> OmittedMemoryIds { get; init; } = [];
     public IReadOnlyList<string> TrimReasons { get; init; } = [];
     public string? PromptCompilationId { get; init; }

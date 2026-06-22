@@ -97,6 +97,29 @@ public sealed class LiveUtteranceGateTests
     }
 
     [Theory]
+    [InlineData("Merlin, I prefer medium to long responses.")]
+    [InlineData("from now on use medium to long responses")]
+    [InlineData("remember that I prefer medium to long responses")]
+    public void ExplicitProfileRequestsDuringActiveIdle_RouteToCommandRouter(string text)
+    {
+        var result = Evaluate(text, LiveAssistantTurnState.IdleListening, source: "live_utterance_monitor");
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AcceptNewRequest, result.Decision);
+        Assert.True(result.ShouldRouteToCommandRouter);
+        Assert.True(result.ShouldCallDeepInfra);
+        Assert.Contains("explicit_profile_request", result.PositiveSignals);
+    }
+
+    [Fact]
+    public void ILikeDuringActiveIdle_IsNotTreatedAsExplicitProfileRequest()
+    {
+        var result = Evaluate("I like medium to long responses.", LiveAssistantTurnState.IdleListening, source: "live_utterance_monitor");
+
+        Assert.NotEqual(LiveUtteranceGateDecisionKind.AcceptNewRequest, result.Decision);
+        Assert.DoesNotContain("explicit_profile_request", result.PositiveSignals);
+    }
+
+    [Theory]
     [InlineData("Hey what's the weather?")]
     [InlineData("please tell me about the Roman empire")]
     [InlineData("yo can you explain why this happens?")]

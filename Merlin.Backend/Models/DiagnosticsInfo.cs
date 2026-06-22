@@ -68,6 +68,26 @@ public sealed class DiagnosticsInfo
 
     public int MemoryCount { get; init; }
 
+    public string MemoryMode { get; init; } = string.Empty;
+
+    public bool CoreDatabaseAvailable { get; init; }
+
+    public bool CoreMemoryHealthy { get; init; }
+
+    public bool RequireCoreMemoryForConversation { get; init; }
+
+    public int CoreMemoryCount { get; init; }
+
+    public int ActiveProfileFactCount { get; init; }
+
+    public int ConceptCount { get; init; }
+
+    public int LegacyJsonMemoryCount { get; init; }
+
+    public bool LegacyJsonEnabled { get; init; }
+
+    public bool DegradedFallbackEnabled { get; init; }
+
     public int MemoryCandidateCount { get; init; }
 
     public bool MemoryStoreHealthy { get; init; }

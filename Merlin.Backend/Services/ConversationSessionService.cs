@@ -2,6 +2,8 @@ using Merlin.Backend.Models;
 
 namespace Merlin.Backend.Services;
 
+// Legacy JSON conversation session memory. Quarantined after Memory Refactor PR 5.
+// Do not use for normal conversation. Core SQLite memory is the active brain.
 public sealed class ConversationSessionService : IConversationSessionService
 {
     private const int MaxMessages = 20;

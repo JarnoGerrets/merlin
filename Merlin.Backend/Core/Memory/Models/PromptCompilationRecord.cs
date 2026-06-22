@@ -10,5 +10,7 @@ public sealed record PromptCompilationRecord
     public int? EstimatedInputTokens { get; init; }
     public string? IncludedMemoryIdsJson { get; init; }
     public string? IncludedConceptIdsJson { get; init; }
+    public string? IncludedProfileFactIdsJson { get; init; }
+    public string? CompiledBlocksJson { get; init; }
     public DateTimeOffset CreatedAt { get; init; }
 }

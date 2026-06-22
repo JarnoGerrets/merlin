@@ -4,6 +4,7 @@ using Merlin.Backend.Core.Memory.Search;
 using Merlin.Backend.Core.Memory.Services;
 using Merlin.Backend.Infrastructure.Persistence;
 using Merlin.Backend.Infrastructure.Persistence.Repositories;
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -45,6 +46,206 @@ public sealed class BrainLikeMemoryLayerTests
 
         Assert.NotNull(state.RecentSummary);
         Assert.True(state.RecentSummary!.Length <= 1200);
+    }
+
+    [Fact]
+    public void TopicSummarySanitizer_RemovesRecursiveUserDiscussedPrefix()
+    {
+        var sanitized = TopicSummarySanitizer.SanitizeForSession(
+            "User discussed User discussed general conversation: that is the meaning of life.");
+
+        Assert.DoesNotContain("User discussed User discussed", sanitized);
+        Assert.Contains("meaning of life", sanitized);
+    }
+
+    [Fact]
+    public void TopicSummarySanitizer_CollapsesRepeatedGeneralConversationLabels()
+    {
+        var sanitized = TopicSummarySanitizer.SanitizeForSession(
+            "general conversation: general conversation: that is the meaning of life.");
+
+        Assert.DoesNotContain("general conversation: general conversation:", sanitized, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("General conversation about the meaning of life.", sanitized);
+    }
+
+    [Fact]
+    public void TopicSummarySanitizer_DropsAssistantAnswerContamination()
+    {
+        var sanitized = TopicSummarySanitizer.SanitizeForSession(
+            "general conversation: that is the meaning of life. general conversation: Since this is a deeply personal and philosophical topic, many people find meaning in relationships.");
+
+        Assert.Equal("General conversation about the meaning of life.", sanitized);
+        Assert.DoesNotContain("Since this is", sanitized);
+        Assert.DoesNotContain("many people find meaning", sanitized);
+    }
+
+    [Theory]
+    [InlineData("and when you ' re talking .", "It seems like your message might be incomplete. Could you clarify?", "low_value_or_partial_title")]
+    [InlineData("and when you're talking", "It seems like your message might be incomplete. Could you clarify?", "low_value_or_partial_title")]
+    [InlineData("because", "The message was incomplete and needed clarification.", "low_value_or_partial_title")]
+    [InlineData("when you", "The message was incomplete and needed clarification.", "low_value_or_partial_title")]
+    [InlineData("general conversation", "General conversation about Since this is a deeply personal topic.", "low_value_or_partial_title")]
+    [InlineData("Merlin memory", "General conversation about Since this is a deeply personal topic.", "polluted_or_assistant_contaminated_summary")]
+    [InlineData("what is the meaning of life?", "General conversation about the meaning of life.", "generic_conversation_without_working_context")]
+    [InlineData("that is the meaning of life.", "General conversation about the meaning of life.", "generic_conversation_without_working_context")]
+    public void MediumMemoryQualityGate_RejectsLowValueGenericOrPollutedEpisodes(
+        string title,
+        string summary,
+        string expectedReason)
+    {
+        var result = MediumMemoryQualityGate.EvaluateTopicClose(new MediumMemoryQualityInput
+        {
+            Title = title,
+            Summary = summary,
+            Concepts = []
+        });
+
+        Assert.Equal(MediumMemoryQualityDecision.Skip, result.Decision);
+        Assert.Equal(expectedReason, result.Reason);
+    }
+
+    [Theory]
+    [InlineData("memory refactor", "Memory refactor added lifecycle and retrieval hygiene.")]
+    [InlineData("PromptBlock compiler", "PromptBlock compiler keeps profile facts before retrieved memory.")]
+    [InlineData("ResponsiveFeedback PR 2", "ResponsiveFeedback PR 2 improved interruption diagnostics.")]
+    [InlineData("trusted_registry DB refactor", "trusted_registry DB refactor kept local schema decisions compact.")]
+    public void MediumMemoryQualityGate_AcceptsUsefulProjectWorkingContext(string title, string summary)
+    {
+        var result = MediumMemoryQualityGate.EvaluateTopicClose(new MediumMemoryQualityInput
+        {
+            Title = title,
+            Summary = summary,
+            Concepts = ["Merlin"]
+        });
+
+        Assert.Equal(MediumMemoryQualityDecision.SaveActive, result.Decision);
+        Assert.Equal("useful_recent_working_context", result.Reason);
+        Assert.False(string.IsNullOrWhiteSpace(result.Category));
+    }
+
+    [Fact]
+    public async Task PromptCompiler_RendersCompactCleanCurrentTopic()
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+        var state = await fixture.CurrentConversation.GetOrCreateCurrentStateAsync();
+        const string messySummary =
+            "User discussed general conversation: and when you ' re talking . Assistant response touched on User discussed general conversation: It seems like your message might be incomplete. Could you please clarify or provide more context about what you're asking? User discussed User discussed general conversation: that is the meaning of life .";
+        await fixture.ConversationStore.UpdateTopicSummaryAsync(state.ActiveTopicId!, messySummary);
+
+        var result = await fixture.PromptCompiler.CompileAsync(new PromptCompileRequest
+        {
+            CurrentUserMessage = "continue",
+            PromptType = "normal_conversation",
+            RetrievedMemories = []
+        });
+        var sessionBlock = Assert.Single(result.Blocks, block => block.Type == PromptBlockTypes.SessionMemory);
+
+        Assert.True(sessionBlock.Content.Length <= TopicSummarySanitizer.MaxSessionMemoryCharacters);
+        Assert.DoesNotContain("User discussed User discussed", sessionBlock.Content);
+        Assert.DoesNotContain("Could you please clarify", sessionBlock.Content);
+        Assert.DoesNotContain("message might be incomplete", sessionBlock.Content);
+        Assert.Contains("meaning of life", sessionBlock.Content);
+    }
+
+    [Fact]
+    public async Task PromptCompiler_CleansObservedRepeatedLabelTopic_InBlocksAndRenderedPrompt()
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+        var state = await fixture.CurrentConversation.GetOrCreateCurrentStateAsync();
+        const string messySummary =
+            "general conversation: general conversation: that is the meaning of life. general conversation: Since this is a deeply personal and philosophical topic, many people find meaning in relationships.";
+        await fixture.ConversationStore.UpdateTopicSummaryAsync(state.ActiveTopicId!, messySummary);
+
+        var result = await fixture.PromptCompiler.CompileAsync(new PromptCompileRequest
+        {
+            CurrentUserMessage = "\"that is the meaning of life .\"",
+            PromptType = "normal_conversation",
+            RetrievedMemories = []
+        });
+        var sessionBlock = Assert.Single(result.Blocks, block => block.Type == PromptBlockTypes.SessionMemory);
+
+        Assert.Equal("General conversation about the meaning of life.", sessionBlock.Content);
+        Assert.DoesNotContain("general conversation: general conversation:", sessionBlock.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Since this is", sessionBlock.Content);
+        Assert.DoesNotContain("many people find meaning", sessionBlock.Content);
+        Assert.Contains("CURRENT TOPIC:", result.CompiledPrompt);
+        Assert.Contains("General conversation about the meaning of life.", result.CompiledPrompt);
+        Assert.DoesNotContain("general conversation: general conversation:", result.CompiledPrompt, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Since this is", result.CompiledPrompt);
+        Assert.DoesNotContain("many people find meaning", result.CompiledPrompt);
+    }
+
+    [Fact]
+    public async Task CurrentConversationMemory_IgnoresLowValueSttFragmentAndClarificationBoilerplate()
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+        var state = await fixture.CurrentConversation.GetOrCreateCurrentStateAsync();
+
+        await fixture.CurrentConversation.ApplyUserMessageAsync("and when you're talking");
+        await fixture.CurrentConversation.UpdateAfterAssistantResponseAsync("It seems like your message might be incomplete. Could you clarify?");
+        var topic = await fixture.ConversationStore.GetTopicAsync(state.ActiveTopicId!);
+
+        Assert.NotNull(topic);
+        Assert.True(string.IsNullOrWhiteSpace(topic!.Summary));
+    }
+
+    [Fact]
+    public async Task TopicClosing_ClarificationOnlyExchange_DoesNotCreateEpisodeMemory()
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+
+        await fixture.CurrentConversation.ApplyUserMessageAsync("and when you're talking");
+        await fixture.CurrentConversation.UpdateAfterAssistantResponseAsync("It seems like your message might be incomplete. Could you clarify?");
+        var close = await fixture.TopicClosing.CloseCurrentTopicAsync(TopicCloseReasons.TopicSwitch);
+        var episodes = await fixture.MemoryStore.SearchMemoriesAsync(new MemorySearchRequest
+        {
+            MemoryTypes = ["episode"],
+            IncludeInactive = true,
+            Limit = 10
+        });
+
+        Assert.False(close.Closed);
+        Assert.Empty(episodes);
+    }
+
+    [Fact]
+    public async Task TopicClosing_ProjectWorkExchange_CreatesCompactEpisodeMemory()
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+
+        await fixture.CurrentConversation.ApplyUserMessageAsync("Let's discuss Memory PR 3 retrieval hygiene and prompt dedupe.");
+        await fixture.CurrentConversation.UpdateAfterAssistantResponseAsync("Memory PR 3 added active-only retrieval, stopword filtering, prompt dedupe, and topic-close duplicate guards.");
+        var close = await fixture.TopicClosing.CloseCurrentTopicAsync(TopicCloseReasons.TopicSwitch);
+        var memory = await fixture.MemoryStore.GetMemoryAsync(close.MediumMemoryId!);
+
+        Assert.True(close.Closed, close.Reason);
+        Assert.NotNull(memory);
+        Assert.Equal("episode", memory!.MemoryType);
+        Assert.Contains("Memory PR 3", memory.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("User discussed User discussed", memory.Content);
+        Assert.DoesNotContain("Could you please clarify", memory.Content);
+        Assert.True(memory.Summary!.Length <= 500);
+    }
+
+    [Fact]
+    public async Task TopicClosing_GenericQuestionAnswer_SkipsActiveMediumMemory()
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+
+        await fixture.CurrentConversation.ApplyUserMessageAsync("what is the meaning of life?");
+        await fixture.CurrentConversation.UpdateAfterAssistantResponseAsync("There is no single answer, but many people find meaning in relationships and purpose.");
+        var close = await fixture.TopicClosing.CloseCurrentTopicAsync(TopicCloseReasons.TopicSwitch);
+        var episodes = await fixture.MemoryStore.SearchMemoriesAsync(new MemorySearchRequest
+        {
+            MemoryTypes = ["episode"],
+            IncludeInactive = true,
+            Limit = 10
+        });
+
+        Assert.True(close.Closed, close.Reason);
+        Assert.Null(close.MediumMemoryId);
+        Assert.Contains("Skipped medium memory", close.Reason);
+        Assert.Empty(episodes);
     }
 
     [Fact]
@@ -172,6 +373,173 @@ public sealed class BrainLikeMemoryLayerTests
     }
 
     [Fact]
+    public async Task MemoryStore_SearchMemories_DefaultsToActiveMemoriesOnly()
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+        var now = DateTimeOffset.UtcNow;
+        var active = new MemoryRecord
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            MemoryType = "architecture_decision",
+            Title = "Active lifecycle memory",
+            Content = "lifecycle hygiene unique active memory",
+            Summary = "lifecycle hygiene unique active memory",
+            Status = MemoryStatuses.Active,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        var archived = active with
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Title = "Archived lifecycle memory",
+            Status = MemoryStatuses.Archived,
+            ArchivedAt = now
+        };
+
+        await fixture.MemoryStore.SaveMemoryAsync(active);
+        await fixture.MemoryStore.SaveMemoryAsync(archived);
+
+        var defaultResults = await fixture.MemoryStore.SearchMemoriesAsync(new MemorySearchRequest
+        {
+            Query = "lifecycle hygiene unique",
+            Limit = 10
+        });
+        var includeInactiveResults = await fixture.MemoryStore.SearchMemoriesAsync(new MemorySearchRequest
+        {
+            Query = "lifecycle hygiene unique",
+            IncludeInactive = true,
+            Limit = 10
+        });
+
+        Assert.Contains(defaultResults, result => result.Memory.Id == active.Id);
+        Assert.DoesNotContain(defaultResults, result => result.Memory.Id == archived.Id);
+        Assert.Contains(includeInactiveResults, result => result.Memory.Id == active.Id);
+        Assert.Contains(includeInactiveResults, result => result.Memory.Id == archived.Id);
+    }
+
+    [Fact]
+    public void ProjectIdentifierNormalizer_NormalizesPrIdentifierVariants()
+    {
+        var identifiers = new[]
+        {
+            ProjectIdentifierNormalizer.ExtractIdentifiers("What was PR4 about?").Single(),
+            ProjectIdentifierNormalizer.ExtractIdentifiers("What was PR 4 about?").Single(),
+            ProjectIdentifierNormalizer.ExtractIdentifiers("What was PR-4 about?").Single()
+        };
+
+        Assert.All(identifiers, identifier => Assert.Equal("pr4", identifier));
+        Assert.Contains("pr4", ProjectIdentifierNormalizer.NormalizeText("What was PR 4 about?"));
+        Assert.Contains("pr4", ProjectIdentifierNormalizer.SearchVariants("PR-4"));
+        Assert.Contains("pr 4", ProjectIdentifierNormalizer.SearchVariants("What was PR4 about?"));
+        Assert.Empty(ProjectIdentifierNormalizer.ExtractIdentifiers("what was the thing about?"));
+    }
+
+    [Fact]
+    public async Task AssociativeRetriever_FiltersStopwordKeywordReasons()
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+        await fixture.SaveMemoryAsync(
+            "episode",
+            "Meaning of life discussion",
+            "The meaning of life conversation centered on curiosity and practical kindness.",
+            []);
+
+        var results = await fixture.Retriever.RetrieveAsync(new MemoryRetrievalRequest
+        {
+            Query = "what is the meaning of life",
+            MaxResults = 5
+        });
+
+        var result = Assert.Single(results);
+        Assert.Contains(result.MatchReasons, reason => reason.Contains("keyword: meaning", StringComparison.OrdinalIgnoreCase) || reason.Contains("keyword: life", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(result.MatchReasons, reason => reason.Contains("keyword: what", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
+    [InlineData("For Merlin, PR4 is about fail-closed memory.", "What was PR4 about?")]
+    [InlineData("For Merlin, PR 4 is about fail-closed memory.", "What was PR4 about?")]
+    [InlineData("For Merlin, PR-4 is about fail-closed memory.", "What was PR 4 about?")]
+    public async Task AssociativeRetriever_RetrievesProjectIdentifierVariants(string savedSummary, string query)
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+        var memory = await fixture.SaveMemoryAsync(
+            "episode",
+            "Merlin / memory",
+            savedSummary,
+            ["Merlin", "memory"]);
+
+        var results = await fixture.Retriever.RetrieveAsync(new MemoryRetrievalRequest
+        {
+            Query = query,
+            MaxResults = 5
+        });
+
+        var result = Assert.Single(results, item => item.MemoryId == memory.Id);
+        Assert.Contains(result.MatchReasons, reason => reason.Contains("keyword: pr4", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(result.MatchReasons, reason => reason.Contains("keyword: what", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task MemoryStore_SearchMemories_SearchesCompactContentForProjectIdentifier()
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+        var now = DateTimeOffset.UtcNow;
+        var memory = new MemoryRecord
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            MemoryType = "episode",
+            Title = "Merlin / memory",
+            Content = "The compact content carries the project identifier.",
+            CompactContent = "For Merlin, PR 4 is about fail-closed memory.",
+            Summary = "Project memory",
+            Topic = "Merlin / memory",
+            Project = "Merlin",
+            Importance = 0.9,
+            Confidence = 0.85,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        await fixture.MemoryStore.SaveMemoryAsync(memory);
+
+        var results = await fixture.MemoryStore.SearchMemoriesAsync(new MemorySearchRequest
+        {
+            Query = "PR4",
+            MemoryTypes = ["episode"],
+            Limit = 10
+        });
+
+        Assert.Contains(results, result => result.Memory.Id == memory.Id);
+    }
+
+    [Fact]
+    public async Task PromptCompiler_IncludesPr4MediumMemory_WhenIdentifierRetrieved()
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+        var memory = await fixture.SaveMemoryAsync(
+            "episode",
+            "Merlin / memory",
+            "For Merlin, PR4 is about fail-closed memory.",
+            ["Merlin", "memory"]);
+        var retrieved = await fixture.Retriever.RetrieveAsync(new MemoryRetrievalRequest
+        {
+            Query = "What was PR4 about?",
+            MaxResults = 5
+        });
+
+        var result = await fixture.PromptCompiler.CompileAsync(new PromptCompileRequest
+        {
+            CurrentUserMessage = "What was PR4 about?",
+            PromptType = "normal_conversation",
+            RetrievedMemories = retrieved
+        });
+
+        Assert.Contains(memory.Id, result.IncludedMemoryIds);
+        Assert.Contains("RELEVANT MEDIUM MEMORY:", result.CompiledPrompt);
+        Assert.Contains("fail-closed memory", result.CompiledPrompt);
+        Assert.Contains("What was PR4 about?", result.CompiledPrompt);
+    }
+
+    [Fact]
     public async Task PromptCompiler_PreservesExactUserMessage_TrimsAndLogs()
     {
         await using var fixture = await MemoryFixture.CreateAsync();
@@ -203,6 +571,113 @@ public sealed class BrainLikeMemoryLayerTests
         Assert.True(result.OmittedMemoryIds.Count > 0);
         Assert.Single(logs);
         Assert.True(logs[0].EstimatedInputTokens > 0);
+    }
+
+    [Fact]
+    public async Task PromptCompiler_DedupesDuplicateMediumMemories_AndCleansRetrievalNotes()
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+        const string title = "Memory PR 3 retrieval hygiene";
+        const string summary = "Memory PR 3 added active-only retrieval, stopword filtering, prompt dedupe, and topic-close duplicate guards.";
+        var memories = Enumerable.Range(0, 6)
+            .Select(index => new RetrievedMemory
+            {
+                MemoryId = $"episode-{index}",
+                MemoryType = "episode",
+                Title = title,
+                Content = summary,
+                Summary = summary,
+                Score = 0.95 - (index * 0.01),
+                MatchReasons = ["Matched keyword: what", "Matched keyword: memory"]
+            })
+            .ToList();
+
+        var result = await fixture.PromptCompiler.CompileAsync(new PromptCompileRequest
+        {
+            CurrentUserMessage = "what did Memory PR 3 add?",
+            PromptType = "normal_conversation",
+            MaxInputTokens = 4000,
+            MaxMemoryTokens = 4000,
+            RetrievedMemories = memories
+        });
+
+        Assert.Equal(1, CountOccurrences(result.CompiledPrompt, title));
+        var retrievalNotes = Assert.Single(result.Blocks, block => block.Type == PromptBlockTypes.RetrievalNotes);
+        Assert.Contains("Suppressed 5 duplicate medium memories", retrievalNotes.Content);
+        var promptLog = (await fixture.PromptStore.ListRecentPromptCompilationsAsync(1)).Single();
+        Assert.Contains(PromptBlockTypes.RetrievalNotes, promptLog.CompiledBlocksJson);
+        Assert.Contains("Suppressed 5 duplicate medium memories", promptLog.CompiledBlocksJson);
+        Assert.DoesNotContain("RETRIEVAL NOTES:", result.CompiledPrompt);
+        Assert.DoesNotContain("Suppressed 5 duplicate medium memories", result.CompiledPrompt);
+        Assert.DoesNotContain("Matched keyword: what", result.CompiledPrompt);
+        Assert.DoesNotContain("Matched keyword: memory", result.CompiledPrompt);
+        Assert.Contains("what did Memory PR 3 add?", result.CompiledPrompt);
+        Assert.Single(result.IncludedMemoryIds);
+    }
+
+    [Fact]
+    public async Task PromptCompiler_KeepsRetrievalNotesInBlocks_ButNotCompiledPrompt()
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+        var result = await fixture.PromptCompiler.CompileAsync(new PromptCompileRequest
+        {
+            CurrentUserMessage = "What was PR4 about?",
+            PromptType = "normal_conversation",
+            RetrievedMemories =
+            [
+                new RetrievedMemory
+                {
+                    MemoryId = "abc123",
+                    MemoryType = "episode",
+                    Title = "Merlin / memory",
+                    Content = "For Merlin, PR4 is about fail-closed memory.",
+                    Summary = "For Merlin, PR4 is about fail-closed memory.",
+                    Score = 0.9,
+                    MatchReasons = ["Matched keyword: pr4"]
+                }
+            ]
+        });
+        var promptLog = (await fixture.PromptStore.ListRecentPromptCompilationsAsync(1)).Single();
+
+        var retrievalNotes = Assert.Single(result.Blocks, block => block.Type == PromptBlockTypes.RetrievalNotes);
+        Assert.Contains("abc123", retrievalNotes.Content);
+        Assert.Contains("Matched keyword: pr4", retrievalNotes.Content);
+        Assert.Contains(PromptBlockTypes.RetrievalNotes, promptLog.CompiledBlocksJson);
+        Assert.Contains("abc123", promptLog.CompiledBlocksJson);
+        Assert.DoesNotContain("RETRIEVAL NOTES:", result.CompiledPrompt);
+        Assert.DoesNotContain("abc123", result.CompiledPrompt);
+        Assert.Contains("RELEVANT MEDIUM MEMORY:", result.CompiledPrompt);
+        Assert.Contains("fail-closed memory", result.CompiledPrompt);
+    }
+
+    [Fact]
+    public async Task PromptCompiler_FiltersOldBadActiveMediumMemory_BeforeRendering()
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+        var bad = new RetrievedMemory
+        {
+            MemoryId = "old-bad-episode",
+            MemoryType = "episode",
+            Title = "and when you ' re talking .",
+            Content = "Topic: and when you ' re talking .\n\nSummary:\nGeneral conversation about general conversation: that is the meaning of life. General conversation about Since this is a deeply personal and philosophical topic, many people find meaning in.\n\nKey concepts: general conversation\n\nOutcome: Closed because topic_switch.",
+            Summary = "General conversation about general conversation: that is the meaning of life. General conversation about Since this is a deeply personal and philosophical topic, many people find meaning in.",
+            Score = 0.99,
+            MatchReasons = ["Matched keyword: meaning"]
+        };
+
+        var result = await fixture.PromptCompiler.CompileAsync(new PromptCompileRequest
+        {
+            CurrentUserMessage = "what is the meaning of life?",
+            PromptType = "normal_conversation",
+            RetrievedMemories = [bad]
+        });
+
+        Assert.DoesNotContain("RELEVANT MEDIUM MEMORY:", result.CompiledPrompt);
+        Assert.DoesNotContain("and when you", result.CompiledPrompt, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("general conversation about general conversation", result.CompiledPrompt, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Since this is a deeply personal", result.CompiledPrompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("what is the meaning of life?", result.CompiledPrompt);
+        Assert.Empty(result.IncludedMemoryIds);
     }
 
     [Fact]
@@ -242,6 +717,105 @@ public sealed class BrainLikeMemoryLayerTests
     }
 
     [Fact]
+    public async Task MemoryOrchestrator_ExplicitProfilePreferenceCreatesProfileFact_WithoutGenericMemory()
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+
+        var prepared = await fixture.Orchestrator.PrepareForModelCallAsync("I want short responses.", "test");
+        var fact = await fixture.ProfileStore.GetActiveFactByKeyAsync(UserProfileDefaults.ProfileId, "response.length.default");
+        var genericMemories = await fixture.MemoryStore.SearchMemoriesAsync(new MemorySearchRequest
+        {
+            Query = "short responses",
+            Limit = 10
+        });
+
+        Assert.NotNull(fact);
+        Assert.Equal("short", fact!.Value);
+        Assert.Contains("short responses", prepared.LocalResponse);
+        Assert.Empty(genericMemories);
+    }
+
+    [Fact]
+    public async Task MemoryOrchestrator_ProfilePreferenceUpdateSupersedesPreviousActiveFact()
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+
+        await fixture.Orchestrator.PrepareForModelCallAsync("I want short responses.", "test");
+        var updated = await fixture.Orchestrator.PrepareForModelCallAsync("I prefer medium to long responses.", "test");
+        var active = await fixture.ProfileStore.GetActiveFactByKeyAsync(UserProfileDefaults.ProfileId, "response.length.default");
+        var allFacts = await fixture.Db.UserProfileFacts.AsNoTracking().ToListAsync();
+
+        Assert.Equal("medium_to_long", active!.Value);
+        Assert.Contains("instead of short", updated.LocalResponse);
+        Assert.Single(allFacts, fact => fact.Status == UserProfileFactStatuses.Active);
+        Assert.Single(allFacts, fact => fact.Status == UserProfileFactStatuses.Superseded);
+    }
+
+    [Fact]
+    public async Task PromptCompiler_IncludesActiveProfileFactsBeforeRetrievedMemory()
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+        var upsert = await fixture.ProfileService.UpsertAsync(new ProfileFactCandidate
+        {
+            Key = "response.style.conciseness",
+            Category = "response_preferences",
+            Value = "concise",
+            DisplayText = "Jarno wants concise responses by default."
+        });
+        await fixture.ProfileStore.SaveFactAsync(new UserProfileFact
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Key = "response.tone.default",
+            Category = "response_preferences",
+            Value = "verbose",
+            DisplayText = "This superseded fact should not appear.",
+            Status = UserProfileFactStatuses.Superseded,
+            SourceType = UserProfileFactSourceTypes.ExplicitUserInstruction,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+
+        var result = await fixture.PromptCompiler.CompileAsync(new PromptCompileRequest
+        {
+            CurrentUserMessage = "How should we answer?",
+            PromptType = "normal_conversation",
+            RetrievedMemories =
+            [
+                new RetrievedMemory
+                {
+                    MemoryId = "memory-1",
+                    MemoryType = "architecture_decision",
+                    Title = "Memory",
+                    Content = "Merlin uses SQLite memory.",
+                    Summary = "Merlin uses SQLite memory.",
+                    Score = 0.9
+                }
+            ]
+        });
+
+        Assert.Contains("USER PROFILE FACTS:", result.CompiledPrompt);
+        Assert.Contains("RESPONSE PREFERENCES:", result.CompiledPrompt);
+        Assert.Contains("Jarno wants concise responses by default.", result.CompiledPrompt);
+        Assert.DoesNotContain("superseded fact", result.CompiledPrompt);
+        Assert.True(result.CompiledPrompt.IndexOf("USER PROFILE FACTS:", StringComparison.Ordinal) <
+            result.CompiledPrompt.IndexOf("RELEVANT LONG-TERM MEMORY:", StringComparison.Ordinal));
+        Assert.Contains("CURRENT USER MESSAGE:", result.CompiledPrompt);
+        Assert.Contains(result.Blocks, block => block.Type == PromptBlockTypes.ResponsePreferences);
+        Assert.Contains(result.Blocks, block => block.Type == PromptBlockTypes.RelevantLongTermMemory);
+        Assert.Equal(PromptBlockTypes.CurrentUserMessage, result.Blocks.OrderBy(block => block.SortOrder).Last().Type);
+        Assert.Contains(upsert.ActiveFact.Id, result.IncludedProfileFactIds);
+        Assert.True(result.Blocks.Single(block => block.Type == PromptBlockTypes.ResponsePreferences).SortOrder <
+            result.Blocks.Single(block => block.Type == PromptBlockTypes.RelevantLongTermMemory).SortOrder);
+
+        var promptLog = (await fixture.PromptStore.ListRecentPromptCompilationsAsync(1)).Single();
+        Assert.False(string.IsNullOrWhiteSpace(promptLog.CompiledPrompt));
+        Assert.False(string.IsNullOrWhiteSpace(promptLog.CompiledBlocksJson));
+        Assert.False(string.IsNullOrWhiteSpace(promptLog.IncludedProfileFactIdsJson));
+        Assert.Contains(upsert.ActiveFact.Id, JsonSerializer.Deserialize<IReadOnlyList<string>>(promptLog.IncludedProfileFactIdsJson!)!);
+        Assert.Contains(PromptBlockTypes.ResponsePreferences, promptLog.CompiledBlocksJson);
+    }
+
+    [Fact]
     public async Task MemoryDebugService_ListsMemoriesRetrievalAndPromptLogs()
     {
         await using var fixture = await MemoryFixture.CreateAsync();
@@ -259,6 +833,19 @@ public sealed class BrainLikeMemoryLayerTests
         Assert.NotEmpty(logs);
     }
 
+    private static int CountOccurrences(string value, string needle)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = value.IndexOf(needle, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += needle.Length;
+        }
+
+        return count;
+    }
+
     private sealed class MemoryFixture : IAsyncDisposable
     {
         private readonly SqliteConnection _connection;
@@ -271,6 +858,8 @@ public sealed class BrainLikeMemoryLayerTests
             ConceptStore = new EfConceptStore(db, NullLogger<EfConceptStore>.Instance);
             ConversationStore = new EfConversationStateStore(db);
             PromptStore = new EfPromptCompilationStore(db, NullLogger<EfPromptCompilationStore>.Instance);
+            ProfileStore = new EfUserProfileFactStore(db, NullLogger<EfUserProfileFactStore>.Instance);
+            ProfileService = new UserProfileFactService(ProfileStore);
 
             var extractor = new LocalConceptExtractionService();
             var cueDetector = new FollowUpCueDetector();
@@ -303,14 +892,17 @@ public sealed class BrainLikeMemoryLayerTests
                 CurrentConversation,
                 PromptStore,
                 ConceptStore,
-                new TokenBudgetService(new SimpleTokenEstimator()));
+                new TokenBudgetService(new SimpleTokenEstimator()),
+                ProfileStore);
             Orchestrator = new MemoryOrchestrator(
                 CurrentConversation,
                 MemoryWriter,
                 TopicClosing,
                 Retriever,
                 PromptCompiler,
-                NullLogger<MemoryOrchestrator>.Instance);
+                NullLogger<MemoryOrchestrator>.Instance,
+                new UserProfileFactDetector(),
+                ProfileService);
             DebugService = new MemoryDebugService(
                 CurrentConversation,
                 MemoryStore,
@@ -325,6 +917,8 @@ public sealed class BrainLikeMemoryLayerTests
         public EfConceptStore ConceptStore { get; }
         public EfConversationStateStore ConversationStore { get; }
         public EfPromptCompilationStore PromptStore { get; }
+        public EfUserProfileFactStore ProfileStore { get; }
+        public UserProfileFactService ProfileService { get; }
         public CurrentConversationMemoryService CurrentConversation { get; }
         public MemoryWriter MemoryWriter { get; }
         public TopicClosingService TopicClosing { get; }

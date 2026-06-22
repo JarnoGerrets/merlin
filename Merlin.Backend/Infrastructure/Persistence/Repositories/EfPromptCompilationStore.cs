@@ -30,6 +30,8 @@ public sealed class EfPromptCompilationStore : IPromptCompilationStore
             EstimatedInputTokens = promptCompilation.EstimatedInputTokens,
             IncludedMemoryIdsJson = promptCompilation.IncludedMemoryIdsJson,
             IncludedConceptIdsJson = promptCompilation.IncludedConceptIdsJson,
+            IncludedProfileFactIdsJson = promptCompilation.IncludedProfileFactIdsJson,
+            CompiledBlocksJson = promptCompilation.CompiledBlocksJson,
             CreatedAt = promptCompilation.CreatedAt
         });
 
@@ -74,6 +76,8 @@ public sealed class EfPromptCompilationStore : IPromptCompilationStore
         EstimatedInputTokens = entity.EstimatedInputTokens,
         IncludedMemoryIdsJson = entity.IncludedMemoryIdsJson,
         IncludedConceptIdsJson = entity.IncludedConceptIdsJson,
+        IncludedProfileFactIdsJson = entity.IncludedProfileFactIdsJson,
+        CompiledBlocksJson = entity.CompiledBlocksJson,
         CreatedAt = entity.CreatedAt
     };
 }

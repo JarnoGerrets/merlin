@@ -8,5 +8,6 @@ public sealed record MemorySearchRequest
     public string? Project { get; init; }
     public string? Topic { get; init; }
     public bool IncludeExpired { get; init; }
+    public bool IncludeInactive { get; init; }
     public int Limit { get; init; } = 10;
 }

@@ -27,6 +27,8 @@ builder.Services.Configure<ApplicationLaunchOptions>(
     builder.Configuration.GetSection("ApplicationLaunch"));
 builder.Services.Configure<MerlinDbOptions>(
     builder.Configuration.GetSection("MerlinDatabase"));
+builder.Services.Configure<CoreMemoryOptions>(
+    builder.Configuration.GetSection("CoreMemory"));
 builder.Services.Configure<LocalAIOptions>(
     builder.Configuration.GetSection("LocalAI"));
 builder.Services.Configure<LlmOptions>(
@@ -191,6 +193,7 @@ builder.Services.AddScoped<IConceptStore, EfConceptStore>();
 builder.Services.AddScoped<IConversationStateStore, EfConversationStateStore>();
 builder.Services.AddScoped<ITurnStateStore, EfTurnStateStore>();
 builder.Services.AddScoped<IPromptCompilationStore, EfPromptCompilationStore>();
+builder.Services.AddScoped<IUserProfileFactStore, EfUserProfileFactStore>();
 builder.Services.AddScoped<MerlinConceptSeeder>();
 builder.Services.AddScoped<IMemorySearchService, MemorySearchService>();
 builder.Services.AddSingleton<IConceptExtractionService, LocalConceptExtractionService>();
@@ -205,14 +208,18 @@ builder.Services.AddScoped<CurrentConversationMemoryService>();
 builder.Services.AddScoped<ExplicitMemoryRequestDetector>();
 builder.Services.AddScoped<MemoryTypeClassifier>();
 builder.Services.AddScoped<MemoryWriter>();
+builder.Services.AddScoped<UserProfileFactService>();
+builder.Services.AddScoped<UserProfileFactDetector>();
 builder.Services.AddScoped<TopicSummaryBuilder>();
 builder.Services.AddScoped<TopicImportanceScorer>();
 builder.Services.AddScoped<TopicClosingService>();
 builder.Services.AddScoped<ConceptGraphActivationService>();
 builder.Services.AddScoped<AssociativeRetriever>();
 builder.Services.AddScoped<TokenBudgetService>();
+builder.Services.AddScoped<PromptRenderer>();
 builder.Services.AddScoped<PromptCompiler>();
 builder.Services.AddScoped<MemoryOrchestrator>();
+builder.Services.AddScoped<ICoreMemoryHealthService, CoreMemoryHealthService>();
 builder.Services.AddScoped<MemoryDebugService>();
 
 builder.Services.AddSingleton<IAIService, DummyAIService>();
@@ -311,10 +318,6 @@ builder.Services.AddSingleton<ScopeAwareCapabilityRouter>();
 builder.Services.AddSingleton<MerlinIntentRouter>();
 builder.Services.AddSingleton<IResponsePolisher, ResponsePolisher>();
 builder.Services.AddSingleton<IAssistantResponsePresentationFormatter, AssistantSpeechResponseFormatter>();
-builder.Services.AddSingleton<IConversationSummaryStore, ConversationSummaryStore>();
-builder.Services.AddSingleton<IConversationSessionService, ConversationSessionService>();
-builder.Services.AddSingleton<ILongTermMemoryStore, LongTermMemoryStore>();
-builder.Services.AddSingleton<IMemoryExtractionService, MemoryExtractionService>();
 builder.Services.AddSingleton<TrustedCommandIntentParser>();
 builder.Services.AddSingleton<RuleBasedIntentParser>();
 builder.Services.AddSingleton<LocalAIIntentParser>();

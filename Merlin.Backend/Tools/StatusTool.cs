@@ -1,7 +1,11 @@
 using Merlin.Backend.Configuration;
+using Merlin.Backend.Core.Memory.Models;
+using Merlin.Backend.Core.Memory.Services;
+using Merlin.Backend.Infrastructure.Persistence;
 using Merlin.Backend.Models;
 using Merlin.Backend.Services;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -16,15 +20,12 @@ public sealed class StatusTool : ITool
     private readonly ILocalAIHealthService _localAIHealthService;
     private readonly ILogger<StatusTool> _logger;
     private readonly CapabilityOptions _capabilityOptions;
+    private readonly CoreMemoryOptions _coreMemoryOptions;
     private readonly LocalAIOptions _localAIOptions;
     private readonly IRuntimeStateService _runtimeStateService;
     private readonly ISystemResourceProvider _systemResourceProvider;
     private readonly IServiceProvider _serviceProvider;
     private readonly IApplicationResolver _applicationResolver;
-    private readonly IConversationSessionService _conversationSessionService;
-    private readonly IConversationSummaryStore _conversationSummaryStore;
-    private readonly ILongTermMemoryStore _memoryStore;
-    private readonly IMemoryExtractionService _memoryExtractionService;
     private readonly ITrustedApplicationStore _trustedApplicationStore;
     private readonly ITrustedCommandStore _trustedCommandStore;
 
@@ -34,14 +35,11 @@ public sealed class StatusTool : ITool
         ILocalAIHealthService localAIHealthService,
         IConfirmationService confirmationService,
         IApplicationResolver applicationResolver,
-        IConversationSessionService conversationSessionService,
-        IConversationSummaryStore conversationSummaryStore,
-        ILongTermMemoryStore memoryStore,
-        IMemoryExtractionService memoryExtractionService,
         ITrustedApplicationStore trustedApplicationStore,
         ITrustedCommandStore trustedCommandStore,
         IServiceProvider serviceProvider,
         IOptions<LocalAIOptions> localAIOptions,
+        IOptions<CoreMemoryOptions> coreMemoryOptions,
         IOptions<CapabilityOptions> capabilityOptions,
         IWebHostEnvironment environment,
         ILogger<StatusTool> logger)
@@ -51,14 +49,11 @@ public sealed class StatusTool : ITool
         _localAIHealthService = localAIHealthService;
         _confirmationService = confirmationService;
         _applicationResolver = applicationResolver;
-        _conversationSessionService = conversationSessionService;
-        _conversationSummaryStore = conversationSummaryStore;
-        _memoryStore = memoryStore;
-        _memoryExtractionService = memoryExtractionService;
         _trustedApplicationStore = trustedApplicationStore;
         _trustedCommandStore = trustedCommandStore;
         _serviceProvider = serviceProvider;
         _localAIOptions = localAIOptions.Value;
+        _coreMemoryOptions = coreMemoryOptions.Value;
         _capabilityOptions = MergeWithDefaults(capabilityOptions.Value);
         _environment = environment;
         _logger = logger;
@@ -88,7 +83,7 @@ public sealed class StatusTool : ITool
             || string.Equals(normalizedCommand, "merlin status", StringComparison.OrdinalIgnoreCase);
     }
 
-    public Task<ToolResult> ExecuteAsync(string command, CancellationToken cancellationToken = default)
+    public async Task<ToolResult> ExecuteAsync(string command, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Diagnostics requested.");
 
@@ -97,8 +92,7 @@ public sealed class StatusTool : ITool
             .Select(tool => tool.Name)
             .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var conversationSession = _conversationSessionService.CurrentSession;
-        var conversationSummaries = _conversationSummaryStore.GetAll();
+        var coreMemory = await GetCoreMemoryDiagnosticsAsync(cancellationToken);
 
         var diagnostics = new DiagnosticsInfo
         {
@@ -127,19 +121,26 @@ public sealed class StatusTool : ITool
             TrustedApplicationCount = _trustedApplicationStore.GetAll().Count,
             TrustedCommandCount = _trustedCommandStore.GetAll().Count,
             LastApplicationResolutionStatus = _applicationResolver.LastResolutionStatus,
-            ConversationSessionId = conversationSession.SessionId,
-            ConversationMessageCount = conversationSession.Messages.Count,
-            ConversationSummaryLength = conversationSession.RunningSummary.Length,
-            ConversationSessionCreatedUtc = conversationSession.CreatedAtUtc,
-            ConversationSummaryCount = conversationSummaries.Count,
-            LastConversationSummaryDate = conversationSummaries
-                .OrderByDescending(summary => summary.LastUpdatedUtc)
-                .FirstOrDefault()
-                ?.LastUpdatedUtc,
-            ConversationSummaryStoreHealthy = _conversationSummaryStore.IsHealthy,
-            MemoryCount = _memoryStore.GetAll().Count,
-            MemoryCandidateCount = _memoryExtractionService.PendingCandidates.Count,
-            MemoryStoreHealthy = _memoryStore.IsHealthy,
+            ConversationSessionId = string.Empty,
+            ConversationMessageCount = 0,
+            ConversationSummaryLength = 0,
+            ConversationSessionCreatedUtc = default,
+            ConversationSummaryCount = 0,
+            LastConversationSummaryDate = null,
+            ConversationSummaryStoreHealthy = false,
+            MemoryCount = coreMemory.MemoryCount,
+            MemoryMode = "sqlite-core",
+            CoreDatabaseAvailable = coreMemory.DatabaseAvailable,
+            CoreMemoryHealthy = coreMemory.Healthy,
+            RequireCoreMemoryForConversation = _coreMemoryOptions.RequireCoreMemoryForConversation,
+            CoreMemoryCount = coreMemory.MemoryCount,
+            ActiveProfileFactCount = coreMemory.ActiveProfileFactCount,
+            ConceptCount = coreMemory.ConceptCount,
+            LegacyJsonMemoryCount = 0,
+            LegacyJsonEnabled = false,
+            DegradedFallbackEnabled = false,
+            MemoryCandidateCount = 0,
+            MemoryStoreHealthy = false,
             SupportedCapabilityCount = _capabilityOptions.CapabilityDomains.Count(domain => domain.IsImplemented),
             MissingCapabilityDetectionEnabled = true,
             CapabilityDomainCount = _capabilityOptions.CapabilityDomains.Count,
@@ -151,14 +152,42 @@ public sealed class StatusTool : ITool
             SystemResourceProviderEnabled = _systemResourceProvider is not null
         };
 
-        return Task.FromResult(new ToolResult
+        return new ToolResult
         {
             Success = true,
             Message = "Merlin diagnostics",
             ToolName = Name,
             Intent = IntentName,
             Diagnostics = diagnostics
-        });
+        };
+    }
+
+    private async Task<CoreMemoryDiagnostics> GetCoreMemoryDiagnosticsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetService<MerlinDbContext>();
+            if (db is null)
+            {
+                return new CoreMemoryDiagnostics(false, false, 0, 0, 0);
+            }
+
+            var healthService = scope.ServiceProvider.GetService<ICoreMemoryHealthService>();
+            var health = healthService is null
+                ? new CoreMemoryHealthStatus { IsHealthy = false, FailureReason = "Core Memory health service unavailable." }
+                : await healthService.CheckAsync(cancellationToken);
+            var memoryCount = await db.Memories.AsNoTracking().CountAsync(cancellationToken);
+            var profileFactCount = await db.UserProfileFacts.AsNoTracking()
+                .CountAsync(fact => fact.ProfileId == UserProfileDefaults.ProfileId && fact.Status == UserProfileFactStatuses.Active, cancellationToken);
+            var conceptCount = await db.Concepts.AsNoTracking().CountAsync(cancellationToken);
+            return new CoreMemoryDiagnostics(health.DatabaseAvailable, health.IsHealthy, memoryCount, profileFactCount, conceptCount);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Failed to collect Core Memory diagnostics.");
+            return new CoreMemoryDiagnostics(false, false, 0, 0, 0);
+        }
     }
 
     private static CapabilityOptions MergeWithDefaults(CapabilityOptions configuredOptions)
@@ -170,4 +199,11 @@ public sealed class StatusTool : ITool
 
         return configuredOptions;
     }
+
+    private sealed record CoreMemoryDiagnostics(
+        bool DatabaseAvailable,
+        bool Healthy,
+        int MemoryCount,
+        int ActiveProfileFactCount,
+        int ConceptCount);
 }

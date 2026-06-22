@@ -3,6 +3,7 @@ using System;
 using Merlin.Backend.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Merlin.Backend.Migrations
 {
     [DbContext(typeof(MerlinDbContext))]
-    partial class MerlinDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260622203306_AddPromptCompilationBlocks")]
+    partial class AddPromptCompilationBlocks
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.0");
@@ -243,12 +246,6 @@ namespace Merlin.Backend.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("ArchivedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("CompactContent")
-                        .HasColumnType("TEXT");
-
                     b.Property<double>("Confidence")
                         .HasColumnType("REAL");
 
@@ -260,9 +257,6 @@ namespace Merlin.Backend.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("DeletedAt")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("ExpiresAt")
                         .HasColumnType("TEXT");
 
@@ -272,15 +266,8 @@ namespace Merlin.Backend.Migrations
                     b.Property<string>("LastAccessedAt")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("MemoryAnchorsJson")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("MemoryType")
                         .IsRequired()
-                        .HasMaxLength(80)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("MergedIntoMemoryId")
                         .HasMaxLength(80)
                         .HasColumnType("TEXT");
 
@@ -300,21 +287,7 @@ namespace Merlin.Backend.Migrations
                         .HasMaxLength(80)
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(40)
-                        .HasColumnType("TEXT")
-                        .HasDefaultValue("active");
-
                     b.Property<string>("Summary")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("SupersedesMemoryId")
-                        .HasMaxLength(80)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("TagsJson")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Title")
@@ -334,11 +307,7 @@ namespace Merlin.Backend.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ArchivedAt");
-
                     b.HasIndex("CreatedAt");
-
-                    b.HasIndex("DeletedAt");
 
                     b.HasIndex("ExpiresAt");
 
@@ -352,11 +321,7 @@ namespace Merlin.Backend.Migrations
 
                     b.HasIndex("SourceTurnId");
 
-                    b.HasIndex("Status");
-
                     b.HasIndex("Topic");
-
-                    b.HasIndex("Status", "MemoryType");
 
                     b.ToTable("memories", (string)null);
                 });

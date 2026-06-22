@@ -14,6 +14,8 @@ public sealed class PromptCompilationEntityConfiguration : IEntityTypeConfigurat
         builder.Property(prompt => prompt.TurnId).HasMaxLength(80);
         builder.Property(prompt => prompt.PromptType).HasMaxLength(60).IsRequired();
         builder.Property(prompt => prompt.CompiledPrompt).IsRequired();
+        builder.Property(prompt => prompt.CompiledBlocksJson);
+        builder.Property(prompt => prompt.IncludedProfileFactIdsJson);
         builder.HasIndex(prompt => prompt.ConversationId);
         builder.HasIndex(prompt => prompt.TurnId);
         builder.HasIndex(prompt => prompt.PromptType);
