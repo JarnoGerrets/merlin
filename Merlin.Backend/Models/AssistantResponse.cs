@@ -14,6 +14,8 @@ public sealed class AssistantResponse
 
     public bool IsReplayableSpeech { get; init; }
 
+    public bool SuppressSpeech { get; init; }
+
     public string CorrelationId { get; init; } = string.Empty;
 
     public string? ErrorCode { get; init; }

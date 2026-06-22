@@ -9,8 +9,10 @@ using Merlin.Backend.Infrastructure.Persistence.Seeding;
 using Merlin.Backend.Services;
 using Merlin.Backend.Services.Acknowledgement;
 using Merlin.Backend.Services.BargeIn;
+using Merlin.Backend.Services.Feedback;
 using Merlin.Backend.Services.LiveUtterance;
 using Merlin.Backend.Services.IntentRouting;
+using Merlin.Backend.Services.SpeechPresence;
 using Merlin.Backend.Tools;
 using Merlin.Backend.WebSocket;
 using Microsoft.EntityFrameworkCore;
@@ -52,10 +54,14 @@ builder.Services.PostConfigure<WebSearchOptions>(options =>
 });
 builder.Services.Configure<AcknowledgementSpeechOptions>(
     builder.Configuration.GetSection("AcknowledgementSpeech"));
+builder.Services.Configure<ResponsiveFeedbackOptions>(
+    builder.Configuration.GetSection("ResponsiveFeedback"));
 builder.Services.Configure<BargeInOptions>(
     builder.Configuration.GetSection("BargeIn"));
 builder.Services.Configure<BargeInDebugOptions>(
     builder.Configuration.GetSection("BargeIn"));
+builder.Services.Configure<SpeechPresenceOptions>(
+    builder.Configuration.GetSection("SpeechPresence"));
 builder.Services.Configure<VoiceInputOptions>(
     builder.Configuration.GetSection("VoiceInput"));
 builder.Services.PostConfigure<LlmOptions>(options =>
@@ -251,6 +257,10 @@ builder.Services.AddSingleton<IBargeInVadService, BargeInVadService>();
 builder.Services.AddSingleton<ISpeakerDuckingService, SpeakerDuckingService>();
 builder.Services.AddSingleton<ISelfSpeechGateDiagnosticsWriter, SelfSpeechGateDiagnosticsWriter>();
 builder.Services.AddSingleton<ISelfSpeechSuppressionGate, SelfSpeechSuppressionGate>();
+builder.Services.AddSingleton<SpeechPresenceDecisionLogService>();
+builder.Services.AddSingleton<ISpeechPresenceDecisionLogSink>(provider => provider.GetRequiredService<SpeechPresenceDecisionLogService>());
+builder.Services.AddSingleton<ISpeechPresenceDetector, SpeechPresenceDetector>();
+builder.Services.AddSingleton<IFloorYieldController, FloorYieldController>();
 builder.Services.AddSingleton<IContinuousMicAudioBuffer, ContinuousMicAudioBuffer>();
 builder.Services.AddSingleton<IBargeInTriggerBuffer, BargeInTriggerBuffer>();
 builder.Services.AddSingleton<IBargeInSttService, BargeInSttService>();
@@ -269,6 +279,7 @@ builder.Services.AddSingleton<IBargeInAudioCaptureService>(provider =>
 });
 builder.Services.AddHostedService(provider => provider.GetRequiredService<WindowsWasapiAecAudioCaptureService>());
 builder.Services.AddHostedService(provider => provider.GetRequiredService<WebRtcApmBargeInAudioCaptureService>());
+builder.Services.AddHostedService(provider => provider.GetRequiredService<SpeechPresenceDecisionLogService>());
 builder.Services.AddHostedService<BargeInCoordinatorHostedService>();
 builder.Services.AddSingleton<IAssistantSpeechPlaybackService, AssistantSpeechPlaybackService>();
 builder.Services.AddSingleton<ISpeechPolicyService, SpeechPolicyService>();
@@ -278,6 +289,13 @@ builder.Services.AddSingleton<IAcknowledgementPhraseLibrary, AcknowledgementPhra
 builder.Services.AddSingleton<IAcknowledgementPolicy, AcknowledgementPolicy>();
 builder.Services.AddSingleton<IAcknowledgementSpeechService, AcknowledgementSpeechService>();
 builder.Services.AddSingleton<IRequestProgressSpeechService, RequestProgressSpeechService>();
+builder.Services.AddSingleton<IFeedbackCardProvider, DefaultFeedbackCardProvider>();
+builder.Services.AddSingleton<IFeedbackVectorBuilder, FeedbackVectorBuilder>();
+builder.Services.AddSingleton<IFeedbackCooldownTracker, FeedbackCooldownTracker>();
+builder.Services.AddSingleton<IFeedbackSelector, FeedbackSelector>();
+builder.Services.AddSingleton<IFeedbackContextFactory, FeedbackContextFactory>();
+builder.Services.AddSingleton<IInterruptionFeedbackAdapter, InterruptionFeedbackAdapter>();
+builder.Services.AddSingleton<IResponsiveFeedbackOrchestrator, ResponsiveFeedbackOrchestrator>();
 builder.Services.AddSingleton<IAssistantPolicyProvider, AssistantPolicyProvider>();
 builder.Services.AddSingleton<ICapabilityClassifier, CapabilityClassifier>();
 builder.Services.AddSingleton<TextNormalizer>();

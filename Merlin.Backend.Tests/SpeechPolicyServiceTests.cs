@@ -98,4 +98,27 @@ public sealed class SpeechPolicyServiceTests
         Assert.False(decision.ShouldSpeak);
         Assert.False(decision.ShouldQueue);
     }
+
+    [Fact]
+    public void Decide_WhenResponseSuppressesSpeech_DoesNotQueueSpeech()
+    {
+        var service = new SpeechPolicyService();
+
+        var decision = service.Decide(
+            new AssistantRequest
+            {
+                InteractionSource = "voice",
+                ClientMode = "orb"
+            },
+            new AssistantResponse
+            {
+                Success = true,
+                ResponseType = "assistant",
+                Message = "Display this.",
+                SuppressSpeech = true
+            });
+
+        Assert.False(decision.ShouldSpeak);
+        Assert.False(decision.ShouldQueue);
+    }
 }

@@ -145,6 +145,15 @@ func send_voice_stream_cancel(correlation_id: String) -> bool:
 	})
 
 
+func send_speech_presence_marker(marker_type: String = "user_started_speaking") -> bool:
+	return _send_json({
+		"type": "speech_presence_marker",
+		"markerType": marker_type,
+		"clientTimestampUtc": _utc_timestamp_string(),
+		"source": "frontend_debug_button",
+	})
+
+
 func _send_json(payload: Dictionary) -> bool:
 	if _socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
 		_set_state("error", "Cannot send message because Merlin.Backend is not connected.")
@@ -156,6 +165,13 @@ func _send_json(payload: Dictionary) -> bool:
 		return false
 
 	return true
+
+
+func _utc_timestamp_string() -> String:
+	var timestamp := Time.get_datetime_string_from_system(true)
+	if not timestamp.ends_with("Z"):
+		timestamp += "Z"
+	return timestamp
 
 
 func is_backend_connected() -> bool:

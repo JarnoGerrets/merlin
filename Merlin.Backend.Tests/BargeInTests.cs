@@ -3,6 +3,7 @@ using Merlin.Backend.Models;
 using Merlin.Backend.Services;
 using Merlin.Backend.Services.BargeIn;
 using Merlin.Backend.Services.LiveUtterance;
+using Merlin.Backend.Services.SpeechPresence;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -623,6 +624,76 @@ public sealed class BargeInCoordinatorTests
     }
 
     [Fact]
+    public async Task ProcessMicrophoneFrame_CreatesOneOfficialSpeechPresenceDecisionPerFrame()
+    {
+        var detector = new RecordingSpeechPresenceDetector();
+        var sink = new RecordingSpeechPresenceDecisionLogSink();
+        var fixture = CreateFixture(
+            new BargeInOptions { Enabled = true },
+            vad: new AlwaysSpeechNeverTriggeredVadService(),
+            speechPresenceDetector: detector,
+            speechPresenceDecisionLogSink: sink);
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, 0));
+
+        var official = Assert.Single(sink.OfficialDecisions);
+        Assert.Equal(1, official.FrameId);
+        Assert.Equal("official_frame_decision", official.SourcePath);
+        Assert.Equal("official_frame_decision", official.Result.Evidence.SourcePath);
+        Assert.Single(detector.Evaluations.Where(evidence => evidence.SourcePath == "official_frame_decision"));
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_RecordsBranchObservationAsNonAuthoritative()
+    {
+        var detector = new RecordingSpeechPresenceDetector();
+        var sink = new RecordingSpeechPresenceDecisionLogSink();
+        var fixture = CreateFixture(
+            new BargeInOptions { Enabled = true },
+            vad: new AlwaysSpeechNeverTriggeredVadService(),
+            speechPresenceDetector: detector,
+            speechPresenceDecisionLogSink: sink);
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, 0));
+
+        var observation = Assert.Single(sink.BranchObservations);
+        Assert.Equal(1, observation.FrameId);
+        Assert.False(observation.IsAuthoritative);
+        Assert.Equal("fast_hard_stop_candidate", observation.SourcePath);
+        Assert.Equal("fast_hard_stop_candidate", observation.Result.Evidence.SourcePath);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_DebugSnapshotUsesOfficialSpeechPresenceNotBranchObservation()
+    {
+        var detector = new RecordingSpeechPresenceDetector(
+            officialState: SpeechPresenceState.No,
+            branchState: SpeechPresenceState.Maybe);
+        var sink = new RecordingSpeechPresenceDecisionLogSink();
+        var debugSnapshots = new RecordingBargeInDebugSnapshotService();
+        var fixture = CreateFixture(
+            new BargeInOptions { Enabled = true },
+            vad: new AlwaysSpeechNeverTriggeredVadService(),
+            debugSnapshots: debugSnapshots,
+            speechPresenceDetector: detector,
+            speechPresenceDecisionLogSink: sink);
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, 0));
+
+        Assert.Equal(SpeechPresenceState.No, Assert.Single(sink.OfficialDecisions).Result.State);
+        Assert.Equal(SpeechPresenceState.Maybe, Assert.Single(sink.BranchObservations).Result.State);
+        Assert.NotEmpty(debugSnapshots.Published);
+        Assert.All(debugSnapshots.Published, snapshot =>
+        {
+            Assert.Equal("No", snapshot.SpeechPresenceState);
+            Assert.Equal(1, snapshot.SpeechPresenceFrameId);
+        });
+    }
+
+    [Fact]
     public async Task ContinuousMicAudioBuffer_SlowAnalysisDoesNotShortenRecordedAudio()
     {
         var buffer = new ContinuousMicAudioBuffer();
@@ -1022,7 +1093,7 @@ public sealed class BargeInCoordinatorTests
 
         await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, 0));
 
-        Assert.Equal(1, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Playback.PauseCount);
     }
 
     [Fact]
@@ -1079,7 +1150,7 @@ public sealed class BargeInCoordinatorTests
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
         }
 
-        Assert.Equal(1, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Playback.PauseCount);
     }
 
     [Fact]
@@ -1194,7 +1265,7 @@ public sealed class BargeInCoordinatorTests
     }
 
     [Fact]
-    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_SustainedHighScore_YieldsPlayback()
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_SustainedHighScore_DoesNotYieldPlayback()
     {
         var options = SustainedUserSpeechScorePauseOptions();
         options.FloorYieldRequiredHighScoreMs = 30;
@@ -1209,7 +1280,7 @@ public sealed class BargeInCoordinatorTests
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
         }
 
-        Assert.Equal(1, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Playback.PauseCount);
         Assert.Equal(0, fixture.Playback.ClearQueueCount);
         Assert.Equal(0, fixture.Stt.CallCount);
     }
@@ -1233,12 +1304,12 @@ public sealed class BargeInCoordinatorTests
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
         }
 
-        Assert.Equal(1, fixture.Playback.PauseCount);
-        Assert.Contains(logger.Messages, message => message.Contains("missing_score_ignored", StringComparison.Ordinal));
+        Assert.Equal(0, fixture.Playback.PauseCount);
+        Assert.DoesNotContain(logger.Messages, message => message.Contains("missing_score_ignored", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_FragmentedHighScoreIslands_YieldPlayback()
+    public async Task ProcessMicrophoneFrame_SustainedUserSpeechScorePause_FragmentedHighScoreIslands_DoNotYieldPlayback()
     {
         var options = SustainedUserSpeechScorePauseOptions();
         options.FloorYieldRequiredHighScoreMs = 180;
@@ -1259,7 +1330,7 @@ public sealed class BargeInCoordinatorTests
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
         }
 
-        Assert.Equal(1, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Playback.PauseCount);
         Assert.Equal(0, fixture.Playback.ClearQueueCount);
         Assert.Equal(0, fixture.Stt.CallCount);
     }
@@ -1281,7 +1352,7 @@ public sealed class BargeInCoordinatorTests
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
         }
 
-        Assert.Equal(1, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Playback.PauseCount);
         Assert.Equal(0, fixture.Stt.CallCount);
     }
 
@@ -1356,13 +1427,13 @@ public sealed class BargeInCoordinatorTests
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
         }
 
-        Assert.Equal(1, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Playback.PauseCount);
         Assert.Equal(0, fixture.Playback.ClearQueueCount);
         Assert.False(fixture.LiveTurnService.IsCancelled("correlation-1"));
     }
 
     [Fact]
-    public async Task ProcessMicrophoneFrame_FastNearEndSpeech_DucksBeforeCaptureThreshold()
+    public async Task ProcessMicrophoneFrame_FastNearEndSpeech_DoesNotDuckBeforeCaptureThreshold()
     {
         var fixture = CreateFixture(
             new BargeInOptions
@@ -1388,14 +1459,14 @@ public sealed class BargeInCoordinatorTests
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAlternatingAudioFrame(0.18f, started, index * 10));
         }
 
-        Assert.True(fixture.SpeakerDuckingService.IsDucked);
-        Assert.Contains("comfort_ducking_likely_user", fixture.SpeakerDuckingService.Reasons);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
+        Assert.DoesNotContain("comfort_ducking_likely_user", fixture.SpeakerDuckingService.Reasons);
         Assert.Equal(0, fixture.Stt.CallCount);
         Assert.Equal(0, fixture.Playback.PauseCount);
     }
 
     [Fact]
-    public async Task ProcessMicrophoneFrame_UncertainNearEndSpeech_StartsComfortDucking()
+    public async Task ProcessMicrophoneFrame_UncertainNearEndSpeech_DoesNotStartComfortDucking()
     {
         var fixture = CreateFixture(
             new BargeInOptions
@@ -1424,8 +1495,8 @@ public sealed class BargeInCoordinatorTests
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAlternatingAudioFrame(0.045f, started, index * 10));
         }
 
-        Assert.True(fixture.SpeakerDuckingService.IsDucked);
-        Assert.Contains("comfort_ducking_uncertain_near_end", fixture.SpeakerDuckingService.Reasons);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
+        Assert.DoesNotContain("comfort_ducking_uncertain_near_end", fixture.SpeakerDuckingService.Reasons);
     }
 
     [Fact]
@@ -1452,7 +1523,7 @@ public sealed class BargeInCoordinatorTests
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAlternatingAudioFrame(0.045f, started, index * 10));
         }
 
-        Assert.True(fixture.SpeakerDuckingService.IsDucked);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
         Assert.Equal(0, fixture.Stt.CallCount);
         Assert.Equal(0, fixture.Playback.PauseCount);
         Assert.DoesNotContain("vad_triggered", fixture.SpeakerDuckingService.Reasons);
@@ -1489,15 +1560,15 @@ public sealed class BargeInCoordinatorTests
 
         await Task.Delay(50);
 
-        Assert.True(fixture.SpeakerDuckingService.IsDucked);
-        Assert.Contains("comfort_ducking_uncertain_near_end", fixture.SpeakerDuckingService.Reasons);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
+        Assert.DoesNotContain("comfort_ducking_uncertain_near_end", fixture.SpeakerDuckingService.Reasons);
         Assert.Equal(0, fixture.Stt.CallCount);
         Assert.Equal(0, fixture.Playback.PauseCount);
         Assert.DoesNotContain("vad_triggered", fixture.SpeakerDuckingService.Reasons);
     }
 
     [Fact]
-    public async Task ProcessMicrophoneFrame_AllowLikelyUser_StartsComfortDucking()
+    public async Task ProcessMicrophoneFrame_AllowLikelyUser_DoesNotStartComfortDucking()
     {
         var fixture = CreateFixture(
             new BargeInOptions
@@ -1518,8 +1589,8 @@ public sealed class BargeInCoordinatorTests
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAlternatingAudioFrame(0.18f, started, index * 10));
         }
 
-        Assert.True(fixture.SpeakerDuckingService.IsDucked);
-        Assert.Contains("comfort_ducking_likely_user", fixture.SpeakerDuckingService.Reasons);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
+        Assert.DoesNotContain("comfort_ducking_likely_user", fixture.SpeakerDuckingService.Reasons);
     }
 
     [Fact]
@@ -1545,7 +1616,7 @@ public sealed class BargeInCoordinatorTests
     }
 
     [Fact]
-    public async Task ProcessMicrophoneFrame_FastNearEndDucking_RestoresAfterHangoverWithoutCapture()
+    public async Task ProcessMicrophoneFrame_FastNearEndDucking_DoesNotDuckOrRestoreAfterHangoverWithoutCapture()
     {
         var fixture = CreateFixture(
             new BargeInOptions
@@ -1567,16 +1638,15 @@ public sealed class BargeInCoordinatorTests
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAlternatingAudioFrame(0.18f, started, index * 10));
         }
 
-        Assert.True(fixture.SpeakerDuckingService.IsDucked);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
         await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.0f, started, 70));
-        await WaitUntilAsync(() => !fixture.SpeakerDuckingService.IsDucked);
 
         Assert.Equal(0, fixture.Stt.CallCount);
-        Assert.Contains("speech_hangover_elapsed", fixture.SpeakerDuckingService.Reasons);
+        Assert.DoesNotContain("speech_hangover_elapsed", fixture.SpeakerDuckingService.Reasons);
     }
 
     [Fact]
-    public async Task ProcessMicrophoneFrame_FastNearEndDucking_HoldsThroughSuppressedMessyFrames()
+    public async Task ProcessMicrophoneFrame_FastNearEndDucking_DoesNotHoldThroughSuppressedMessyFrames()
     {
         var fixture = CreateFixture(
             new BargeInOptions
@@ -1598,14 +1668,13 @@ public sealed class BargeInCoordinatorTests
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAlternatingAudioFrame(0.18f, started, index * 10));
         }
 
-        Assert.True(fixture.SpeakerDuckingService.IsDucked);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
         PushReferenceAudio(fixture.Tap, 0.20f);
         await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.07f, started, 70));
         await Task.Delay(40);
 
-        Assert.True(fixture.SpeakerDuckingService.IsDucked);
-        await WaitUntilAsync(() => !fixture.SpeakerDuckingService.IsDucked);
-        Assert.Contains("speech_hangover_elapsed", fixture.SpeakerDuckingService.Reasons);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
+        Assert.DoesNotContain("speech_hangover_elapsed", fixture.SpeakerDuckingService.Reasons);
     }
 
     [Fact]
@@ -1635,7 +1704,7 @@ public sealed class BargeInCoordinatorTests
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAlternatingAudioFrame(0.18f, started, index * 10));
         }
 
-        Assert.True(fixture.SpeakerDuckingService.IsDucked);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
         for (var index = 6; index < 24; index++)
         {
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAlternatingAudioFrame(0.18f, started, index * 10));
@@ -1649,7 +1718,7 @@ public sealed class BargeInCoordinatorTests
         await WaitUntilAsync(() => fixture.Stt.CallCount > 0);
 
         Assert.Equal(1, fixture.Stt.CallCount);
-        Assert.Contains("comfort_ducking_likely_user", fixture.SpeakerDuckingService.Reasons);
+        Assert.DoesNotContain("comfort_ducking_likely_user", fixture.SpeakerDuckingService.Reasons);
         Assert.DoesNotContain("speech_hangover_elapsed", fixture.SpeakerDuckingService.Reasons);
     }
 
@@ -1687,7 +1756,7 @@ public sealed class BargeInCoordinatorTests
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAlternatingAudioFrame(0.18f, started, index * 10));
         }
 
-        Assert.True(fixture.SpeakerDuckingService.IsDucked);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
         await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.0f, started, 70));
 
         for (var index = 8; index < 24; index++)
@@ -1697,7 +1766,7 @@ public sealed class BargeInCoordinatorTests
 
         await Task.Delay(90);
 
-        Assert.True(fixture.SpeakerDuckingService.IsDucked);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
         Assert.DoesNotContain("speech_hangover_elapsed", fixture.SpeakerDuckingService.Reasons);
         Assert.Equal(0, fixture.SpeakerDuckingService.RestoreCount);
     }
@@ -1744,7 +1813,7 @@ public sealed class BargeInCoordinatorTests
 
         await Task.Delay(50);
 
-        Assert.True(fixture.SpeakerDuckingService.IsDucked);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
         Assert.DoesNotContain("speech_hangover_elapsed", fixture.SpeakerDuckingService.Reasons);
     }
 
@@ -1777,7 +1846,7 @@ public sealed class BargeInCoordinatorTests
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAlternatingAudioFrame(0.18f, started, index * 10));
         }
 
-        Assert.True(fixture.SpeakerDuckingService.IsDucked);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
         PushReferenceAudio(fixture.Tap, 0.20f);
         for (var index = 6; index < 10; index++)
         {
@@ -1786,7 +1855,7 @@ public sealed class BargeInCoordinatorTests
 
         await Task.Delay(80);
 
-        Assert.True(fixture.SpeakerDuckingService.IsDucked);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
         Assert.DoesNotContain("speech_hangover_elapsed", fixture.SpeakerDuckingService.Reasons);
         Assert.Equal(0, fixture.Stt.CallCount);
     }
@@ -1824,7 +1893,7 @@ public sealed class BargeInCoordinatorTests
         await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.0f, started, 90));
         await Task.Delay(70);
 
-        Assert.True(fixture.SpeakerDuckingService.IsDucked);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
         Assert.Equal(0, fixture.SpeakerDuckingService.RestoreCount);
         Assert.Equal(0, fixture.Stt.CallCount);
     }
@@ -1859,17 +1928,16 @@ public sealed class BargeInCoordinatorTests
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAlternatingAudioFrame(0.18f, started, index * 10));
         }
 
-        Assert.True(fixture.SpeakerDuckingService.IsDucked);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
         for (var index = 9; index < 18; index++)
         {
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.0f, started, index * 10));
         }
 
         await WaitUntilAsync(() => fixture.Stt.CallCount > 0);
-        await WaitUntilAsync(() => !fixture.SpeakerDuckingService.IsDucked);
 
         Assert.Equal(1, fixture.Stt.CallCount);
-        Assert.True(fixture.SpeakerDuckingService.RestoreCount > 0);
+        Assert.Equal(0, fixture.SpeakerDuckingService.RestoreCount);
     }
 
     [Fact]
@@ -1920,7 +1988,7 @@ public sealed class BargeInCoordinatorTests
 
         await Task.Delay(80);
 
-        Assert.True(fixture.SpeakerDuckingService.IsDucked);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
         Assert.Equal(0, fixture.SpeakerDuckingService.RestoreCount);
         Assert.DoesNotContain("speech_hangover_elapsed", fixture.SpeakerDuckingService.Reasons);
     }
@@ -1947,8 +2015,8 @@ public sealed class BargeInCoordinatorTests
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAlternatingAudioFrame(0.18f, started, index * 10));
         }
 
-        Assert.True(fixture.SpeakerDuckingService.IsDucked);
-        Assert.Equal(1, fixture.SpeakerDuckingService.StartCount);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
+        Assert.Equal(0, fixture.SpeakerDuckingService.StartCount);
     }
 
     [Fact]
@@ -2087,12 +2155,11 @@ public sealed class BargeInCoordinatorTests
             await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.16f, started, index * 10));
         }
 
-        await WaitUntilAsync(() => fixture.SpeakerDuckingService.IsDucked);
         await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.0f, started, 400));
         await Task.Delay(80);
 
         Assert.Equal(0, fixture.Stt.CallCount);
-        Assert.True(fixture.SpeakerDuckingService.IsDucked);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
         Assert.DoesNotContain("speech_hangover_elapsed", fixture.SpeakerDuckingService.Reasons);
 
         for (var index = 401; index < 510; index++)
@@ -2101,7 +2168,7 @@ public sealed class BargeInCoordinatorTests
         }
 
         await WaitUntilAsync(() => fixture.Stt.CallCount > 0);
-        await WaitUntilAsync(() => !fixture.SpeakerDuckingService.IsDucked);
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
     }
 
     [Fact]
@@ -2509,7 +2576,7 @@ public sealed class BargeInCoordinatorTests
     }
 
     [Fact]
-    public async Task ProcessMicrophoneFrame_UserSpeechOverPlayback_StillDucksAndCaptures()
+    public async Task ProcessMicrophoneFrame_UserSpeechOverPlayback_StillCapturesWithoutLegacyDucking()
     {
         var fixture = CreateFixture(new BargeInOptions { Enabled = true }, "stop");
         fixture.LiveTurnService.BeginTurn("conversation-1", "correlation-1");
@@ -2517,10 +2584,10 @@ public sealed class BargeInCoordinatorTests
         PushReferenceAudio(fixture.Tap, 0.20f);
 
         await SendUncorrelatedTriggeredSpeechAsync(fixture.Coordinator, 0.22f);
-        await WaitUntilAsync(() => fixture.SpeakerDuckingService.IsDucked);
         await WaitUntilAsync(() => fixture.Stt.CallCount > 0);
         await WaitUntilAsync(() => fixture.Playback.ClearQueueCount > 0);
 
+        Assert.False(fixture.SpeakerDuckingService.IsDucked);
         Assert.Equal(1, fixture.Stt.CallCount);
         Assert.Equal(1, fixture.Playback.ClearQueueCount);
         Assert.True(fixture.LiveTurnService.IsCancelled("correlation-1"));
@@ -2586,7 +2653,7 @@ public sealed class BargeInCoordinatorTests
 
         Assert.Equal(1, fixture.Stt.CallCount);
         Assert.Equal(0, fixture.Playback.ClearQueueCount);
-        Assert.Equal(1, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Playback.PauseCount);
         Assert.Equal(1, fixture.Playback.ResumeCount);
         Assert.True(fixture.LiveTurnService.IsActive("correlation-1"));
         Assert.True(fixture.LiveTurnService.ShouldEmit("correlation-1"));
@@ -2606,7 +2673,7 @@ public sealed class BargeInCoordinatorTests
 
         Assert.Equal(1, fixture.Stt.CallCount);
         Assert.Equal(0, fixture.Playback.ClearQueueCount);
-        Assert.Equal(1, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Playback.PauseCount);
         Assert.Equal(1, fixture.Playback.ResumeCount);
     }
 
@@ -2623,7 +2690,7 @@ public sealed class BargeInCoordinatorTests
 
         Assert.Equal(1, fixture.Stt.CallCount);
         Assert.Equal(1, fixture.Playback.ClearQueueCount);
-        Assert.Equal(1, fixture.Playback.PauseCount);
+        Assert.Equal(0, fixture.Playback.PauseCount);
         Assert.Equal(0, fixture.Playback.ResumeCount);
         Assert.True(fixture.LiveTurnService.IsCancelled("correlation-1"));
         Assert.False(fixture.LiveTurnService.ShouldEmit("correlation-1"));
@@ -2992,7 +3059,10 @@ public sealed class BargeInCoordinatorTests
         IInterruptionCaptureDiagnosticsWriter? captureDiagnosticsWriter = null,
         ISelfSpeechSuppressionGate? selfSpeechGate = null,
         ILiveUtteranceGate? liveUtteranceGate = null,
-        ILogger<BargeInCoordinator>? logger = null)
+        ILogger<BargeInCoordinator>? logger = null,
+        IBargeInDebugSnapshotService? debugSnapshots = null,
+        ISpeechPresenceDetector? speechPresenceDetector = null,
+        ISpeechPresenceDecisionLogSink? speechPresenceDecisionLogSink = null)
     {
         options.TriggerPostSpeechWaitMs = 0;
         var diagnostics = new NoOpBargeInDiagnosticsLogger();
@@ -3022,7 +3092,10 @@ public sealed class BargeInCoordinatorTests
             logger ?? NullLogger<BargeInCoordinator>.Instance,
             new TestOptionsMonitor<BargeInOptions>(options),
             new TestOptionsMonitor<VoiceInputOptions>(new VoiceInputOptions()),
-            liveUtteranceGate);
+            liveUtteranceGate,
+            debugSnapshots,
+            speechPresenceDetector,
+            speechPresenceDecisionLogSink);
 
         return new TestFixture(coordinator, tap, stt, playback, liveTurnService, speakerDucking);
     }
@@ -3166,6 +3239,82 @@ public sealed class BargeInCoordinatorTests
         FakePlaybackService Playback,
         LiveAssistantTurnService LiveTurnService,
         TestSpeakerDuckingService SpeakerDuckingService);
+
+    private sealed class RecordingSpeechPresenceDetector : ISpeechPresenceDetector
+    {
+        private readonly SpeechPresenceState _officialState;
+        private readonly SpeechPresenceState _branchState;
+        private readonly List<SpeechPresenceEvidence> _evaluations = new();
+
+        public RecordingSpeechPresenceDetector(
+            SpeechPresenceState officialState = SpeechPresenceState.No,
+            SpeechPresenceState branchState = SpeechPresenceState.Maybe)
+        {
+            _officialState = officialState;
+            _branchState = branchState;
+        }
+
+        public IReadOnlyList<SpeechPresenceEvidence> Evaluations => _evaluations;
+
+        public SpeechPresenceResult Evaluate(SpeechPresenceEvidence evidence)
+        {
+            _evaluations.Add(evidence);
+            var state = evidence.SourcePath == "official_frame_decision"
+                ? _officialState
+                : _branchState;
+            var isUserSpeaking = state is SpeechPresenceState.Maybe or SpeechPresenceState.Yes;
+            return new SpeechPresenceResult
+            {
+                State = state,
+                Confidence = isUserSpeaking ? 0.75 : 0.10,
+                IsUserSpeaking = isUserSpeaking,
+                ShouldYieldPlayback = isUserSpeaking && evidence.AssistantPlaybackActive,
+                Reason = evidence.SourcePath,
+                Evidence = evidence
+            };
+        }
+    }
+
+    private sealed class RecordingSpeechPresenceDecisionLogSink : ISpeechPresenceDecisionLogSink
+    {
+        private readonly List<SpeechPresenceOfficialDecision> _officialDecisions = new();
+        private readonly List<SpeechPresenceBranchObservation> _branchObservations = new();
+
+        public IReadOnlyList<SpeechPresenceOfficialDecision> OfficialDecisions => _officialDecisions;
+
+        public IReadOnlyList<SpeechPresenceBranchObservation> BranchObservations => _branchObservations;
+
+        public void TryLogOfficialDecision(SpeechPresenceOfficialDecision decision)
+        {
+            _officialDecisions.Add(decision);
+        }
+
+        public void TryLogBranchObservation(SpeechPresenceBranchObservation observation)
+        {
+            _branchObservations.Add(observation);
+        }
+
+        public void TryLogManualSpeechStartMarker(SpeechPresenceManualMarker marker)
+        {
+        }
+    }
+
+    private sealed class RecordingBargeInDebugSnapshotService : IBargeInDebugSnapshotService
+    {
+        private readonly List<BargeInDebugSnapshot> _published = new();
+
+        public event Func<BargeInDebugSnapshot, CancellationToken, Task>? SnapshotAvailable;
+
+        public bool IsEnabled => true;
+
+        public IReadOnlyList<BargeInDebugSnapshot> Published => _published;
+
+        public void Publish(BargeInDebugSnapshot snapshot, bool force = false)
+        {
+            _published.Add(snapshot);
+            _ = SnapshotAvailable?.Invoke(snapshot, CancellationToken.None);
+        }
+    }
 
     internal sealed class FakeBargeInSttService : IBargeInSttService
     {

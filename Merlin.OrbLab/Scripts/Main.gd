@@ -318,6 +318,7 @@ func _setup_barge_in_debug_overlay() -> void:
 	if is_instance_valid(_barge_in_debug_overlay) or overlay_container == null:
 		return
 	_barge_in_debug_overlay = BARGE_IN_DEBUG_OVERLAY_SCRIPT.new()
+	_barge_in_debug_overlay.manual_speech_start_marker_requested.connect(_on_manual_speech_start_marker_requested)
 	overlay_container.add_child(_barge_in_debug_overlay)
 
 
@@ -1605,6 +1606,11 @@ func _on_barge_in_debug_snapshot_received(snapshot: Dictionary) -> void:
 		_setup_barge_in_debug_overlay()
 	if is_instance_valid(_barge_in_debug_overlay):
 		_barge_in_debug_overlay.update_snapshot(snapshot)
+
+
+func _on_manual_speech_start_marker_requested() -> void:
+	if web_socket_client.send_speech_presence_marker():
+		_add_notification("Speech start marker logged", "system")
 
 
 func _on_response_received(response: Dictionary) -> void:

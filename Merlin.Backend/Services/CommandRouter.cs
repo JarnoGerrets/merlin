@@ -1,6 +1,7 @@
 using Merlin.Backend.Models;
 using Merlin.Backend.Configuration;
 using Merlin.Backend.Services.Acknowledgement;
+using Merlin.Backend.Services.Feedback;
 using Merlin.Backend.Tools;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
@@ -17,6 +18,9 @@ public sealed class CommandRouter
     private readonly IAssistantResponsePresentationFormatter? _presentationFormatter;
     private readonly IRequestProgressSpeechService? _progressSpeechService;
     private readonly IResponsePolisher _responsePolisher;
+    private readonly IFeedbackContextFactory? _feedbackContextFactory;
+    private readonly IResponsiveFeedbackOrchestrator? _responsiveFeedbackOrchestrator;
+    private readonly ResponsiveFeedbackOptions? _responsiveFeedbackOptions;
     private readonly IRuntimeStateService _runtimeStateService;
     private readonly SpeechCommandNormalizer _speechCommandNormalizer;
     private readonly ToolRegistry _toolRegistry;
@@ -34,7 +38,10 @@ public sealed class CommandRouter
         IAcknowledgementSpeechService? acknowledgementSpeechService = null,
         IRequestProgressSpeechService? progressSpeechService = null,
         IOptions<LlmOptions>? llmOptions = null,
-        ILiveAssistantTurnService? liveTurnService = null)
+        ILiveAssistantTurnService? liveTurnService = null,
+        IFeedbackContextFactory? feedbackContextFactory = null,
+        IResponsiveFeedbackOrchestrator? responsiveFeedbackOrchestrator = null,
+        IOptions<ResponsiveFeedbackOptions>? responsiveFeedbackOptions = null)
     {
         _acknowledgementPolicy = acknowledgementPolicy;
         _acknowledgementSpeechService = acknowledgementSpeechService;
@@ -44,6 +51,9 @@ public sealed class CommandRouter
         _presentationFormatter = presentationFormatter;
         _progressSpeechService = progressSpeechService;
         _responsePolisher = responsePolisher;
+        _feedbackContextFactory = feedbackContextFactory;
+        _responsiveFeedbackOrchestrator = responsiveFeedbackOrchestrator;
+        _responsiveFeedbackOptions = responsiveFeedbackOptions?.Value;
         _runtimeStateService = runtimeStateService;
         _speechCommandNormalizer = speechCommandNormalizer ?? new SpeechCommandNormalizer();
         _toolRegistry = toolRegistry;
@@ -85,6 +95,11 @@ public sealed class CommandRouter
             message);
 
         SetTurnState(correlationId, LiveAssistantTurnState.Interpreting);
+        var feedbackContext = _feedbackContextFactory?.CreateInitial(
+            request,
+            correlationId,
+            message,
+            receivedAtUtc);
 
         if (string.IsNullOrWhiteSpace(message))
         {
@@ -182,6 +197,13 @@ public sealed class CommandRouter
             intentResult.Intent,
             tool.Name,
             intentResult.NormalizedCommand);
+        feedbackContext = feedbackContext is null
+            ? null
+            : _feedbackContextFactory?.EnrichWithRouting(
+                feedbackContext,
+                intentResult,
+                tool,
+                FeedbackPhase.Executing);
 
         var acknowledgementDecision = DecideAcknowledgement(
             request,
@@ -199,13 +221,25 @@ public sealed class CommandRouter
             acknowledgementDecision,
             pendingSpeechCancellation.Token);
 
-        _ = StartInitialAcknowledgementAsync(
-            request,
-            requestId,
-            correlationId,
-            receivedAtUtc,
-            acknowledgementDecision,
-            pendingSpeechCancellation.Token);
+        if (ShouldUseResponsiveImmediateFeedback()
+            && feedbackContext is not null
+            && acknowledgementDecision?.ShouldSpeakInitialAcknowledgement == true)
+        {
+            _ = StartImmediateResponsiveFeedbackAsync(
+                request,
+                feedbackContext,
+                pendingSpeechCancellation.Token);
+        }
+        else
+        {
+            _ = StartInitialAcknowledgementAsync(
+                request,
+                requestId,
+                correlationId,
+                receivedAtUtc,
+                acknowledgementDecision,
+                pendingSpeechCancellation.Token);
+        }
 
         ToolResult result;
         var mainWorkStopwatch = Stopwatch.StartNew();
@@ -246,6 +280,7 @@ public sealed class CommandRouter
                 },
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
+            _responsiveFeedbackOrchestrator?.MarkMainResponseReady(correlationId);
             pendingSpeechCancellation.Cancel();
             progressHandle?.MarkMainResponseReady();
             mainWorkStopwatch.Stop();
@@ -302,6 +337,11 @@ public sealed class CommandRouter
 
         SetTurnState(correlationId, LiveAssistantTurnState.ProcessingTurn);
         cancellationToken.ThrowIfCancellationRequested();
+        var suppressFinalSpeech = ShouldSuppressFinalSuccessSpeechAfterImmediateFeedback(
+            result,
+            tool.Name,
+            intentResult,
+            correlationId);
         return await PolishAsync(new AssistantResponse
         {
             Success = result.Success,
@@ -310,6 +350,7 @@ public sealed class CommandRouter
             SpeechCacheKey = result.SpeechCacheKey,
             PreferPhraseCache = result.PreferPhraseCache,
             IsReplayableSpeech = result.IsReplayableSpeech,
+            SuppressSpeech = suppressFinalSpeech,
             CorrelationId = correlationId,
             ErrorCode = result.ErrorCode,
             ToolName = result.ToolName ?? tool.Name,
@@ -407,6 +448,23 @@ public sealed class CommandRouter
             cancellationToken);
     }
 
+    private Task StartImmediateResponsiveFeedbackAsync(
+        AssistantRequest request,
+        FeedbackContext context,
+        CancellationToken cancellationToken)
+    {
+        if (_responsiveFeedbackOrchestrator is null
+            || request.SpeechEventSender is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return _responsiveFeedbackOrchestrator.TryEmitImmediateFeedbackAsync(
+            context,
+            request.SpeechEventSender,
+            cancellationToken);
+    }
+
     private IRequestProgressSpeechHandle? StartProgressSpeech(
         AssistantRequest request,
         string requestId,
@@ -449,6 +507,7 @@ public sealed class CommandRouter
             SpeechCacheKey = response.SpeechCacheKey,
             PreferPhraseCache = response.PreferPhraseCache,
             IsReplayableSpeech = response.IsReplayableSpeech,
+            SuppressSpeech = response.SuppressSpeech,
             CorrelationId = response.CorrelationId,
             ErrorCode = response.ErrorCode,
             ToolName = response.ToolName,
@@ -466,6 +525,11 @@ public sealed class CommandRouter
             DevVisualFlow = response.DevVisualFlow
         };
 
+        if (polishedResponse.SuppressSpeech)
+        {
+            return polishedResponse;
+        }
+
         var presentation = _presentationFormatter?.Format(polishedResponse);
         if (presentation is null)
         {
@@ -480,6 +544,7 @@ public sealed class CommandRouter
             SpeechCacheKey = presentation.CacheKey,
             PreferPhraseCache = presentation.PreferPhraseCache,
             IsReplayableSpeech = presentation.IsReplayable,
+            SuppressSpeech = polishedResponse.SuppressSpeech,
             CorrelationId = polishedResponse.CorrelationId,
             ErrorCode = polishedResponse.ErrorCode,
             ToolName = polishedResponse.ToolName,
@@ -574,5 +639,49 @@ public sealed class CommandRouter
     private static bool ContainsAny(string text, params string[] terms)
     {
         return terms.Any(term => text.Contains(term, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private bool ShouldUseResponsiveImmediateFeedback()
+    {
+        return _responsiveFeedbackOrchestrator is not null
+            && _responsiveFeedbackOptions?.Enabled == true
+            && _responsiveFeedbackOptions.UseCardSelectorForImmediateFeedback;
+    }
+
+    private bool ShouldSuppressFinalSuccessSpeechAfterImmediateFeedback(
+        ToolResult result,
+        string matchedToolName,
+        IntentParseResult intentResult,
+        string correlationId)
+    {
+        if (_responsiveFeedbackOptions?.SuppressFinalSuccessSpeechAfterImmediateFeedback != true)
+        {
+            return false;
+        }
+
+        if (_responsiveFeedbackOrchestrator?.WasImmediateFeedbackEmitted(correlationId) != true)
+        {
+            return false;
+        }
+
+        if (!result.Success
+            || result.Confirmation is not null
+            || result.ApplicationCandidates is { Count: > 0 }
+            || !string.IsNullOrWhiteSpace(result.ErrorCode)
+            || !string.IsNullOrWhiteSpace(result.SpokenText)
+            || !string.IsNullOrWhiteSpace(result.SpeechCacheKey))
+        {
+            return false;
+        }
+
+        return IsOpenApplicationOrUrl(result.ToolName ?? matchedToolName, result.Intent ?? intentResult.Intent);
+    }
+
+    private static bool IsOpenApplicationOrUrl(string? toolName, string? intent)
+    {
+        return string.Equals(toolName, "Open Application", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(toolName, "Open URL", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(intent, "open_application", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(intent, "open_url", StringComparison.OrdinalIgnoreCase);
     }
 }

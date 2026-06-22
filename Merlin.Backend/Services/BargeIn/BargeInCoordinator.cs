@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using Merlin.Backend.Configuration;
 using Merlin.Backend.Models;
 using Merlin.Backend.Services.LiveUtterance;
+using Merlin.Backend.Services.SpeechPresence;
 using Microsoft.Extensions.Options;
 
 namespace Merlin.Backend.Services.BargeIn;
@@ -33,7 +34,11 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     private readonly IBargeInTriggerBuffer _triggerBuffer;
     private readonly IBargeInVadService _vadService;
     private readonly IBargeInDebugSnapshotService? _debugSnapshots;
+    private readonly ISpeechPresenceDetector? _speechPresenceDetector;
+    private readonly ISpeechPresenceDecisionLogSink? _speechPresenceDecisionLogSink;
+    private readonly IFloorYieldController? _floorYieldController;
     private readonly object _syncRoot = new();
+    private long _analysisFrameSequence;
     private BargeInSpeechContext? _activeContext;
     private BargeInCaptureSession? _activeCaptureSession;
     private CancellationTokenSource? _duckingRestoreCancellation;
@@ -79,7 +84,10 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         IOptionsMonitor<BargeInOptions> options,
         IOptionsMonitor<VoiceInputOptions> voiceInputOptions,
         ILiveUtteranceGate? liveUtteranceGate = null,
-        IBargeInDebugSnapshotService? debugSnapshots = null)
+        IBargeInDebugSnapshotService? debugSnapshots = null,
+        ISpeechPresenceDetector? speechPresenceDetector = null,
+        ISpeechPresenceDecisionLogSink? speechPresenceDecisionLogSink = null,
+        IFloorYieldController? floorYieldController = null)
     {
         _playbackReferenceTap = playbackReferenceTap;
         _assistantPlaybackMonitor = assistantPlaybackMonitor;
@@ -100,6 +108,9 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         _voiceInputOptions = voiceInputOptions;
         _liveUtteranceGate = liveUtteranceGate;
         _debugSnapshots = debugSnapshots;
+        _speechPresenceDetector = speechPresenceDetector;
+        _speechPresenceDecisionLogSink = speechPresenceDecisionLogSink;
+        _floorYieldController = floorYieldController;
 
         _playbackReferenceTap.SpeechStarted += OnSpeechStarted;
         _playbackReferenceTap.SpeechStopped += OnSpeechStopped;
@@ -140,6 +151,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             return;
         }
 
+        var frameId = Interlocked.Increment(ref _analysisFrameSequence);
         var reference = _playbackReferenceTap.GetLatestReferenceFrame(frame.Samples.Length);
         var correlation = SelfSpeechCorrelationDetector.Analyze(
             frame.Samples.Span,
@@ -194,6 +206,16 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 aecResult,
                 correlation,
                 "active_capture_endpointing");
+            var activeSpeechPresenceDecision = EvaluateOfficialSpeechPresence(
+                frameId,
+                frame,
+                echoReducedFrame,
+                reference,
+                activeVad,
+                activeGateResult,
+                correlation);
+            await HandleFloorYieldAsync(activeSpeechPresenceDecision, cancellationToken);
+            var activeSpeechPresence = activeSpeechPresenceDecision?.Result;
             PublishDebugSnapshot(
                 context,
                 frame,
@@ -203,7 +225,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 activeGateResult,
                 correlation,
                 "active_capture_endpointing",
-                BargeInState.CapturingInterruption.ToString());
+                BargeInState.CapturingInterruption.ToString(),
+                speechPresence: activeSpeechPresence);
             activeCaptureSession.Observe(CreateCaptureFrameObservation(
                 frame,
                 echoReducedFrame,
@@ -239,6 +262,16 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             correlation,
             options,
             cancellationToken);
+        var speechPresenceDecision = EvaluateOfficialSpeechPresence(
+            frameId,
+            frame,
+            echoReducedFrame,
+            reference,
+            vad,
+            comfortGateResult,
+            correlation);
+        await HandleFloorYieldAsync(speechPresenceDecision, cancellationToken);
+        var speechPresence = speechPresenceDecision?.Result;
         PublishDebugSnapshot(
             context,
             frame,
@@ -250,7 +283,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             "mic_frame",
             IsInterruptionCaptureActive()
                 ? BargeInState.CapturingInterruption.ToString()
-                : BargeInState.Speaking.ToString());
+                : BargeInState.Speaking.ToString(),
+            speechPresence: speechPresence);
         if (TryPromoteBurstCapture(
                 context,
                 frame,
@@ -316,6 +350,15 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                     aecResult,
                     correlation,
                     "fast_hard_stop_candidate");
+                _ = ObserveSpeechPresenceBranch(
+                    frameId,
+                    frame,
+                    echoReducedFrame,
+                    reference,
+                    vad,
+                    speechGateResult,
+                    correlation,
+                    "fast_hard_stop_candidate");
                 if (IsBetterRollingUserSpeechEvidence(speechGateResult, rollingGateResult))
                 {
                     rollingGateResult = speechGateResult;
@@ -331,7 +374,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                     speechGateResult,
                     correlation,
                     "fast_hard_stop_candidate",
-                    BargeInState.Speaking.ToString());
+                    BargeInState.Speaking.ToString(),
+                    speechPresence: speechPresence);
                 if (speechGateResult.Decision is not SelfSpeechDecision.Allow)
                 {
                     _diagnostics.Ignored(context, $"Fast hard-stop candidate suppressed by self-speech gate. Decision: {speechGateResult.Decision}. Reason: {speechGateResult.Reason}");
@@ -392,6 +436,15 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             aecResult,
             correlation,
             "vad_triggered_capture");
+        _ = ObserveSpeechPresenceBranch(
+            frameId,
+            frame,
+            echoReducedFrame,
+            reference,
+            vad,
+            gateResult,
+            correlation,
+            "vad_triggered_capture");
         var rollingVadGateResult = IsBetterRollingUserSpeechEvidence(gateResult, comfortGateResult)
             ? gateResult
             : comfortGateResult;
@@ -411,7 +464,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             gateResult,
             correlation,
             "vad_triggered_capture",
-            BargeInState.SoftPausedForUserSpeech.ToString());
+            BargeInState.SoftPausedForUserSpeech.ToString(),
+            speechPresence: speechPresence);
         if (gateResult.Decision is not SelfSpeechDecision.Allow)
         {
             _diagnostics.Ignored(context, $"Barge-in suppressed by self-speech gate. Decision: {gateResult.Decision}. Reason: {gateResult.Reason}");
@@ -529,23 +583,12 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 context.AssistantTurnId,
                 vad.Confidence);
         }
-        if (options.EnableSpeakerDucking)
-        {
-            CancelPendingDuckingRestore();
-            StartOwnedDucking(
-                context,
-                captureKind is CaptureKind.FastHardStop ? "fast_hard_stop_candidate" : "vad_triggered");
-        }
         _diagnostics.StateChanged(
             context,
             BargeInState.SoftPausedForUserSpeech,
             captureKind is CaptureKind.FastHardStop
-                ? "Fast hard-stop candidate detected while assistant is speaking; playback is ducked while capturing short interruption."
-                : "VAD detected likely user speech; playback is ducked while capturing interruption.");
-        if (options.PauseInsteadOfCancelOnSpeech)
-        {
-            await _playbackService.PauseCurrentSpeechAsync(cancellationToken);
-        }
+                ? "Fast hard-stop candidate detected while assistant is speaking; capture starts without legacy playback duck/yield."
+                : "VAD detected likely user speech; capture starts without legacy playback duck/yield.");
 
         BargeInCaptureSession captureSession;
         lock (_syncRoot)
@@ -714,26 +757,15 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             return gateResult;
         }
 
-        var alreadyDucked = _speakerDuckingService.IsDucked;
-        CancelPendingDuckingRestore();
         var duckReason = gateResult.Decision is not SelfSpeechDecision.Allow
             ? "comfort_ducking_uncertain_near_end"
             : "comfort_ducking_likely_user";
-        StartOwnedDucking(context, duckReason);
-        if (!alreadyDucked)
-        {
-            var latencyMs = _fastNearEndFirstSpeechAt is null
-                ? 0
-                : Math.Max(0, (int)Math.Round((DateTimeOffset.UtcNow - _fastNearEndFirstSpeechAt.Value).TotalMilliseconds));
-            _diagnostics.StateChanged(
-                context,
-                BargeInState.SoftPausedForUserSpeech,
-                $"Comfort duck started. DuckingOwner: {duckReason}. RestoreGeneration: {_duckingRestoreGeneration}. InputReason: {comfortOptions.InputReason}. SelfSpeechDecision: {gateResult.Decision}. SelfSpeechReason: {gateResult.Reason}. ConsecutiveMs: {_fastNearEndSpeechMs}. MinSpeechMs: {comfortOptions.MinSpeechMs}. VadConfidence: {vad.Confidence:N2}. Energy: {vad.Energy:N4}. NoiseFloor: {vad.NoiseFloor:N4}. DuckApplyLatencyMs: {latencyMs}. CaptureActive: {IsInterruptionCaptureActive()}.");
-        }
-        else
-        {
-            _diagnostics.Ignored(context, $"Comfort duck held. DuckingOwner: {_duckingOwner ?? "(none)"}. RestoreGeneration: {_duckingRestoreGeneration}. InputReason: {comfortOptions.InputReason}. SelfSpeechDecision: {gateResult.Decision}. SelfSpeechReason: {gateResult.Reason}. ConsecutiveMs: {_fastNearEndSpeechMs}. VadConfidence: {vad.Confidence:N2}. Energy: {vad.Energy:N4}. NoiseFloor: {vad.NoiseFloor:N4}. CaptureActive: {IsInterruptionCaptureActive()}.");
-        }
+        var latencyMs = _fastNearEndFirstSpeechAt is null
+            ? 0
+            : Math.Max(0, (int)Math.Round((DateTimeOffset.UtcNow - _fastNearEndFirstSpeechAt.Value).TotalMilliseconds));
+        _diagnostics.Ignored(
+            context,
+            $"Legacy comfort duck disabled. LegacyOwner: {duckReason}. InputReason: {comfortOptions.InputReason}. SelfSpeechDecision: {gateResult.Decision}. SelfSpeechReason: {gateResult.Reason}. ConsecutiveMs: {_fastNearEndSpeechMs}. MinSpeechMs: {comfortOptions.MinSpeechMs}. VadConfidence: {vad.Confidence:N2}. Energy: {vad.Energy:N4}. NoiseFloor: {vad.NoiseFloor:N4}. WouldDuckLatencyMs: {latencyMs}. CaptureActive: {IsInterruptionCaptureActive()}.");
 
         return gateResult;
     }
@@ -883,8 +915,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
 
     private static bool IsRollingUserSpeechEvidenceEnabled(BargeInOptions options)
     {
-        return options.PausePlaybackOnRollingUserSpeechEvidence
-            || options.PausePlaybackOnSustainedUserSpeechScore;
+        return false;
     }
 
     private static bool IsBetterRollingUserSpeechEvidence(
@@ -990,7 +1021,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
 
         _playbackYieldedForRollingUserSpeechEvidence = true;
         _logger.LogInformation(
-            "RollingUserSpeechEvidenceTriggered. EvidenceSource: {EvidenceSource}. UserSpeechScore: {UserSpeechScore}. WindowMs: {WindowMs}. HighScoreThreshold: {HighScoreThreshold:N3}. HighScoreMsInWindow: {HighScoreMsInWindow}. RequiredHighScoreMs: {RequiredHighScoreMs}. AverageScore: {AverageScore:N3}. AverageScoreThreshold: {AverageScoreThreshold:N3}. RecentHighFramePresent: {RecentHighFramePresent}. RecentHighFrameWindowMs: {RecentHighFrameWindowMs}. ObservedMsInWindow: {ObservedMsInWindow}. AssistantWasSpeaking: {AssistantWasSpeaking}. DecisionReason: {DecisionReason}. AssistantTurnId: {AssistantTurnId}. CorrelationId: {CorrelationId}.",
+            "LegacyRollingUserSpeechEvidenceWouldHaveTriggered. EvidenceSource: {EvidenceSource}. UserSpeechScore: {UserSpeechScore}. WindowMs: {WindowMs}. HighScoreThreshold: {HighScoreThreshold:N3}. HighScoreMsInWindow: {HighScoreMsInWindow}. RequiredHighScoreMs: {RequiredHighScoreMs}. AverageScore: {AverageScore:N3}. AverageScoreThreshold: {AverageScoreThreshold:N3}. RecentHighFramePresent: {RecentHighFramePresent}. RecentHighFrameWindowMs: {RecentHighFrameWindowMs}. ObservedMsInWindow: {ObservedMsInWindow}. AssistantWasSpeaking: {AssistantWasSpeaking}. DecisionReason: {DecisionReason}. AssistantTurnId: {AssistantTurnId}. CorrelationId: {CorrelationId}.",
             evidenceSource,
             FormatUserSpeechScore(userSpeechScore),
             snapshot.WindowMs,
@@ -1004,25 +1035,6 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             snapshot.ObservedMsInWindow,
             assistantWasSpeaking,
             snapshot.DecisionReason,
-            context.AssistantTurnId,
-            context.CorrelationId);
-        _diagnostics.StateChanged(
-            context,
-            BargeInState.SoftPausedForUserSpeech,
-            "Playback yielded for rolling UserSpeechScore evidence while preserving the active assistant turn.");
-        await _playbackService.PauseCurrentSpeechAsync(cancellationToken);
-        _logger.LogInformation(
-            "PlaybackYieldedForRollingUserSpeechEvidence. EvidenceSource: {EvidenceSource}. UserSpeechScore: {UserSpeechScore}. WindowMs: {WindowMs}. HighScoreThreshold: {HighScoreThreshold:N3}. HighScoreMsInWindow: {HighScoreMsInWindow}. RequiredHighScoreMs: {RequiredHighScoreMs}. AverageScore: {AverageScore:N3}. AverageScoreThreshold: {AverageScoreThreshold:N3}. RecentHighFramePresent: {RecentHighFramePresent}. RecentHighFrameWindowMs: {RecentHighFrameWindowMs}. AssistantTurnId: {AssistantTurnId}. CorrelationId: {CorrelationId}.",
-            evidenceSource,
-            FormatUserSpeechScore(userSpeechScore),
-            snapshot.WindowMs,
-            snapshot.HighScoreThreshold,
-            snapshot.HighScoreMsInWindow,
-            snapshot.RequiredHighScoreMs,
-            snapshot.AverageScore,
-            snapshot.AverageScoreThreshold,
-            snapshot.RecentHighFramePresent,
-            snapshot.RecentHighFrameWindowMs,
             context.AssistantTurnId,
             context.CorrelationId);
     }
@@ -2345,11 +2357,6 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         BargeInOptions options,
         CancellationToken cancellationToken)
     {
-        if (!options.EnableSpeakerDucking)
-        {
-            return;
-        }
-
         if (IsSpeechFrame(frame, options))
         {
             var gateResult = EvaluateSelfSpeechGate(
@@ -2360,18 +2367,13 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 "live_ducking");
             if (gateResult.Decision is not SelfSpeechDecision.Allow)
             {
-                _diagnostics.Ignored(context, $"Ducking gate did not allow active capture frame. Decision: {gateResult.Decision}. Reason: {gateResult.Reason}. Existing capture ducking is held until sustained silence or capture completion.");
-                CancelPendingDuckingRestore();
-                StartOwnedDucking(context, "capture_active_frame");
+                _diagnostics.Ignored(context, $"Legacy active-capture ducking disabled. Gate did not allow active capture frame. Decision: {gateResult.Decision}. Reason: {gateResult.Reason}.");
                 return;
             }
 
-            CancelPendingDuckingRestore();
-            StartOwnedDucking(context, "vad_active_frame");
+            _diagnostics.Ignored(context, $"Legacy active-capture ducking disabled. Gate allowed active capture frame. Decision: {gateResult.Decision}. Reason: {gateResult.Reason}.");
             return;
         }
-
-        ScheduleDuckingRestore(context, options.DuckingSpeechHangoverMs, cancellationToken);
     }
 
     private void ScheduleDuckingRestore(
@@ -2498,16 +2500,6 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         {
             return IsInterruptionCaptureActiveLocked();
         }
-    }
-
-    private void StartOwnedDucking(BargeInSpeechContext context, string owner)
-    {
-        lock (_syncRoot)
-        {
-            _duckingOwner = owner;
-        }
-
-        _speakerDuckingService.StartDucking(context, owner);
     }
 
     private void RestoreOwnedDucking(BargeInSpeechContext context, string reason)
@@ -3377,6 +3369,129 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         return CalculateRms(frame.Samples.Span) >= threshold;
     }
 
+    private SpeechPresenceOfficialDecision? EvaluateOfficialSpeechPresence(
+        long frameId,
+        BargeInAudioFrame rawFrame,
+        BargeInAudioFrame echoReducedFrame,
+        ReadOnlyMemory<float> playbackReference,
+        VadFrameResult vad,
+        SelfSpeechGateResult? gateResult,
+        SelfSpeechCorrelationResult? correlation)
+    {
+        if (_speechPresenceDetector is null)
+        {
+            return null;
+        }
+
+        var result = _speechPresenceDetector.Evaluate(CreateSpeechPresenceEvidence(
+            frameId,
+            rawFrame,
+            echoReducedFrame,
+            playbackReference,
+            vad,
+            gateResult,
+            correlation,
+            "official_frame_decision"));
+        var decision = new SpeechPresenceOfficialDecision
+        {
+            FrameId = frameId,
+            TimestampUtc = rawFrame.Timestamp,
+            Result = result
+        };
+        _speechPresenceDecisionLogSink?.TryLogOfficialDecision(decision);
+        return decision;
+    }
+
+    private Task HandleFloorYieldAsync(
+        SpeechPresenceOfficialDecision? decision,
+        CancellationToken cancellationToken)
+    {
+        return _floorYieldController is null
+            ? Task.CompletedTask
+            : _floorYieldController.HandleOfficialDecisionAsync(decision, cancellationToken);
+    }
+
+    private SpeechPresenceBranchObservation? ObserveSpeechPresenceBranch(
+        long frameId,
+        BargeInAudioFrame rawFrame,
+        BargeInAudioFrame echoReducedFrame,
+        ReadOnlyMemory<float> playbackReference,
+        VadFrameResult vad,
+        SelfSpeechGateResult? gateResult,
+        SelfSpeechCorrelationResult? correlation,
+        string sourcePath)
+    {
+        if (_speechPresenceDetector is null)
+        {
+            return null;
+        }
+
+        var result = _speechPresenceDetector.Evaluate(CreateSpeechPresenceEvidence(
+            frameId,
+            rawFrame,
+            echoReducedFrame,
+            playbackReference,
+            vad,
+            gateResult,
+            correlation,
+            sourcePath));
+        var observation = new SpeechPresenceBranchObservation
+        {
+            FrameId = frameId,
+            TimestampUtc = rawFrame.Timestamp,
+            SourcePath = sourcePath,
+            Result = result
+        };
+        _speechPresenceDecisionLogSink?.TryLogBranchObservation(observation);
+        return observation;
+    }
+
+    private SpeechPresenceEvidence CreateSpeechPresenceEvidence(
+        long frameId,
+        BargeInAudioFrame rawFrame,
+        BargeInAudioFrame echoReducedFrame,
+        ReadOnlyMemory<float> playbackReference,
+        VadFrameResult vad,
+        SelfSpeechGateResult? gateResult,
+        SelfSpeechCorrelationResult? correlation,
+        string sourcePath)
+    {
+        var correlationScore = gateResult?.CorrelationScore ?? correlation?.CorrelationScore;
+        return new SpeechPresenceEvidence
+        {
+            FrameId = frameId,
+            TimestampUtc = rawFrame.Timestamp,
+            AssistantPlaybackActive = _assistantPlaybackMonitor.IsPlaybackActive,
+            RawMicRms = CalculateRms(rawFrame.Samples.Span),
+            RawMicPeak = CalculatePeak(rawFrame.Samples.Span),
+            EchoReducedRms = CalculateRms(echoReducedFrame.Samples.Span),
+            EchoReducedPeak = CalculatePeak(echoReducedFrame.Samples.Span),
+            PlaybackReferenceRms = playbackReference.IsEmpty ? 0.0 : CalculateRms(playbackReference.Span),
+            PlaybackReferencePeak = playbackReference.IsEmpty ? 0.0 : CalculatePeak(playbackReference.Span),
+            VadConfidence = vad.Confidence,
+            VadSpeechDetected = vad.IsSpeech,
+            PlaybackCorrelationScore = correlationScore,
+            StrongSelfEchoEvidence = IsStrongSelfEchoEvidence(gateResult, correlation),
+            UserSpeechScoreLegacy = gateResult?.UserSpeechScore,
+            SourcePath = sourcePath
+        };
+    }
+
+    private static bool IsStrongSelfEchoEvidence(
+        SelfSpeechGateResult? gateResult,
+        SelfSpeechCorrelationResult? correlation)
+    {
+        if (gateResult is not null && IsStrongSelfEchoSuppression(gateResult))
+        {
+            return true;
+        }
+
+        return string.Equals(
+            correlation?.Decision,
+            SelfSpeechCorrelationDecision.SelfEcho,
+            StringComparison.Ordinal);
+    }
+
     private void PublishDebugSnapshot(
         BargeInSpeechContext context,
         BargeInAudioFrame rawFrame,
@@ -3392,7 +3507,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         string? sttAudioSource = null,
         bool? sttAudioIsAecProcessed = null,
         string? finalBargeInDecision = null,
-        bool force = false)
+        bool force = false,
+        SpeechPresenceResult? speechPresence = null)
     {
         if (_debugSnapshots?.IsEnabled != true)
         {
@@ -3412,6 +3528,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         var userDominanceScore = gateResult?.UserSpeechScore;
         var correlationScore = gateResult?.CorrelationScore ?? correlation?.CorrelationScore;
         var bestDelayMs = gateResult?.BestDelayMs ?? correlation?.BestDelayMs;
+        var floorYield = _floorYieldController?.GetDebugState();
 
         _debugSnapshots.Publish(new BargeInDebugSnapshot
         {
@@ -3426,6 +3543,25 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             EstimatedEchoRms = estimatedEchoRms,
             MicToExpectedEchoRatio = micToExpectedEchoRatio,
             UserDominanceScore = userDominanceScore,
+            SpeechPresenceState = speechPresence?.State.ToString(),
+            SpeechPresenceFrameId = speechPresence?.Evidence.FrameId,
+            SpeechPresenceConfidence = speechPresence?.Confidence,
+            SpeechPresenceReason = speechPresence?.Reason,
+            SpeechPresenceShouldYieldPlayback = speechPresence?.ShouldYieldPlayback,
+            SpeechPresenceRawMicRms = speechPresence?.Evidence.RawMicRms,
+            SpeechPresenceEchoReducedRms = speechPresence?.Evidence.EchoReducedRms,
+            SpeechPresencePlaybackReferenceRms = speechPresence?.Evidence.PlaybackReferenceRms,
+            SpeechPresenceVadConfidence = speechPresence?.Evidence.VadConfidence,
+            SpeechPresenceCorrelation = speechPresence?.Evidence.PlaybackCorrelationScore,
+            FloorYieldTriggered = floorYield?.Triggered,
+            LastFloorYieldFrameId = floorYield?.LastFrameId,
+            LastFloorYieldReason = floorYield?.LastReason,
+            LastFloorYieldTimestampUtc = floorYield?.LastTimestampUtc,
+            LastFloorYieldMode = floorYield?.LastMode,
+            FloorYieldCandidateActive = floorYield?.CandidateActive,
+            FloorYieldCandidateStartFrameId = floorYield?.CandidateStartFrameId,
+            FloorYieldCandidateDurationMs = floorYield?.CandidateDurationMs,
+            FloorYieldRequiredSustainedMs = floorYield?.RequiredSustainedMs,
             VadConfidence = vad?.Confidence,
             VadIsSpeech = vad?.IsSpeech,
             CorrelationScore = correlationScore,

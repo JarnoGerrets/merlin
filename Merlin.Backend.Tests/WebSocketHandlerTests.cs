@@ -1,5 +1,6 @@
 using Merlin.Backend.Configuration;
 using Merlin.Backend.Services;
+using Merlin.Backend.Services.SpeechPresence;
 using Merlin.Backend.WebSocket;
 using Merlin.Backend.Models;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -85,6 +86,89 @@ public sealed class WebSocketHandlerTests
             }));
 
         Assert.True(handler.ShouldRejectFrontendVoiceStream());
+    }
+
+    [Fact]
+    public void TryHandleSpeechPresenceMarkerMessage_WhenValid_LogsManualMarkerOnce()
+    {
+        var sink = new RecordingSpeechPresenceDecisionLogSink();
+        var handler = CreateHandler(sink);
+
+        var handled = handler.TryHandleSpeechPresenceMarkerMessage("""
+            {
+                "type": "speech_presence_marker",
+                "markerType": "user_started_speaking",
+                "clientTimestampUtc": "2026-06-22T10:22:06.900Z",
+                "source": "frontend_debug_button"
+            }
+            """);
+
+        Assert.True(handled);
+        var marker = Assert.Single(sink.ManualMarkers);
+        Assert.Equal("user_started_speaking", marker.MarkerType);
+        Assert.Equal("frontend_debug_button", marker.Source);
+        Assert.Equal("manual speech start marker", marker.Note);
+        Assert.Equal(DateTimeOffset.Parse("2026-06-22T10:22:06.900Z"), marker.ClientTimestampUtc);
+        Assert.True((DateTimeOffset.UtcNow - marker.TimestampUtc).TotalSeconds < 5);
+    }
+
+    [Fact]
+    public void TryHandleSpeechPresenceMarkerMessage_WhenMarkerTypeUnknown_DoesNotLogMarker()
+    {
+        var sink = new RecordingSpeechPresenceDecisionLogSink();
+        var handler = CreateHandler(sink);
+
+        var handled = handler.TryHandleSpeechPresenceMarkerMessage("""
+            {
+                "type": "speech_presence_marker",
+                "markerType": "not_the_marker",
+                "source": "frontend_debug_button"
+            }
+            """);
+
+        Assert.True(handled);
+        Assert.Empty(sink.ManualMarkers);
+    }
+
+    private static WebSocketHandler CreateHandler(ISpeechPresenceDecisionLogSink? speechPresenceDecisionLogSink = null)
+    {
+        var runtimeStateService = new RuntimeStateService();
+        return new WebSocketHandler(
+            new CommandRouter(
+                new RuleBasedIntentParser(TestApplicationLaunchOptions.Create()),
+                new ToolRegistry([]),
+                NullLogger<CommandRouter>.Instance,
+                runtimeStateService,
+                new NoOpResponsePolisher()),
+            new LiveAssistantTurnService(NullLogger<LiveAssistantTurnService>.Instance),
+            new NoOpAssistantSpeechPlaybackService(),
+            new SpeechPolicyService(),
+            NullLogger<WebSocketHandler>.Instance,
+            runtimeStateService,
+            new VoiceStreamSessionService(
+                new NoOpVoiceTranscriptionService(),
+                NullLogger<VoiceStreamSessionService>.Instance),
+            speechPresenceDecisionLogSink: speechPresenceDecisionLogSink);
+    }
+
+    private sealed class RecordingSpeechPresenceDecisionLogSink : ISpeechPresenceDecisionLogSink
+    {
+        private readonly List<SpeechPresenceManualMarker> _manualMarkers = new();
+
+        public IReadOnlyList<SpeechPresenceManualMarker> ManualMarkers => _manualMarkers;
+
+        public void TryLogOfficialDecision(SpeechPresenceOfficialDecision decision)
+        {
+        }
+
+        public void TryLogBranchObservation(SpeechPresenceBranchObservation observation)
+        {
+        }
+
+        public void TryLogManualSpeechStartMarker(SpeechPresenceManualMarker marker)
+        {
+            _manualMarkers.Add(marker);
+        }
     }
 
     private sealed class NoOpAssistantSpeechPlaybackService : IAssistantSpeechPlaybackService

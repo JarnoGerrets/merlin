@@ -65,6 +65,11 @@ public sealed class SpeechPolicyService : ISpeechPolicyService
 
     private static bool ShouldSpeakResponse(AssistantResponse response)
     {
+        if (response.SuppressSpeech)
+        {
+            return false;
+        }
+
         if (string.IsNullOrWhiteSpace(response.Message))
         {
             return false;

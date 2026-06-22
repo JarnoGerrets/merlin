@@ -7,6 +7,7 @@ using Merlin.Backend.Configuration;
 using Merlin.Backend.Services;
 using Merlin.Backend.Services.BargeIn;
 using Merlin.Backend.Services.LiveUtterance;
+using Merlin.Backend.Services.SpeechPresence;
 using Microsoft.Extensions.Options;
 
 namespace Merlin.Backend.WebSocket;
@@ -26,6 +27,7 @@ public sealed class WebSocketHandler
     private readonly IRuntimeStateService _runtimeStateService;
     private readonly IOptionsMonitor<VoiceInputOptions> _voiceInputOptions;
     private readonly VoiceStreamSessionService _voiceStreamSessionService;
+    private readonly ISpeechPresenceDecisionLogSink? _speechPresenceDecisionLogSink;
     private readonly ConcurrentDictionary<string, AssistantRequest> _recentRequestsByCorrelationId = new(StringComparer.OrdinalIgnoreCase);
 
     public WebSocketHandler(
@@ -40,7 +42,8 @@ public sealed class WebSocketHandler
         IBargeInCoordinator? bargeInCoordinator = null,
         ILiveUtteranceGate? liveUtteranceGate = null,
         IBargeInDebugSnapshotService? bargeInDebugSnapshots = null,
-        IOptionsMonitor<VoiceInputOptions>? voiceInputOptions = null)
+        IOptionsMonitor<VoiceInputOptions>? voiceInputOptions = null,
+        ISpeechPresenceDecisionLogSink? speechPresenceDecisionLogSink = null)
     {
         _commandRouter = commandRouter;
         _bargeInCoordinator = bargeInCoordinator;
@@ -54,6 +57,7 @@ public sealed class WebSocketHandler
         _voiceInputOptions = voiceInputOptions ?? new StaticOptionsMonitor<VoiceInputOptions>(new VoiceInputOptions());
         _voiceStreamSessionService = voiceStreamSessionService;
         _bargeInDebugSnapshots = bargeInDebugSnapshots;
+        _speechPresenceDecisionLogSink = speechPresenceDecisionLogSink;
     }
 
     public async Task HandleAsync(HttpContext context)
@@ -186,6 +190,11 @@ public sealed class WebSocketHandler
             }
 
             if (await TryHandleVoiceStreamMessageAsync(webSocket, sendGate, connectionCorrelationIds, message, cancellationToken))
+            {
+                continue;
+            }
+
+            if (TryHandleSpeechPresenceMarkerMessage(message))
             {
                 continue;
             }
@@ -409,6 +418,66 @@ public sealed class WebSocketHandler
     internal bool ShouldRejectFrontendVoiceStream()
     {
         return _voiceInputOptions.CurrentValue.IsBackendOwnedMode;
+    }
+
+    internal bool TryHandleSpeechPresenceMarkerMessage(string rawMessage)
+    {
+        SpeechPresenceMarkerEnvelope? envelope;
+        try
+        {
+            envelope = JsonSerializer.Deserialize<SpeechPresenceMarkerEnvelope>(rawMessage, JsonSerializerOptions);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+
+        if (envelope is null
+            || !string.Equals(envelope.Type, "speech_presence_marker", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!string.Equals(envelope.MarkerType, "user_started_speaking", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning(
+                "SpeechPresenceMarkerIgnored. MarkerType: {MarkerType}. Source: {Source}.",
+                envelope.MarkerType,
+                envelope.Source);
+            return true;
+        }
+
+        var source = string.IsNullOrWhiteSpace(envelope.Source)
+            ? "frontend_debug_button"
+            : envelope.Source.Trim();
+        var marker = new SpeechPresenceManualMarker
+        {
+            TimestampUtc = DateTimeOffset.UtcNow,
+            MarkerType = "user_started_speaking",
+            Source = source,
+            ClientTimestampUtc = TryParseClientTimestamp(envelope.ClientTimestampUtc),
+            Note = "manual speech start marker"
+        };
+        _speechPresenceDecisionLogSink?.TryLogManualSpeechStartMarker(marker);
+        _logger.LogInformation(
+            "ManualSpeechStartMarkerReceived. MarkerType: {MarkerType}. Source: {Source}. TimestampUtc: {TimestampUtc}. ClientTimestampUtc: {ClientTimestampUtc}.",
+            marker.MarkerType,
+            marker.Source,
+            marker.TimestampUtc,
+            marker.ClientTimestampUtc);
+        return true;
+    }
+
+    private static DateTimeOffset? TryParseClientTimestamp(string? clientTimestampUtc)
+    {
+        if (string.IsNullOrWhiteSpace(clientTimestampUtc))
+        {
+            return null;
+        }
+
+        return DateTimeOffset.TryParse(clientTimestampUtc, out var timestamp)
+            ? timestamp.ToUniversalTime()
+            : null;
     }
 
     internal async Task DispatchCorrectionRegenerationAsync(
@@ -1220,6 +1289,17 @@ public sealed class WebSocketHandler
         public string? Data { get; init; }
 
         public string? ClientMode { get; init; }
+    }
+
+    private sealed class SpeechPresenceMarkerEnvelope
+    {
+        public string Type { get; init; } = string.Empty;
+
+        public string MarkerType { get; init; } = string.Empty;
+
+        public string? ClientTimestampUtc { get; init; }
+
+        public string Source { get; init; } = string.Empty;
     }
 
     private sealed class StaticOptionsMonitor<T> : IOptionsMonitor<T>

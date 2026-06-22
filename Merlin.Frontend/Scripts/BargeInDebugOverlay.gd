@@ -1,6 +1,8 @@
 extends PanelContainer
 class_name BargeInDebugOverlay
 
+signal manual_speech_start_marker_requested
+
 const ROWS := [
 	{"label": "Mic RMS", "raw": "micRms", "percent": "micRmsPercent", "kind": "energy"},
 	{"label": "Mic Peak", "raw": "micPeak", "percent": "micPeakPercent", "kind": "energy"},
@@ -11,6 +13,11 @@ const ROWS := [
 	{"label": "VAD Confidence", "raw": "vadConfidence", "percent": "vadPercent", "kind": "unit"},
 	{"label": "Correlation", "raw": "correlationScore", "percent": "correlationPercent", "kind": "unit"},
 	{"label": "User Dominance", "raw": "userDominanceScore", "percent": "userDominancePercent", "kind": "unit"},
+	{"label": "Presence Raw", "raw": "speechPresenceRawMicRms", "percent": "", "kind": "energy"},
+	{"label": "Presence AEC", "raw": "speechPresenceEchoReducedRms", "percent": "", "kind": "energy"},
+	{"label": "Presence Ref", "raw": "speechPresencePlaybackReferenceRms", "percent": "", "kind": "energy"},
+	{"label": "Presence VAD", "raw": "speechPresenceVadConfidence", "percent": "", "kind": "unit"},
+	{"label": "Presence Corr", "raw": "speechPresenceCorrelation", "percent": "", "kind": "unit"},
 	{"label": "Captured Window Corr", "raw": "capturedWindowBestCorrelation", "percent": "", "kind": "unit"},
 ]
 
@@ -18,6 +25,19 @@ const FIELDS := [
 	["Assistant Speaking", "assistantWasSpeaking"],
 	["Capture Source", "captureSource"],
 	["Barge-In State", "bargeInState"],
+	["Presence State", "speechPresenceState"],
+	["Presence Conf", "speechPresenceConfidence"],
+	["Presence Reason", "speechPresenceReason"],
+	["Presence Yield", "speechPresenceShouldYieldPlayback"],
+	["Floor Yield", "floorYieldTriggered"],
+	["Yield Frame", "lastFloorYieldFrameId"],
+	["Yield Reason", "lastFloorYieldReason"],
+	["Yield Time", "lastFloorYieldTimestampUtc"],
+	["Yield Mode", "lastFloorYieldMode"],
+	["Yield Cand Active", "floorYieldCandidateActive"],
+	["Yield Cand Start", "floorYieldCandidateStartFrameId"],
+	["Yield Cand Ms", "floorYieldCandidateDurationMs"],
+	["Yield Required Ms", "floorYieldRequiredSustainedMs"],
 	["Self-Speech Gate", "selfSpeechGateDecision"],
 	["Gate Reason", "selfSpeechGateReason"],
 	["Captured Window", "capturedWindowSelfPlaybackDecision"],
@@ -68,6 +88,18 @@ func _ready() -> void:
 	title.add_theme_font_size_override("font_size", 15)
 	title.add_theme_color_override("font_color", Color(0.86, 0.96, 1.0, 1.0))
 	stack.add_child(title)
+
+	var marker_button := Button.new()
+	marker_button.text = "Mark speech start"
+	marker_button.tooltip_text = "Temporary debug marker for speech-presence latency tests."
+	marker_button.focus_mode = Control.FOCUS_NONE
+	marker_button.pressed.connect(func(): manual_speech_start_marker_requested.emit())
+	marker_button.add_theme_font_size_override("font_size", 12)
+	marker_button.add_theme_color_override("font_color", Color(0.94, 0.98, 1.0, 1.0))
+	marker_button.add_theme_stylebox_override("normal", _button_style(Color(0.025, 0.105, 0.150, 0.86), Color(0.25, 0.78, 0.92, 0.70)))
+	marker_button.add_theme_stylebox_override("hover", _button_style(Color(0.035, 0.140, 0.190, 0.95), Color(0.44, 0.90, 1.0, 0.90)))
+	marker_button.add_theme_stylebox_override("pressed", _button_style(Color(0.018, 0.086, 0.126, 1.0), Color(0.78, 0.96, 1.0, 1.0)))
+	stack.add_child(marker_button)
 
 	for row in ROWS:
 		_add_bar_row(stack, row)
@@ -237,4 +269,17 @@ func _bar_fill_style() -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.18, 0.78, 0.92, 0.92)
 	style.set_corner_radius_all(3)
+	return style
+
+
+func _button_style(fill: Color, border: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = fill
+	style.border_color = border
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(5)
+	style.content_margin_left = 8
+	style.content_margin_top = 5
+	style.content_margin_right = 8
+	style.content_margin_bottom = 5
 	return style

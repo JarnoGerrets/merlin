@@ -24,6 +24,44 @@ public sealed record BargeInDebugSnapshot
 
     public double? UserDominanceScore { get; init; }
 
+    public string? SpeechPresenceState { get; init; }
+
+    public long? SpeechPresenceFrameId { get; init; }
+
+    public double? SpeechPresenceConfidence { get; init; }
+
+    public string? SpeechPresenceReason { get; init; }
+
+    public bool? SpeechPresenceShouldYieldPlayback { get; init; }
+
+    public double? SpeechPresenceRawMicRms { get; init; }
+
+    public double? SpeechPresenceEchoReducedRms { get; init; }
+
+    public double? SpeechPresencePlaybackReferenceRms { get; init; }
+
+    public double? SpeechPresenceVadConfidence { get; init; }
+
+    public double? SpeechPresenceCorrelation { get; init; }
+
+    public bool? FloorYieldTriggered { get; init; }
+
+    public long? LastFloorYieldFrameId { get; init; }
+
+    public string? LastFloorYieldReason { get; init; }
+
+    public DateTimeOffset? LastFloorYieldTimestampUtc { get; init; }
+
+    public string? LastFloorYieldMode { get; init; }
+
+    public bool? FloorYieldCandidateActive { get; init; }
+
+    public long? FloorYieldCandidateStartFrameId { get; init; }
+
+    public double? FloorYieldCandidateDurationMs { get; init; }
+
+    public int? FloorYieldRequiredSustainedMs { get; init; }
+
     public double? VadConfidence { get; init; }
 
     public bool? VadIsSpeech { get; init; }
