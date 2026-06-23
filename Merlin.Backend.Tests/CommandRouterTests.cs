@@ -188,6 +188,7 @@ public sealed class CommandRouterTests
         services.AddSingleton(TestApplicationLaunchOptions.Create());
         services.AddSingleton(Options.Create(new Merlin.Backend.Configuration.LocalAIOptions()));
         services.AddSingleton(Options.Create(new Merlin.Backend.Configuration.CoreMemoryOptions()));
+        services.AddSingleton(Options.Create(new Merlin.Backend.Configuration.TrustedRegistryOptions()));
         services.AddSingleton(TestCapabilityOptions.Create());
         services.AddSingleton<IWebHostEnvironment>(new FakeWebHostEnvironment());
         services.AddSingleton<ILogger<StatusTool>>(NullLogger<StatusTool>.Instance);
@@ -198,6 +199,7 @@ public sealed class CommandRouterTests
         services.AddSingleton<IProcessLauncher, FakeProcessLauncher>();
         services.AddSingleton<ITrustedApplicationStore, FakeTrustedApplicationStore>();
         services.AddSingleton<ITrustedCommandStore, FakeTrustedCommandStore>();
+        services.AddSingleton<ITrustedUrlStore, FakeTrustedUrlStore>();
         services.AddSingleton<IApplicationResolver, ApplicationResolver>();
         services.AddSingleton<IConfirmationService, ConfirmationService>();
         services.AddSingleton<ITool, OpenApplicationTool>();

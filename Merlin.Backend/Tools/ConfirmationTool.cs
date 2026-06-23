@@ -9,20 +9,17 @@ public sealed class ConfirmationTool : ITool
     private readonly IConfirmationService _confirmationService;
     private readonly IProcessLauncher _processLauncher;
     private readonly ITrustedApplicationStore _trustedApplicationStore;
-    private readonly ITrustedCommandStore _trustedCommandStore;
     private readonly ITrustedUrlStore _trustedUrlStore;
 
     public ConfirmationTool(
         IConfirmationService confirmationService,
         IProcessLauncher processLauncher,
         ITrustedApplicationStore trustedApplicationStore,
-        ITrustedCommandStore trustedCommandStore,
         ITrustedUrlStore? trustedUrlStore = null)
     {
         _confirmationService = confirmationService;
         _processLauncher = processLauncher;
         _trustedApplicationStore = trustedApplicationStore;
-        _trustedCommandStore = trustedCommandStore;
         _trustedUrlStore = trustedUrlStore ?? NullTrustedUrlStore.Instance;
     }
 
@@ -135,16 +132,6 @@ public sealed class ConfirmationTool : ITool
                         confirmation.RequestedAlias,
                         confirmation.Target,
                         confirmation.DisplayName);
-                    _trustedCommandStore.SaveMapping(new TrustedCommandMapping
-                    {
-                        OriginalCommand = confirmation.OriginalUserCommand,
-                        Intent = "open_url",
-                        NormalizedCommand = confirmation.NormalizedCommand,
-                        ToolName = "Open URL",
-                        Target = confirmation.Target,
-                        DisplayName = confirmation.DisplayName,
-                        UseCount = 1
-                    });
                 }
 
                 return new ToolResult
@@ -197,16 +184,6 @@ public sealed class ConfirmationTool : ITool
                     Source = "Trusted",
                     Confidence = 1
                 });
-            _trustedCommandStore.SaveMapping(new TrustedCommandMapping
-            {
-                OriginalCommand = confirmation.OriginalUserCommand,
-                Intent = confirmation.Intent,
-                NormalizedCommand = confirmation.NormalizedCommand,
-                ToolName = confirmation.ToolName,
-                Target = confirmation.Target,
-                DisplayName = confirmation.DisplayName,
-                UseCount = 1
-            });
 
             return new ToolResult
             {

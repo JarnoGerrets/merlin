@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Merlin.Backend.Configuration;
 using Merlin.Backend.Models;
+using Merlin.Backend.Services.InterruptionIntelligence;
 using Merlin.Backend.Services.LiveUtterance;
 using Merlin.Backend.Services.SpeechPresence;
 using Microsoft.Extensions.Options;
@@ -18,6 +19,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     private readonly IAcousticEchoCancellationService _aec;
     private readonly IBargeInDiagnosticsLogger _diagnostics;
     private readonly IInterruptionClassifier _interruptionClassifier;
+    private readonly ILiveInterruptionIntegrationService? _liveInterruptionIntegrationService;
     private readonly ILiveUtteranceGate? _liveUtteranceGate;
     private readonly ILiveAssistantTurnService _liveTurnService;
     private readonly IOptionsMonitor<BargeInOptions> _options;
@@ -87,7 +89,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         IBargeInDebugSnapshotService? debugSnapshots = null,
         ISpeechPresenceDetector? speechPresenceDetector = null,
         ISpeechPresenceDecisionLogSink? speechPresenceDecisionLogSink = null,
-        IFloorYieldController? floorYieldController = null)
+        IFloorYieldController? floorYieldController = null,
+        ILiveInterruptionIntegrationService? liveInterruptionIntegrationService = null)
     {
         _playbackReferenceTap = playbackReferenceTap;
         _assistantPlaybackMonitor = assistantPlaybackMonitor;
@@ -106,6 +109,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         _logger = logger;
         _options = options;
         _voiceInputOptions = voiceInputOptions;
+        _liveInterruptionIntegrationService = liveInterruptionIntegrationService;
         _liveUtteranceGate = liveUtteranceGate;
         _debugSnapshots = debugSnapshots;
         _speechPresenceDetector = speechPresenceDetector;
@@ -1809,6 +1813,20 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             routeDecision.Confidence,
             routeDecision.Action,
             routeDecision.Reason);
+        if (!await TryHandleConversationalInterruptionLiveSeamAsync(
+            context,
+            utterance,
+            routeDecision,
+            gateResult,
+            vad,
+            captureKind,
+            captured,
+            capturedUntil,
+            cancellationToken))
+        {
+            _vadService.Reset();
+            return;
+        }
         var classification = _interruptionClassifier.Classify(
             new InterruptionClassificationInput
             {
@@ -2859,6 +2877,89 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             SttConfidence = utterance.Confidence,
             AudioSpeechConfidence = vadConfidence
         };
+    }
+
+    private async Task<bool> TryHandleConversationalInterruptionLiveSeamAsync(
+        BargeInSpeechContext context,
+        UserUtterance utterance,
+        UtteranceRouteDecision routeDecision,
+        LiveUtteranceGateResult? gateResult,
+        VadFrameResult vad,
+        CaptureKind captureKind,
+        IReadOnlyList<BargeInAudioFrame> capturedFrames,
+        DateTimeOffset capturedUntil,
+        CancellationToken cancellationToken)
+    {
+        if (_liveInterruptionIntegrationService is null)
+        {
+            return true;
+        }
+
+        try
+        {
+            var startedAtUtc = capturedFrames.Count > 0
+                ? capturedFrames[0].Timestamp
+                : utterance.TimestampUtc;
+            var endedAtUtc = capturedUntil == default
+                ? utterance.TimestampUtc
+                : capturedUntil;
+            // ConversationalInterruption starts after the existing yield/capture pipeline.
+            // The acoustic/Jarno decision remains owned by BargeIn/SpeechPresence.
+            // This hook only shadows conversational meaning of the yielded utterance.
+            var yieldedUtterance = new YieldedInterruptionUtterance
+            {
+                Transcript = utterance.Text,
+                YieldedByLayer1 = true,
+                YieldReason = routeDecision.Reason,
+                CaptureKind = captureKind.ToString(),
+                RouteKind = routeDecision.Kind.ToString(),
+                CorrelationId = utterance.CorrelationId ?? context.CorrelationId ?? string.Empty,
+                ActiveTurnId = utterance.ActiveTurnId ?? context.AssistantTurnId,
+                Layer1Confidence = utterance.Confidence ?? vad.Confidence,
+                Layer1Decision = gateResult?.Decision.ToString() ?? routeDecision.Action,
+                CurrentAssistantSentence = null,
+                LastCompletedAssistantSentence = null,
+                OriginalUserQuestion = null,
+                StartedAtUtc = startedAtUtc,
+                EndedAtUtc = endedAtUtc
+            };
+
+            var outcome = await _liveInterruptionIntegrationService.TryHandleYieldedInterruptionAsync(yieldedUtterance, cancellationToken);
+            if (outcome is not null)
+            {
+                _logger.LogInformation(
+                    "conversational_interruption_live_hook_result TurnId: {TurnId}. CorrelationId: {CorrelationId}. WasHandled: {WasHandled}. ShouldContinueOldPath: {ShouldContinueOldPath}. ResultType: {ResultType}. DecisionType: {DecisionType}. Strategy: {Strategy}. Reason: {Reason}.",
+                    yieldedUtterance.ActiveTurnId,
+                    yieldedUtterance.CorrelationId,
+                    outcome.WasHandled,
+                    outcome.ShouldContinueOldPath,
+                    outcome.Result?.Type,
+                    outcome.Result?.Decision?.Type,
+                    outcome.Result?.Decision?.Strategy,
+                    outcome.Reason);
+
+                if (outcome.WasHandled && !outcome.ShouldContinueOldPath)
+                {
+                    if (outcome.IsCorrectionRedirect && !string.IsNullOrWhiteSpace(outcome.RedirectedRequest))
+                    {
+                        await CancelByUtteranceAsync(utterance, LiveAssistantTurnCancelReason.UserCorrection, outcome.RedirectedRequest, cancellationToken);
+                        await RaiseCorrectionRegenerationRequestedAsync(context, outcome.RedirectedRequest, cancellationToken);
+                    }
+                    else if (outcome.ShouldCancelActiveTurn)
+                    {
+                        await CancelByUtteranceAsync(utterance, LiveAssistantTurnCancelReason.UserHardStop, null, cancellationToken);
+                    }
+
+                    return false;
+                }
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(exception, "conversational_interruption_live_hook_failed");
+        }
+
+        return true;
     }
 
     private static bool IsDecisiveGateDecision(LiveUtteranceGateResult gateResult, UserUtterance utterance)

@@ -25,9 +25,11 @@ public sealed class StatusTool : ITool
     private readonly IRuntimeStateService _runtimeStateService;
     private readonly ISystemResourceProvider _systemResourceProvider;
     private readonly IServiceProvider _serviceProvider;
+    private readonly TrustedRegistryOptions _trustedRegistryOptions;
     private readonly IApplicationResolver _applicationResolver;
     private readonly ITrustedApplicationStore _trustedApplicationStore;
     private readonly ITrustedCommandStore _trustedCommandStore;
+    private readonly ITrustedUrlStore _trustedUrlStore;
 
     public StatusTool(
         IRuntimeStateService runtimeStateService,
@@ -37,9 +39,11 @@ public sealed class StatusTool : ITool
         IApplicationResolver applicationResolver,
         ITrustedApplicationStore trustedApplicationStore,
         ITrustedCommandStore trustedCommandStore,
+        ITrustedUrlStore trustedUrlStore,
         IServiceProvider serviceProvider,
         IOptions<LocalAIOptions> localAIOptions,
         IOptions<CoreMemoryOptions> coreMemoryOptions,
+        IOptions<TrustedRegistryOptions> trustedRegistryOptions,
         IOptions<CapabilityOptions> capabilityOptions,
         IWebHostEnvironment environment,
         ILogger<StatusTool> logger)
@@ -51,9 +55,11 @@ public sealed class StatusTool : ITool
         _applicationResolver = applicationResolver;
         _trustedApplicationStore = trustedApplicationStore;
         _trustedCommandStore = trustedCommandStore;
+        _trustedUrlStore = trustedUrlStore;
         _serviceProvider = serviceProvider;
         _localAIOptions = localAIOptions.Value;
         _coreMemoryOptions = coreMemoryOptions.Value;
+        _trustedRegistryOptions = trustedRegistryOptions.Value;
         _capabilityOptions = MergeWithDefaults(capabilityOptions.Value);
         _environment = environment;
         _logger = logger;
@@ -119,7 +125,10 @@ public sealed class StatusTool : ITool
             ConfirmationExpiryDuration = _confirmationService.ExpiryDuration.ToString(@"mm\:ss"),
             ResolverStatus = "Configured, Trusted, StartMenu, PATH",
             TrustedApplicationCount = _trustedApplicationStore.GetAll().Count,
+            TrustedUrlCount = _trustedUrlStore.GetAll().Count,
             TrustedCommandCount = _trustedCommandStore.GetAll().Count,
+            TrustedCommandRoutingEnabled = _trustedRegistryOptions.EnableTrustedCommandParser,
+            TrustedCommandMappingsQuarantined = true,
             LastApplicationResolutionStatus = _applicationResolver.LastResolutionStatus,
             ConversationSessionId = string.Empty,
             ConversationMessageCount = 0,

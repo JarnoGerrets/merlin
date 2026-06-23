@@ -6,11 +6,14 @@ using Merlin.Backend.Core.Memory.Stores;
 using Merlin.Backend.Infrastructure.Persistence;
 using Merlin.Backend.Infrastructure.Persistence.Repositories;
 using Merlin.Backend.Infrastructure.Persistence.Seeding;
+using Merlin.Backend.Infrastructure.TrustedRegistry;
+using Merlin.Backend.Infrastructure.TrustedRegistry.Repositories;
 using Merlin.Backend.Services;
 using Merlin.Backend.Services.Acknowledgement;
 using Merlin.Backend.Services.BargeIn;
 using Merlin.Backend.Services.Feedback;
 using Merlin.Backend.Services.LiveUtterance;
+using Merlin.Backend.Services.InterruptionIntelligence;
 using Merlin.Backend.Services.IntentRouting;
 using Merlin.Backend.Services.SpeechPresence;
 using Merlin.Backend.Tools;
@@ -29,6 +32,8 @@ builder.Services.Configure<MerlinDbOptions>(
     builder.Configuration.GetSection("MerlinDatabase"));
 builder.Services.Configure<CoreMemoryOptions>(
     builder.Configuration.GetSection("CoreMemory"));
+builder.Services.Configure<TrustedRegistryOptions>(
+    builder.Configuration.GetSection("TrustedRegistry"));
 builder.Services.Configure<LocalAIOptions>(
     builder.Configuration.GetSection("LocalAI"));
 builder.Services.Configure<LlmOptions>(
@@ -58,6 +63,8 @@ builder.Services.Configure<AcknowledgementSpeechOptions>(
     builder.Configuration.GetSection("AcknowledgementSpeech"));
 builder.Services.Configure<ResponsiveFeedbackOptions>(
     builder.Configuration.GetSection("ResponsiveFeedback"));
+builder.Services.Configure<InterruptionHandlingOptions>(
+    builder.Configuration.GetSection("InterruptionHandling"));
 builder.Services.Configure<BargeInOptions>(
     builder.Configuration.GetSection("BargeIn"));
 builder.Services.Configure<BargeInDebugOptions>(
@@ -222,6 +229,17 @@ builder.Services.AddScoped<MemoryOrchestrator>();
 builder.Services.AddScoped<ICoreMemoryHealthService, CoreMemoryHealthService>();
 builder.Services.AddScoped<MemoryDebugService>();
 
+builder.Services.AddSingleton<TrustedRegistryDbPathResolver>();
+builder.Services.AddDbContextFactory<TrustedRegistryDbContext>((serviceProvider, options) =>
+{
+    var pathResolver = serviceProvider.GetRequiredService<TrustedRegistryDbPathResolver>();
+    var dbPath = pathResolver.ResolveDatabasePath();
+
+    options.UseSqlite($"Data Source={dbPath}");
+});
+builder.Services.AddSingleton<TrustedRegistryLegacyJsonImporter>();
+builder.Services.AddHostedService<TrustedRegistryMigratorHostedService>();
+
 builder.Services.AddSingleton<IAIService, DummyAIService>();
 builder.Services.AddSingleton<PythonVoiceService>();
 builder.Services.AddSingleton<IVoiceTranscriptionService>(provider => provider.GetRequiredService<PythonVoiceService>());
@@ -268,6 +286,17 @@ builder.Services.AddSingleton<SpeechPresenceDecisionLogService>();
 builder.Services.AddSingleton<ISpeechPresenceDecisionLogSink>(provider => provider.GetRequiredService<SpeechPresenceDecisionLogService>());
 builder.Services.AddSingleton<ISpeechPresenceDetector, SpeechPresenceDetector>();
 builder.Services.AddSingleton<IFloorYieldController, FloorYieldController>();
+builder.Services.AddSingleton<IConversationalInterruptionClassifier, ConversationalInterruptionClassifier>();
+builder.Services.AddSingleton<IConversationalInterruptionCandidateFactory, ConversationalInterruptionCandidateFactory>();
+builder.Services.AddSingleton<ISpokenAnswerTracker, SpokenAnswerTracker>();
+builder.Services.AddSingleton<IAnswerRecomposer, AnswerRecomposer>();
+builder.Services.AddSingleton<IConversationFocusManager, ConversationFocusManager>();
+builder.Services.AddSingleton<IInterruptionPlaybackPort, AssistantSpeechInterruptionPlaybackPort>();
+builder.Services.AddSingleton<IInterruptionFeedbackPort, ResponsiveFeedbackInterruptionPort>();
+builder.Services.AddSingleton<IInterruptionRequestRouterPort, NoOpInterruptionRequestRouterPort>();
+builder.Services.AddSingleton<IInterruptionModelPort, NoOpInterruptionModelPort>();
+builder.Services.AddSingleton<IInterruptionOrchestrator, InterruptionOrchestrator>();
+builder.Services.AddSingleton<ILiveInterruptionIntegrationService, LiveInterruptionIntegrationService>();
 builder.Services.AddSingleton<IContinuousMicAudioBuffer, ContinuousMicAudioBuffer>();
 builder.Services.AddSingleton<IBargeInTriggerBuffer, BargeInTriggerBuffer>();
 builder.Services.AddSingleton<IBargeInSttService, BargeInSttService>();
@@ -336,9 +365,27 @@ builder.Services.AddSingleton<IRuntimeStateService, RuntimeStateService>();
 builder.Services.AddSingleton<IApplicationResolver, ApplicationResolver>();
 builder.Services.AddSingleton<IConfirmationService, ConfirmationService>();
 builder.Services.AddSingleton<IPendingInteractionService, PendingInteractionService>();
-builder.Services.AddSingleton<ITrustedApplicationStore, TrustedApplicationStore>();
-builder.Services.AddSingleton<ITrustedCommandStore, TrustedCommandStore>();
-builder.Services.AddSingleton<ITrustedUrlStore, TrustedUrlStore>();
+builder.Services.AddSingleton<ITrustedApplicationStore>(serviceProvider =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<TrustedRegistryOptions>>().Value;
+    return options.Enabled
+        ? ActivatorUtilities.CreateInstance<EfTrustedApplicationStore>(serviceProvider)
+        : ActivatorUtilities.CreateInstance<TrustedApplicationStore>(serviceProvider);
+});
+builder.Services.AddSingleton<ITrustedCommandStore>(serviceProvider =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<TrustedRegistryOptions>>().Value;
+    return options.Enabled
+        ? ActivatorUtilities.CreateInstance<EfTrustedCommandStore>(serviceProvider)
+        : ActivatorUtilities.CreateInstance<TrustedCommandStore>(serviceProvider);
+});
+builder.Services.AddSingleton<ITrustedUrlStore>(serviceProvider =>
+{
+    var options = serviceProvider.GetRequiredService<IOptions<TrustedRegistryOptions>>().Value;
+    return options.Enabled
+        ? ActivatorUtilities.CreateInstance<EfTrustedUrlStore>(serviceProvider)
+        : ActivatorUtilities.CreateInstance<TrustedUrlStore>(serviceProvider);
+});
 builder.Services.AddSingleton<ITool, OpenApplicationTool>();
 builder.Services.AddSingleton<ITool, OpenUrlTool>();
 builder.Services.AddSingleton<ITool, ToolDiscoveryTool>();

@@ -4,6 +4,8 @@ namespace Merlin.Backend.Services;
 
 public sealed class TrustedCommandIntentParser : IIntentParser
 {
+    // Trusted command mappings are quarantined. This parser remains available
+    // for direct diagnostics/tests, but is not wired into active routing by default.
     private readonly ITrustedCommandStore _trustedCommandStore;
 
     public TrustedCommandIntentParser(ITrustedCommandStore trustedCommandStore)

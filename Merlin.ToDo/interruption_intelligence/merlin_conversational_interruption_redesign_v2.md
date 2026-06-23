@@ -73,6 +73,28 @@ After a meaningful interruption, Merlin should not resume raw old speech mid-sen
 Merlin should recompose the continuation from a clean checkpoint.
 ```
 
+## Layer Boundary: Yield Detection vs Conversational Meaning
+
+Layer 1 asks:
+
+```text
+Should Merlin yield because this is probably Jarno?
+```
+
+Layer 1 owns probable Jarno/floor-yield/capture/acoustic acceptance:
+
+```text
+SpeechPresence / BargeIn / AEC / self-echo / VAD / Jarno detection / floor-yield logic
+```
+
+Layer 2 asks:
+
+```text
+Now that Merlin yielded, what does the yielded utterance mean conversationally?
+```
+
+ConversationalInterruption must not re-implement acoustic Jarno-vs-playback detection. It receives yielded utterances from Layer 1 and classifies their conversational usefulness and meaning.
+
 ---
 
 # Why This Redesign Is Needed
@@ -2414,6 +2436,200 @@ Test:
 ```
 
 No runtime integration yet.
+
+## Implementation Status
+
+### ConversationalInterruption PR 1 - Models + Local Classifier
+
+Status: Implemented
+
+Summary:
+- Added future-facing conversational interruption models.
+- Added local rule-based classifier.
+- Added InterruptionHandlingOptions.
+- No live playback/barge-in integration yet.
+- Existing technical BargeIn interruption classifier remains unchanged.
+
+Tests:
+- Backchannel classification
+- Noise/self-echo classification
+- Stop/cancel classification
+- Correction/redirect extraction
+- Clarification/follow-up classification
+- Side-comment/additional-context classification
+- Queue-follow-up classification
+
+### ConversationalInterruption PR 2 - SpokenAnswerTracker + Checkpoint Model
+
+Status: Implemented
+
+Summary:
+- Added SpokenAnswerState and SpokenAnswerCheckpoint.
+- Added in-memory SpokenAnswerTracker.
+- Added simple sentence segmentation for completed/partial sentence tracking.
+- Added checkpoint creation for meaningful interruptions.
+- No live playback/barge-in integration yet.
+
+Tests:
+- start answer state
+- append spoken text
+- completed vs partial sentence detection
+- checkpoint with discarded partial sentence
+- checkpoint with no completed sentence
+- chunk started/completed behavior
+- unspoken remainder behavior
+- clear state
+- thread-safety/basic concurrent access
+
+### ConversationalInterruption PR 3 - AnswerRecomposer Prompt Builders + JSON Parsers
+
+Status: Implemented
+
+Summary:
+- Added clarification and continuation recomposition request/result models.
+- Added AnswerRecomposer prompt builders.
+- Added strict JSON parsing for clarification and continuation outputs.
+- No live DeepInfra/model calls yet.
+- No live playback/barge-in integration yet.
+
+Tests:
+- clarification prompt includes original question, spoken answer, checkpoint, discarded partial, and interruption
+- continuation prompt includes clarification reply/context and anti-repeat instructions
+- parses pure JSON and fenced JSON
+- rejects invalid JSON and empty required fields
+- preserves quoted/newline user content safely
+
+### ConversationalInterruption PR 4 - ConversationFocusManager
+
+Status: Implemented
+
+Summary:
+- Added ConversationThreadState and QueuedFollowUp.
+- Added ConversationFocusAction and ConversationFocusActionType.
+- Added in-memory ConversationFocusManager.
+- Maps conversational interruption decisions to focus actions.
+- Tracks active turn, speaking/interrupted/recomposing flags, active spoken answer, and queued follow-ups.
+- No live playback/barge-in integration yet.
+
+Tests:
+- start main turn
+- update spoken answer
+- assistant speaking flag
+- backchannel/noise leaves main answer alone
+- stop cancels current turn action
+- correction produces cancel-and-replace action
+- empty correction asks for clarification instead of routing empty request
+- clarification produces clarify-then-recompose action
+- side comment produces recompose action
+- queue follow-up adds item and respects max queue size
+- clear/current state behavior
+
+### ConversationalInterruption PR 5 - InterruptionOrchestrator, Fake-Only
+
+Status: Implemented
+
+Summary:
+- Added InterruptionOrchestrator and result models.
+- Added fakeable ports for playback, feedback, request routing, and model generation.
+- Orchestrator wires classifier, focus manager, spoken answer tracker, and recomposer preparation together.
+- Supports fake-only flows for backchannel/noise, stop, correction, clarification+recomposition, side-comment recomposition, and queue follow-up.
+- No live playback/barge-in/router integration yet.
+
+Tests:
+- disabled option produces no side effects
+- noise ignored
+- backchannel continues
+- stop cancels/stops playback without model calls
+- correction cancels playback, requests bridge, routes rewritten request
+- empty correction asks for clarification and does not route
+- clarification creates checkpoint, calls fake clarification and continuation model ports
+- side comment requests bridge and continuation only
+- queued follow-up requests bridge and does not call model/router
+- failure from checkpoint/model returns failed result
+
+### ConversationalInterruption PR 6 - Live Integration Seams Behind Config
+
+Status: Implemented
+
+Summary:
+- Added live interruption context and live barge-in candidate factory.
+- Added gated live integration service for the BargeIn path.
+- Added config flags for live barge-in integration, shadow mode, playback actions, redirect routing, feedback bridge, and model calls.
+- Added guarded playback and ResponsiveFeedback port adapters.
+- Added a conservative BargeInCoordinator hook after STT/live utterance routing context is available.
+- Default behavior remains unchanged because InterruptionHandling.Enabled and EnableLiveBargeInIntegration remain false.
+- Shadow mode builds and classifies candidates only; it does not call the orchestrator, mutate live focus state, or perform playback/router/model/feedback side effects.
+- Full live behavior remains deferred to PR7.
+
+Tests:
+- default config no-op
+- live integration disabled no-op
+- shadow mode candidate/classification without orchestration side effects
+- candidate factory mapping
+- playback/feedback port gating
+- router remains no-op/deferred
+- model port remains fail-fast/no real model calls
+- full backend test suite passes
+
+### ConversationalInterruption PR 6.1 - Yielded Utterance Boundary Cleanup
+
+Status: Implemented
+
+Summary:
+- Clarified Layer 1 / Layer 2 responsibility boundary.
+- Layer 1 owns probable Jarno/floor-yield/capture/acoustic acceptance.
+- Layer 2 owns conversational usefulness and meaning after yield.
+- Reframed live integration around yielded interruption utterances instead of raw maybe-speech candidates.
+- Stopped using VAD/Layer1 confidence as transcript confidence for conversational classification.
+- Shadow mode classifies meaning only and does not mutate focus state or perform side effects.
+- Default runtime behavior remains unchanged.
+
+Tests:
+- yielded utterance with low Layer1 confidence still classifies by transcript meaning
+- not-yielded utterance does not enter Layer 2
+- empty yielded utterance is ignored as conversationally useless
+- shadow mode calls classifier only
+- default runtime remains disabled
+
+### ConversationalInterruption PR 7 - Live Minimal Behavior For Yielded Utterances
+
+Status: Implemented
+
+Summary:
+- Added config-gated live minimal behavior for yielded utterances.
+- Handles empty/useless yielded utterances and backchannels without model/router calls.
+- Handles stop/cancel with guarded playback stop/cancel.
+- Handles correction/redirect with guarded rewritten request routing when enabled.
+- Uses an explicit live handling outcome so the BargeIn hook can avoid duplicate old-path handling for stop/correction.
+- Defers clarification/recomposition/side-comment/follow-up strategies to later PRs.
+- Keeps model calls disabled.
+- Keeps default runtime behavior unchanged.
+
+Tests:
+- default no-op
+- shadow mode unchanged
+- backchannel handled without model/router
+- empty yielded utterance handled as useless
+- stop/cancel handled
+- correction handled once
+- correction routing disabled falls back/deferred safely
+- clarification/side-comment strategies deferred
+- low Layer1 confidence still handles yielded utterance by transcript meaning
+
+Manual dev-test config:
+
+```json
+"InterruptionHandling": {
+  "Enabled": true,
+  "EnableLiveBargeInIntegration": true,
+  "EnableLiveShadowMode": false,
+  "EnableLiveMinimalBehavior": true,
+  "EnableLivePlaybackActions": true,
+  "EnableLiveRedirectRouting": true,
+  "EnableLiveResponsiveFeedbackBridge": false,
+  "EnableLiveModelCalls": false
+}
+```
 
 ## Phase 2: Add SpokenAnswerTracker
 

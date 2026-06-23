@@ -82,7 +82,10 @@ public sealed class StatusToolTests
         Assert.Equal("02:00", result.Diagnostics.ConfirmationExpiryDuration);
         Assert.Equal("Configured, Trusted, StartMenu, PATH", result.Diagnostics.ResolverStatus);
         Assert.Equal(0, result.Diagnostics.TrustedApplicationCount);
+        Assert.Equal(0, result.Diagnostics.TrustedUrlCount);
         Assert.Equal(0, result.Diagnostics.TrustedCommandCount);
+        Assert.False(result.Diagnostics.TrustedCommandRoutingEnabled);
+        Assert.True(result.Diagnostics.TrustedCommandMappingsQuarantined);
         Assert.Equal(string.Empty, result.Diagnostics.ConversationSessionId);
         Assert.Equal(0, result.Diagnostics.ConversationMessageCount);
         Assert.Equal(0, result.Diagnostics.ConversationSummaryLength);
@@ -141,6 +144,7 @@ public sealed class StatusToolTests
         services.AddSingleton(TestApplicationLaunchOptions.Create());
         services.AddSingleton(Options.Create(new LocalAIOptions { Enabled = false }));
         services.AddSingleton(Options.Create(new CoreMemoryOptions()));
+        services.AddSingleton(Options.Create(new TrustedRegistryOptions()));
         services.AddSingleton(TestCapabilityOptions.Create());
         var connection = new SqliteConnection("Data Source=:memory:");
         connection.Open();
@@ -158,6 +162,7 @@ public sealed class StatusToolTests
         services.AddSingleton<IConfirmationService, ConfirmationService>();
         services.AddSingleton<ITrustedApplicationStore, FakeTrustedApplicationStore>();
         services.AddSingleton<ITrustedCommandStore, FakeTrustedCommandStore>();
+        services.AddSingleton<ITrustedUrlStore, FakeTrustedUrlStore>();
         services.AddSingleton<IProcessLauncher, FakeProcessLauncher>();
         services.AddSingleton<IApplicationResolver, ApplicationResolver>();
         services.AddSingleton<ITool, OpenApplicationTool>();

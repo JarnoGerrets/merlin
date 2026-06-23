@@ -13,7 +13,6 @@ public sealed class ConfirmationToolTests
         var confirmationService = new ConfirmationService();
         var launcher = new FakeProcessLauncher();
         var trustedStore = new FakeTrustedApplicationStore();
-        var trustedCommandStore = new FakeTrustedCommandStore();
         confirmationService.Create(
             "open_application",
             "mspaint.exe",
@@ -23,7 +22,8 @@ public sealed class ConfirmationToolTests
             "open_application",
             "open paint",
             "Open Application");
-        var tool = new ConfirmationTool(confirmationService, launcher, trustedStore, trustedCommandStore);
+        var trustedCommandStore = new FakeTrustedCommandStore();
+        var tool = new ConfirmationTool(confirmationService, launcher, trustedStore);
 
         var result = await tool.ExecuteAsync("confirm");
 
@@ -37,7 +37,7 @@ public sealed class ConfirmationToolTests
         Assert.Equal("mspaint.exe", launcher.LaunchedTarget);
         Assert.Equal(0, confirmationService.PendingCount);
         Assert.NotNull(trustedStore.FindByAlias("paint"));
-        Assert.NotNull(trustedCommandStore.FindByCommand("open paint"));
+        Assert.Null(trustedCommandStore.FindByCommand("open paint"));
     }
 
     [Fact]
@@ -46,8 +46,7 @@ public sealed class ConfirmationToolTests
         var tool = new ConfirmationTool(
             new ConfirmationService(),
             new FakeProcessLauncher(),
-            new FakeTrustedApplicationStore(),
-            new FakeTrustedCommandStore());
+            new FakeTrustedApplicationStore());
 
         var result = await tool.ExecuteAsync("confirm");
 
@@ -61,7 +60,6 @@ public sealed class ConfirmationToolTests
         var confirmationService = new ConfirmationService();
         var launcher = new FakeProcessLauncher();
         var trustedStore = new FakeTrustedApplicationStore();
-        var trustedCommandStore = new FakeTrustedCommandStore();
         confirmationService.Create(
             "open_url",
             "https://facebook.com",
@@ -71,7 +69,8 @@ public sealed class ConfirmationToolTests
             "open_url",
             "open facebook.com",
             "Open URL");
-        var tool = new ConfirmationTool(confirmationService, launcher, trustedStore, trustedCommandStore);
+        var trustedCommandStore = new FakeTrustedCommandStore();
+        var tool = new ConfirmationTool(confirmationService, launcher, trustedStore);
 
         var result = await tool.ExecuteAsync("confirm");
 
@@ -80,6 +79,34 @@ public sealed class ConfirmationToolTests
         Assert.Equal("open_url", result.Intent);
         Assert.Equal("https://facebook.com", launcher.LaunchedTarget);
         Assert.Null(trustedStore.FindByAlias("facebook.com"));
+        Assert.Null(trustedCommandStore.FindByCommand("open facebook.com"));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenPendingUrlFallbackExists_SavesTrustedUrlButNotTrustedCommand()
+    {
+        var confirmationService = new ConfirmationService();
+        var launcher = new FakeProcessLauncher();
+        var trustedStore = new FakeTrustedApplicationStore();
+        var trustedCommandStore = new FakeTrustedCommandStore();
+        var trustedUrlStore = new FakeTrustedUrlStore();
+        confirmationService.Create(
+            "open_url_fallback",
+            "https://facebook.com",
+            "facebook.com",
+            "facebook",
+            "can you open facebook for me",
+            "open_url",
+            "open facebook.com",
+            "Open URL");
+        var tool = new ConfirmationTool(confirmationService, launcher, trustedStore, trustedUrlStore);
+
+        var result = await tool.ExecuteAsync("confirm");
+
+        Assert.True(result.Success);
+        Assert.Equal("https://facebook.com", launcher.LaunchedTarget);
+        Assert.NotNull(trustedUrlStore.FindByAlias("facebook"));
+        Assert.Null(trustedCommandStore.FindByCommand("can you open facebook for me"));
         Assert.Null(trustedCommandStore.FindByCommand("open facebook.com"));
     }
 
@@ -115,7 +142,7 @@ public sealed class ConfirmationToolTests
                     Confidence = 0.85
                 }
             ]);
-        var tool = new ConfirmationTool(confirmationService, launcher, trustedStore, trustedCommandStore);
+        var tool = new ConfirmationTool(confirmationService, launcher, trustedStore);
 
         var result = await tool.ExecuteAsync("choose 2");
 
@@ -163,7 +190,7 @@ public sealed class ConfirmationToolTests
                     Confidence = 0.85
                 }
             ]);
-        var tool = new ConfirmationTool(confirmationService, launcher, trustedStore, trustedCommandStore);
+        var tool = new ConfirmationTool(confirmationService, launcher, trustedStore);
 
         var result = await tool.ExecuteAsync("Visual Studio Installer");
 
@@ -180,7 +207,7 @@ public sealed class ConfirmationToolTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenCandidateIsSelectedThenConfirmed_LaunchesAndSavesTrustedMappings()
+    public async Task ExecuteAsync_WhenCandidateIsSelectedThenConfirmed_LaunchesAndSavesTrustedAppMappingOnly()
     {
         var confirmationService = new ConfirmationService();
         var launcher = new FakeProcessLauncher();
@@ -211,7 +238,7 @@ public sealed class ConfirmationToolTests
                     Confidence = 0.85
                 }
             ]);
-        var tool = new ConfirmationTool(confirmationService, launcher, trustedStore, trustedCommandStore);
+        var tool = new ConfirmationTool(confirmationService, launcher, trustedStore);
 
         var selectionResult = await tool.ExecuteAsync("Visual Studio Installer");
         var confirmationResult = await tool.ExecuteAsync("confirm");
@@ -223,7 +250,7 @@ public sealed class ConfirmationToolTests
         var trustedMapping = trustedStore.FindByAlias("visual");
         Assert.NotNull(trustedMapping);
         Assert.Equal("Visual Studio Installer", trustedMapping.DisplayName);
-        Assert.NotNull(trustedCommandStore.FindByCommand("open visual"));
+        Assert.Null(trustedCommandStore.FindByCommand("open visual"));
         Assert.Equal(0, confirmationService.PendingCount);
     }
 
@@ -260,8 +287,7 @@ public sealed class ConfirmationToolTests
         var tool = new ConfirmationTool(
             confirmationService,
             launcher,
-            new FakeTrustedApplicationStore(),
-            new FakeTrustedCommandStore());
+            new FakeTrustedApplicationStore());
 
         var result = await tool.ExecuteAsync("confirm");
 
@@ -290,8 +316,7 @@ public sealed class ConfirmationToolTests
         var tool = new ConfirmationTool(
             confirmationService,
             launcher,
-            new FakeTrustedApplicationStore(),
-            new FakeTrustedCommandStore());
+            new FakeTrustedApplicationStore());
 
         var result = await tool.ExecuteAsync("sorry not needed anymore");
 
@@ -327,8 +352,7 @@ public sealed class ConfirmationToolTests
         var tool = new ConfirmationTool(
             confirmationService,
             new FakeProcessLauncher(),
-            new FakeTrustedApplicationStore(),
-            new FakeTrustedCommandStore());
+            new FakeTrustedApplicationStore());
 
         Assert.True(tool.CanHandle("Visual Studio Installer"));
     }
@@ -358,8 +382,7 @@ public sealed class ConfirmationToolTests
         var tool = new ConfirmationTool(
             confirmationService,
             new FakeProcessLauncher(),
-            new FakeTrustedApplicationStore(),
-            new FakeTrustedCommandStore());
+            new FakeTrustedApplicationStore());
 
         var result = await tool.ExecuteAsync("choose 2");
 
@@ -394,8 +417,7 @@ public sealed class ConfirmationToolTests
         var tool = new ConfirmationTool(
             new ConfirmationService(),
             new FakeProcessLauncher(),
-            new FakeTrustedApplicationStore(),
-            new FakeTrustedCommandStore());
+            new FakeTrustedApplicationStore());
 
         Assert.True(tool.CanHandle(command));
     }

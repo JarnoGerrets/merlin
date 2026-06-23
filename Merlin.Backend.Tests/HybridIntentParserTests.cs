@@ -186,6 +186,27 @@ public sealed class HybridIntentParserTests
     }
 
     [Fact]
+    public async Task ParseAsync_WhenRiskyTrustedCommandWouldMatch_DoesNotUseTrustedCommandParser()
+    {
+        var localParser = new FakeIntentParser(new IntentParseResult
+        {
+            Intent = "open_url",
+            NormalizedCommand = "open terminal.com",
+            Confidence = 0.95,
+            OriginalMessage = "Can you open terminal?"
+        });
+        var parser = CreateParser(localParser, enabled: true, localAIAvailable: false, includeHierarchicalRouter: true);
+
+        var result = await parser.ParseAsync("Can you open terminal?");
+
+        Assert.Equal("open_application", result.Intent);
+        Assert.Equal("open terminal", result.NormalizedCommand);
+        Assert.NotEqual(nameof(TrustedCommandIntentParser), result.ParserUsed);
+        Assert.NotEqual("open terminal.com", result.NormalizedCommand);
+        Assert.Equal(0, localParser.CallCount);
+    }
+
+    [Fact]
     public async Task ParseAsync_WhenLocalAIReturnsMissingCapability_UsesLocalAIResult()
     {
         var localParser = new FakeIntentParser(new IntentParseResult

@@ -48,7 +48,13 @@ public sealed class DiagnosticsInfo
 
     public int TrustedApplicationCount { get; init; }
 
+    public int TrustedUrlCount { get; init; }
+
     public int TrustedCommandCount { get; init; }
+
+    public bool TrustedCommandRoutingEnabled { get; init; }
+
+    public bool TrustedCommandMappingsQuarantined { get; init; }
 
     public string LastApplicationResolutionStatus { get; init; } = string.Empty;
 
