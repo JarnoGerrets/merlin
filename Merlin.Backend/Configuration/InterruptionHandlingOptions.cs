@@ -18,6 +18,10 @@ public sealed class InterruptionHandlingOptions
 
     public bool EnableLiveMinimalBehavior { get; set; } = false;
 
+    public bool EnableLiveSpokenAnswerTracking { get; set; } = false;
+
+    public bool EnableSpokenAnswerTrackingDiagnostics { get; set; } = true;
+
     public bool EnableLocalClassification { get; set; } = true;
 
     public bool EnableModelClassificationForAmbiguousCases { get; set; } = false;
@@ -27,6 +31,8 @@ public sealed class InterruptionHandlingOptions
     public bool EnableContinuationRecomposition { get; set; } = false;
 
     public bool EnableParallelContinuationRecomposition { get; set; } = false;
+
+    public bool EnableSequentialRecomposition { get; set; } = false;
 
     public bool RecomposeAfterMeaningfulInterruption { get; set; } = true;
 
@@ -53,6 +59,18 @@ public sealed class InterruptionHandlingOptions
     public int ClarificationTimeoutMs { get; set; } = 5000;
 
     public int ContinuationTimeoutMs { get; set; } = 15000;
+
+    public int RecentlyYieldedTurnTtlMs { get; set; } = 10000;
+
+    public int ProvisionalAudioHoldTimeoutMs { get; set; } = 8000;
+
+    public string[] StopConfirmationPhrases { get; set; } =
+    [
+        "Got it, I'll stop.",
+        "Okay, stopping.",
+        "Understood, I'll be quiet.",
+        "I'll shut up, sir."
+    ];
 
     public bool EnableDiagnosticsLogging { get; set; } = true;
 }

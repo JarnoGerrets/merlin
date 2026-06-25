@@ -303,6 +303,16 @@ public sealed class SpeakerDuckingServiceTests
 
     private sealed class FakePlaybackReferenceTap : IPlaybackReferenceTap
     {
+        public bool IsPlaybackActive { get; set; }
+
+        public double CurrentPlaybackEnergy { get; set; }
+
+        public double RecentPlaybackEnergy { get; set; }
+
+        public double? ReferenceNewestAgeMilliseconds { get; set; }
+
+        public float ReferenceSampleValue { get; set; }
+
         public event EventHandler<BargeInSpeechContext>? SpeechStarted;
 
         public event EventHandler<BargeInSpeechContext>? SpeechStopped;
@@ -327,12 +337,12 @@ public sealed class SpeakerDuckingServiceTests
 
         public ReadOnlyMemory<float> GetLatestReferenceFrame(int sampleCount)
         {
-            return new float[sampleCount];
+            return Enumerable.Repeat(ReferenceSampleValue, sampleCount).ToArray();
         }
 
         public bool TryGetReferenceWindow(int delayMs, int sampleCount, Span<float> destination)
         {
-            destination[..sampleCount].Clear();
+            destination[..sampleCount].Fill(ReferenceSampleValue);
             return true;
         }
 
@@ -340,21 +350,21 @@ public sealed class SpeakerDuckingServiceTests
         {
             return new PlaybackReferenceDebugSnapshot
             {
-                IsPlaybackActive = false,
+                IsPlaybackActive = IsPlaybackActive,
                 SampleRate = 16000,
                 BufferedSamples = 0,
                 CapacitySamples = 32000,
                 BufferedMilliseconds = 0,
-                CurrentPlaybackEnergy = 0,
-                RecentPlaybackEnergy = 0,
+                CurrentPlaybackEnergy = CurrentPlaybackEnergy,
+                RecentPlaybackEnergy = RecentPlaybackEnergy,
                 WritePosition = 0,
                 PlaybackStartedAt = null,
                 PlaybackReferenceSource = "none",
                 PlaybackReferenceIsConsumptionAligned = true,
                 PlaybackConsumedSamplesTotal = 0,
                 ReferenceBufferedMilliseconds = 0,
-                ReferenceNewestAgeMilliseconds = null,
-                ReferenceOldestAgeMilliseconds = null,
+                ReferenceNewestAgeMilliseconds = ReferenceNewestAgeMilliseconds,
+                ReferenceOldestAgeMilliseconds = ReferenceNewestAgeMilliseconds,
                 LastOutputReadSamples = 0,
                 LastOutputReadDurationMilliseconds = 0,
                 LastOutputReadAtUtc = null
@@ -1012,6 +1022,159 @@ public sealed class BargeInCoordinatorTests
     }
 
     [Fact]
+    public void AcousticCaptureMode_IsIdle_WhenPlaybackInactiveAndReferenceSilent()
+    {
+        var mode = BargeInCoordinator.SelectAcousticCaptureMode(
+            assistantAudioActuallyPlaying: false,
+            playbackReferenceRms: 0.0,
+            playbackReferenceAgeMs: null,
+            activePlaybackSnapshot: null,
+            new BargeInOptions());
+
+        Assert.Equal(AcousticCaptureMode.IdleUserRequest, mode);
+    }
+
+    [Fact]
+    public void AcousticCaptureMode_IsAssistantInterruption_WhenPlaybackActive()
+    {
+        var mode = BargeInCoordinator.SelectAcousticCaptureMode(
+            assistantAudioActuallyPlaying: true,
+            playbackReferenceRms: 0.0,
+            playbackReferenceAgeMs: null,
+            activePlaybackSnapshot: null,
+            new BargeInOptions());
+
+        Assert.Equal(AcousticCaptureMode.AssistantInterruption, mode);
+    }
+
+    [Fact]
+    public void AcousticCaptureMode_IsAssistantInterruption_WhenPlaybackReferenceRecent()
+    {
+        var mode = BargeInCoordinator.SelectAcousticCaptureMode(
+            assistantAudioActuallyPlaying: false,
+            playbackReferenceRms: 0.02,
+            playbackReferenceAgeMs: 50,
+            activePlaybackSnapshot: null,
+            new BargeInOptions());
+
+        Assert.Equal(AcousticCaptureMode.AssistantInterruption, mode);
+    }
+
+    [Fact]
+    public void AcousticCaptureMode_IsIdle_WhenPlaybackHeldAndNotAudible()
+    {
+        var mode = BargeInCoordinator.SelectAcousticCaptureMode(
+            assistantAudioActuallyPlaying: false,
+            playbackReferenceRms: 0.0,
+            playbackReferenceAgeMs: null,
+            activePlaybackSnapshot: new ActiveSpeechPlaybackSnapshot
+            {
+                CorrelationId = "backend_voice:held",
+                AssistantTurnId = "backend_voice:held",
+                SpeechType = SpeechPlaybackItemType.FinalAnswer.ToString(),
+                ItemType = SpeechPlaybackItemType.FinalAnswer.ToString(),
+                IsActive = true,
+                IsHeld = true,
+                IsAudiblePlaybackActive = false,
+                HoldId = "hold-1",
+                StartedAtUtc = DateTimeOffset.UtcNow
+            },
+            new BargeInOptions());
+
+        Assert.Equal(AcousticCaptureMode.IdleUserRequest, mode);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_IdleAecOnlyEnergy_DoesNotExtendCapture()
+    {
+        var captureWriter = new RecordingInterruptionCaptureDiagnosticsWriter();
+        var fixture = CreateFixture(
+            new BargeInOptions
+            {
+                Enabled = true,
+                VadEndSilenceMs = 1200,
+                IdleRawMicEndpointSilenceMs = 200,
+                TriggerMaxCaptureMs = 5000,
+                InterruptionCaptureMaxMs = 5000,
+                GatedSttMaxAudioMs = 5000,
+                CaptureContinuationRawEnergyThreshold = 0.025,
+                CaptureContinuationAecEnergyThreshold = 0.010,
+                PauseInsteadOfCancelOnSpeech = false,
+                RequireWakeWordForFirstVersion = false,
+                AllowNaturalSoftBargeInWhenAecVerified = true
+            },
+            "what is this",
+            aec: new RewritingAecService(0.20f),
+            vad: new AlwaysTriggeredVadService(),
+            captureDiagnosticsWriter: captureWriter);
+        await fixture.Coordinator.StartLiveMonitoringAsync();
+        var started = DateTimeOffset.UtcNow;
+
+        await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAlternatingAudioFrame(0.16f, started, 0));
+        for (var index = 1; index < 80; index++)
+        {
+            await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAlternatingAudioFrame(0.0f, started, index * 10));
+        }
+
+        await WaitUntilAsync(() => captureWriter.CallCount > 0);
+
+        Assert.Equal("sustained_silence", captureWriter.LastDiagnostic?.CaptureEndReason);
+        Assert.Contains(captureWriter.LastFrameDiagnostics, frame =>
+            frame.AcousticCaptureMode == AcousticCaptureMode.IdleUserRequest.ToString()
+            && frame.AecOnlyEnergyIgnored
+            && frame.AecSpeechActive
+            && !frame.RawSpeechActive
+            && !frame.CaptureIsSpeechFrame);
+        Assert.True(captureWriter.LastDiagnostic?.AudioMs < 1200);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_IdleRawMicSpeech_KeepsCaptureActive()
+    {
+        var captureWriter = new RecordingInterruptionCaptureDiagnosticsWriter();
+        var fixture = CreateFixture(
+            new BargeInOptions
+            {
+                Enabled = true,
+                VadEndSilenceMs = 1200,
+                IdleRawMicEndpointSilenceMs = 200,
+                TriggerMaxCaptureMs = 5000,
+                InterruptionCaptureMaxMs = 5000,
+                GatedSttMaxAudioMs = 5000,
+                CaptureContinuationRawEnergyThreshold = 0.025,
+                CaptureContinuationAecEnergyThreshold = 0.010,
+                PauseInsteadOfCancelOnSpeech = false,
+                RequireWakeWordForFirstVersion = false,
+                AllowNaturalSoftBargeInWhenAecVerified = true
+            },
+            "keep listening",
+            aec: new RewritingAecService(0.0f),
+            vad: new AlwaysTriggeredVadService(),
+            captureDiagnosticsWriter: captureWriter);
+        await fixture.Coordinator.StartLiveMonitoringAsync();
+        var started = DateTimeOffset.UtcNow;
+
+        for (var index = 0; index < 60; index++)
+        {
+            await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAlternatingAudioFrame(0.16f, started, index * 10));
+        }
+
+        for (var index = 60; index < 100; index++)
+        {
+            await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAlternatingAudioFrame(0.0f, started, index * 10));
+        }
+
+        await WaitUntilAsync(() => captureWriter.CallCount > 0);
+
+        Assert.True(captureWriter.LastDiagnostic?.CaptureSpeechFrames >= 55);
+        Assert.Contains(captureWriter.LastFrameDiagnostics, frame =>
+            frame.AcousticCaptureMode == AcousticCaptureMode.IdleUserRequest.ToString()
+            && frame.IdleRawMicPrimary
+            && frame.RawSpeechActive
+            && frame.CaptureIsSpeechFrame);
+    }
+
+    [Fact]
     public void TriggerBuffer_ReportsActualAvailablePreRoll()
     {
         var buffer = new BargeInTriggerBuffer();
@@ -1200,6 +1363,81 @@ public sealed class BargeInCoordinatorTests
         Assert.Equal(0, fixture.Stt.CallCount);
         Assert.Contains(logger.Messages, message => message.Contains("missing_user_speech_score", StringComparison.Ordinal));
         Assert.DoesNotContain(logger.Messages, message => message.Contains("UserSpeechScore below sustained threshold", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_HeldPlaybackStrongBurst_DoesNotRequireFreshSustainedGateWindow()
+    {
+        var options = SustainedUserSpeechScoreOptions();
+        options.SustainedUserSpeechScoreThreshold = 0.6;
+        options.BurstCapturePromotion = new BurstCapturePromotionOptions
+        {
+            Enabled = true,
+            MinBurstMs = 350,
+            MaxWindowMs = 600,
+            MinCandidateFrames = 8,
+            MinVadSpeechFrameRatio = 0.35,
+            AllowUncertainPromotion = true,
+            StrongSelfEchoVetoRatio = 0.6,
+            StrongSelfEchoVetoMinFrames = 5,
+            RequireAssistantPlayback = true
+        };
+        var logger = new RecordingLogger<BargeInCoordinator>();
+        var fixture = CreateFixture(
+            options,
+            transcript: "Nooo, I meant what is the meaning of a wife.",
+            vad: new AlwaysSpeechNeverTriggeredVadService(),
+            selfSpeechGate: new ScoreSequenceSelfSpeechGate(0.631),
+            logger: logger);
+        var context = CreateContext();
+        fixture.Tap.NotifySpeechStarted(context);
+        fixture.Playback.Snapshot = HeldSnapshot(context);
+
+        for (var index = 0; index < 44; index++)
+        {
+            await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
+        }
+
+        await WaitUntilAsync(() => fixture.Stt.CallCount > 0);
+        Assert.Equal(1, fixture.Stt.CallCount);
+        Assert.Contains(
+            logger.Messages,
+            message => message.Contains("sustained_user_speech_gate_seeded_from_burst", StringComparison.Ordinal)
+                || message.Contains("sustained_user_speech_gate_bypassed_for_held_burst", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_AudiblePlaybackStillRequiresFreshSustainedGateWindow()
+    {
+        var options = SustainedUserSpeechScoreOptions();
+        options.SustainedUserSpeechScoreThreshold = 0.6;
+        options.BurstCapturePromotion = new BurstCapturePromotionOptions
+        {
+            Enabled = true,
+            MinBurstMs = 350,
+            MaxWindowMs = 600,
+            MinCandidateFrames = 8,
+            MinVadSpeechFrameRatio = 0.35,
+            AllowUncertainPromotion = true,
+            StrongSelfEchoVetoRatio = 0.6,
+            StrongSelfEchoVetoMinFrames = 5,
+            RequireAssistantPlayback = true
+        };
+        var logger = new RecordingLogger<BargeInCoordinator>();
+        var fixture = CreateFixture(
+            options,
+            vad: new AlwaysSpeechNeverTriggeredVadService(),
+            selfSpeechGate: new ScoreSequenceSelfSpeechGate(0.631),
+            logger: logger);
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        for (var index = 0; index < 44; index++)
+        {
+            await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
+        }
+
+        Assert.Equal(0, fixture.Stt.CallCount);
+        Assert.Contains(logger.Messages, message => message.Contains("SustainedUserSpeechScoreGateBlockedCapture", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -3127,6 +3365,22 @@ public sealed class BargeInCoordinatorTests
         };
     }
 
+    private static ActiveSpeechPlaybackSnapshot HeldSnapshot(BargeInSpeechContext context)
+    {
+        return new ActiveSpeechPlaybackSnapshot
+        {
+            CorrelationId = context.CorrelationId ?? context.AssistantTurnId,
+            AssistantTurnId = context.AssistantTurnId,
+            SpeechType = context.SpeechType.ToString(),
+            ItemType = context.SpeechType.ToString(),
+            IsActive = true,
+            IsHeld = true,
+            IsAudiblePlaybackActive = false,
+            HoldId = "hold-1",
+            StartedAtUtc = DateTimeOffset.UtcNow
+        };
+    }
+
     private static InterruptionCaptureDiagnostic CreateInterruptionCaptureDiagnostic(
         DateTimeOffset timestampUtc,
         string captureKind)
@@ -3355,6 +3609,8 @@ public sealed class BargeInCoordinatorTests
         public int PauseCount { get; private set; }
         public int ResumeCount { get; private set; }
 
+        public ActiveSpeechPlaybackSnapshot? Snapshot { get; set; }
+
         public Task EnqueueAsync(
             string text,
             string? correlationId,
@@ -3390,6 +3646,8 @@ public sealed class BargeInCoordinatorTests
             ClearQueueCount++;
             return Task.CompletedTask;
         }
+
+        public ActiveSpeechPlaybackSnapshot? GetActivePlaybackSnapshot() => Snapshot;
     }
 
     private sealed class FakeActiveAecService : IAcousticEchoCancellationService

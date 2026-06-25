@@ -371,20 +371,23 @@ public sealed partial class ConversationalInterruptionClassifier : IConversation
         string normalized,
         out ConversationalInterruptionType type)
     {
-        if (normalized.StartsWith("what do you mean", StringComparison.Ordinal)
-            || normalized.StartsWith("what is ", StringComparison.Ordinal)
-            || normalized.StartsWith("how ", StringComparison.Ordinal)
-            || normalized.StartsWith("why ", StringComparison.Ordinal)
-            || normalized is "but why")
+        var comparable = normalized.Replace(",", string.Empty, StringComparison.Ordinal).Trim();
+        if (comparable.StartsWith("what do you mean", StringComparison.Ordinal)
+            || comparable.StartsWith("what is ", StringComparison.Ordinal)
+            || comparable.StartsWith("how ", StringComparison.Ordinal)
+            || comparable.StartsWith("why ", StringComparison.Ordinal)
+            || comparable is "but why")
         {
             type = ConversationalInterruptionType.ClarificationQuestion;
             return true;
         }
 
-        if (normalized.StartsWith("what about ", StringComparison.Ordinal)
-            || normalized.StartsWith("but ", StringComparison.Ordinal) && (normalized.Contains(" too", StringComparison.Ordinal) || normalized.EndsWith(" right", StringComparison.Ordinal))
-            || normalized.StartsWith("isn't it also ", StringComparison.Ordinal)
-            || normalized.StartsWith("isnt it also ", StringComparison.Ordinal))
+        if (comparable.StartsWith("what about ", StringComparison.Ordinal)
+            || comparable is "the water itself too right"
+            || comparable is "but the water itself too right"
+            || comparable.StartsWith("but ", StringComparison.Ordinal) && (comparable.Contains(" too", StringComparison.Ordinal) || comparable.EndsWith(" right", StringComparison.Ordinal))
+            || comparable.StartsWith("isn't it also ", StringComparison.Ordinal)
+            || comparable.StartsWith("isnt it also ", StringComparison.Ordinal))
         {
             type = ConversationalInterruptionType.RelatedFollowUpQuestion;
             return true;

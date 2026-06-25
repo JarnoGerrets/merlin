@@ -21,4 +21,29 @@ public interface IAssistantSpeechPlaybackService
     Task ResumeCurrentSpeechAsync(CancellationToken cancellationToken = default);
 
     Task ClearQueueAsync(CancellationToken cancellationToken = default);
+
+    Task<ProvisionalAudioHoldResult> BeginProvisionalAudioHoldAsync(
+        string turnId,
+        string reason,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(ProvisionalAudioHoldResult.Failed(turnId, reason, "Provisional audio hold is not supported."));
+
+    Task<ProvisionalAudioHoldResult> ResumeProvisionalAudioHoldAsync(
+        string holdId,
+        string reason,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(ProvisionalAudioHoldResult.Failed(null, reason, "Provisional audio hold is not supported.", holdId));
+
+    Task<ProvisionalAudioHoldResult> FlushProvisionalAudioHoldAsync(
+        string holdId,
+        string reason,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(ProvisionalAudioHoldResult.Failed(null, reason, "Provisional audio hold is not supported.", holdId));
+
+    Task FlushFinalAnswerSpeechForTurnAsync(
+        string turnId,
+        string reason,
+        CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    ActiveSpeechPlaybackSnapshot? GetActivePlaybackSnapshot() => null;
 }

@@ -1,6 +1,7 @@
 using Merlin.Backend.Models;
 using Merlin.Backend.Services;
 using Merlin.Backend.Services.BargeIn;
+using Merlin.Backend.Services.InterruptionIntelligence;
 using Merlin.Backend.Services.SpeechPresence;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -19,7 +20,7 @@ public sealed class FloorYieldControllerTests
 
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(shouldYield: true));
 
-        Assert.Equal(0, playback.PauseCount);
+        Assert.Equal(0, playback.HoldCount);
         var debug = controller.GetDebugState();
         Assert.False(debug.Triggered);
         Assert.True(debug.CandidateActive);
@@ -39,7 +40,8 @@ public sealed class FloorYieldControllerTests
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 2, shouldYield: true));
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 4, shouldYield: true));
 
-        Assert.Equal(1, playback.PauseCount);
+        Assert.Equal(1, playback.HoldCount);
+        Assert.Equal(0, playback.PauseCount);
         var debug = controller.GetDebugState();
         Assert.True(debug.Triggered);
         Assert.False(debug.CandidateActive);
@@ -48,6 +50,46 @@ public sealed class FloorYieldControllerTests
         Assert.Equal(30, debug.CandidateDurationMs);
         Assert.Equal(30, debug.RequiredSustainedMs);
         Assert.Equal(FloorYieldController.PlaybackYieldMode, debug.LastMode);
+    }
+
+    [Fact]
+    public async Task HandleOfficialDecisionAsync_WhenHoldStarts_RecordsHeldRecentlyYieldedSnapshot()
+    {
+        var playback = new RecordingPlaybackService();
+        var monitor = new TestPlaybackMonitor { IsPlaybackActive = true };
+        var recentStore = new RecordingRecentlyYieldedStore();
+        var controller = CreateController(monitor, playback, recentlyYieldedTurns: recentStore);
+
+        await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 1, shouldYield: true));
+        await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 4, shouldYield: true));
+
+        Assert.Equal(1, playback.HoldCount);
+        Assert.Equal(0, playback.PauseCount);
+        Assert.NotNull(recentStore.LastSnapshot);
+        Assert.Equal(playback.HoldId, recentStore.LastSnapshot!.HoldId);
+        Assert.True(recentStore.LastSnapshot.PlaybackWasHeldByProvisionalAudioHold);
+        Assert.False(recentStore.LastSnapshot.PlaybackWasCancelledByYieldFallback);
+        Assert.Equal(FloorYieldController.PlaybackYieldMode, recentStore.LastSnapshot.YieldMode);
+    }
+
+    [Fact]
+    public async Task HandleOfficialDecisionAsync_WhenHoldFails_DoesNotUseDestructivePauseFallback()
+    {
+        var playback = new RecordingPlaybackService
+        {
+            HoldShouldSucceed = false
+        };
+        var monitor = new TestPlaybackMonitor { IsPlaybackActive = true };
+        var recentStore = new RecordingRecentlyYieldedStore();
+        var controller = CreateController(monitor, playback, recentlyYieldedTurns: recentStore);
+
+        await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 1, shouldYield: true));
+        await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 4, shouldYield: true));
+
+        Assert.Equal(1, playback.HoldCount);
+        Assert.Equal(0, playback.PauseCount);
+        Assert.Null(recentStore.LastSnapshot);
+        Assert.Equal(FloorYieldController.HoldUnavailableYieldMode, controller.GetDebugState().LastMode);
     }
 
     [Fact]
@@ -60,7 +102,7 @@ public sealed class FloorYieldControllerTests
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 1, shouldYield: true, vadConfidence: 0.27));
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 4, shouldYield: true, vadConfidence: 0.27));
 
-        Assert.Equal(0, playback.PauseCount);
+        Assert.Equal(0, playback.HoldCount);
         var debug = controller.GetDebugState();
         Assert.True(debug.CandidateActive);
         Assert.Equal(30, debug.CandidateDurationMs);
@@ -79,7 +121,7 @@ public sealed class FloorYieldControllerTests
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 4, shouldYield: true, vadConfidence: 0.27));
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 7, shouldYield: true, vadConfidence: 0.27));
 
-        Assert.Equal(1, playback.PauseCount);
+        Assert.Equal(1, playback.HoldCount);
         var debug = controller.GetDebugState();
         Assert.True(debug.Triggered);
         Assert.Equal(60, debug.CandidateDurationMs);
@@ -97,7 +139,7 @@ public sealed class FloorYieldControllerTests
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 1, shouldYield: true, vadConfidence: 0.10));
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 7, shouldYield: true, vadConfidence: 0.10));
 
-        Assert.Equal(0, playback.PauseCount);
+        Assert.Equal(0, playback.HoldCount);
         var debug = controller.GetDebugState();
         Assert.True(debug.CandidateActive);
         Assert.Equal(60, debug.CandidateDurationMs);
@@ -116,7 +158,7 @@ public sealed class FloorYieldControllerTests
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 2, shouldYield: true, vadConfidence: 0.45));
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 4, shouldYield: true, vadConfidence: 0.20));
 
-        Assert.Equal(1, playback.PauseCount);
+        Assert.Equal(1, playback.HoldCount);
         var debug = controller.GetDebugState();
         Assert.True(debug.Triggered);
         Assert.Equal(30, debug.CandidateDurationMs);
@@ -136,7 +178,7 @@ public sealed class FloorYieldControllerTests
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 3, shouldYield: true, vadConfidence: 0.27));
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 6, shouldYield: true, vadConfidence: 0.27));
 
-        Assert.Equal(0, playback.PauseCount);
+        Assert.Equal(0, playback.HoldCount);
         var debug = controller.GetDebugState();
         Assert.True(debug.CandidateActive);
         Assert.Equal(3, debug.CandidateStartFrameId);
@@ -155,7 +197,7 @@ public sealed class FloorYieldControllerTests
 
         await controller.HandleOfficialDecisionAsync(decision);
 
-        Assert.Equal(0, playback.PauseCount);
+        Assert.Equal(0, playback.HoldCount);
     }
 
     [Fact]
@@ -173,7 +215,7 @@ public sealed class FloorYieldControllerTests
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 5, shouldYield: true));
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 6, shouldYield: true));
 
-        Assert.Equal(0, playback.PauseCount);
+        Assert.Equal(0, playback.HoldCount);
         Assert.True(controller.GetDebugState().CandidateActive);
         Assert.Equal(5, controller.GetDebugState().CandidateStartFrameId);
     }
@@ -189,7 +231,7 @@ public sealed class FloorYieldControllerTests
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 4, shouldYield: true));
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 8, shouldYield: true));
 
-        Assert.Equal(1, playback.PauseCount);
+        Assert.Equal(1, playback.HoldCount);
     }
 
     [Fact]
@@ -207,7 +249,7 @@ public sealed class FloorYieldControllerTests
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 10, shouldYield: true));
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 13, shouldYield: true));
 
-        Assert.Equal(2, playback.PauseCount);
+        Assert.Equal(2, playback.HoldCount);
     }
 
     [Fact]
@@ -222,7 +264,7 @@ public sealed class FloorYieldControllerTests
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 3, shouldYield: true));
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 5, shouldYield: true));
 
-        Assert.Equal(0, playback.PauseCount);
+        Assert.Equal(0, playback.HoldCount);
         var debug = controller.GetDebugState();
         Assert.True(debug.CandidateActive);
         Assert.Equal(3, debug.CandidateStartFrameId);
@@ -243,7 +285,7 @@ public sealed class FloorYieldControllerTests
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 5, shouldYield: true));
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(frameId: 7, shouldYield: true));
 
-        Assert.Equal(0, playback.PauseCount);
+        Assert.Equal(0, playback.HoldCount);
         var debug = controller.GetDebugState();
         Assert.True(debug.CandidateActive);
         Assert.Equal(5, debug.CandidateStartFrameId);
@@ -259,7 +301,7 @@ public sealed class FloorYieldControllerTests
 
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(shouldYield: true));
 
-        Assert.Equal(0, playback.PauseCount);
+        Assert.Equal(0, playback.HoldCount);
     }
 
     [Fact]
@@ -271,7 +313,7 @@ public sealed class FloorYieldControllerTests
 
         await controller.HandleOfficialDecisionAsync(CreateOfficialDecision(shouldYield: false));
 
-        Assert.Equal(0, playback.PauseCount);
+        Assert.Equal(0, playback.HoldCount);
     }
 
     [Fact]
@@ -312,7 +354,8 @@ public sealed class FloorYieldControllerTests
     private static FloorYieldController CreateController(
         TestPlaybackMonitor monitor,
         RecordingPlaybackService playback,
-        int floorYieldMinSustainedMs = 30)
+        int floorYieldMinSustainedMs = 30,
+        IRecentlyYieldedSpokenTurnStore? recentlyYieldedTurns = null)
     {
         return new FloorYieldController(
             monitor,
@@ -323,7 +366,8 @@ public sealed class FloorYieldControllerTests
                 FloorYieldRequiresOfficialDecision = true,
                 FloorYieldMinSustainedMs = floorYieldMinSustainedMs
             }),
-            NullLogger<FloorYieldController>.Instance);
+            NullLogger<FloorYieldController>.Instance,
+            recentlyYieldedTurns);
     }
 
     private static SpeechPresenceOfficialDecision CreateOfficialDecision(
@@ -376,6 +420,23 @@ public sealed class FloorYieldControllerTests
     {
         public int PauseCount { get; private set; }
 
+        public int HoldCount { get; private set; }
+
+        public string HoldId { get; } = "hold-1";
+
+        public bool HoldShouldSucceed { get; init; } = true;
+
+        public ActiveSpeechPlaybackSnapshot Snapshot { get; private set; } = new()
+        {
+            CorrelationId = "backend_voice:abc",
+            AssistantTurnId = "backend_voice:abc",
+            SpeechType = SpeechPlaybackItemType.FinalAnswer.ToString(),
+            ItemType = SpeechPlaybackItemType.FinalAnswer.ToString(),
+            IsActive = true,
+            IsAudiblePlaybackActive = true,
+            StartedAtUtc = DateTimeOffset.UtcNow
+        };
+
         public Task EnqueueAsync(
             string text,
             string? correlationId,
@@ -409,6 +470,50 @@ public sealed class FloorYieldControllerTests
         {
             return Task.CompletedTask;
         }
+
+        public Task<ProvisionalAudioHoldResult> BeginProvisionalAudioHoldAsync(
+            string turnId,
+            string reason,
+            CancellationToken cancellationToken = default)
+        {
+            HoldCount++;
+            if (!HoldShouldSucceed)
+            {
+                return Task.FromResult(ProvisionalAudioHoldResult.Failed(turnId, reason, "test hold failure"));
+            }
+
+            Snapshot = new ActiveSpeechPlaybackSnapshot
+            {
+                CorrelationId = Snapshot.CorrelationId,
+                AssistantTurnId = Snapshot.AssistantTurnId,
+                SpeechType = Snapshot.SpeechType,
+                ItemType = Snapshot.ItemType,
+                IsActive = Snapshot.IsActive,
+                IsHeld = true,
+                IsAudiblePlaybackActive = false,
+                HoldId = HoldId,
+                StartedAtUtc = Snapshot.StartedAtUtc
+            };
+            return Task.FromResult(new ProvisionalAudioHoldResult(
+                Success: true,
+                HoldId: HoldId,
+                TurnId: turnId,
+                Reason: reason));
+        }
+
+        public ActiveSpeechPlaybackSnapshot? GetActivePlaybackSnapshot() => Snapshot;
+    }
+
+    private sealed class RecordingRecentlyYieldedStore : IRecentlyYieldedSpokenTurnStore
+    {
+        public RecentlyYieldedSpokenTurnSnapshot? LastSnapshot { get; private set; }
+
+        public void Record(RecentlyYieldedSpokenTurnSnapshot snapshot)
+        {
+            LastSnapshot = snapshot;
+        }
+
+        public RecentlyYieldedSpokenTurnSnapshot? TryGetFreshSnapshot(DateTimeOffset? nowUtc = null) => LastSnapshot;
     }
 
     private sealed class TestOptionsMonitor<T> : IOptionsMonitor<T>

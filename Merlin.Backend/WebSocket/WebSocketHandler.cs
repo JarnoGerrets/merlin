@@ -6,6 +6,7 @@ using Merlin.Backend.Models;
 using Merlin.Backend.Configuration;
 using Merlin.Backend.Services;
 using Merlin.Backend.Services.BargeIn;
+using Merlin.Backend.Services.InterruptionIntelligence;
 using Merlin.Backend.Services.LiveUtterance;
 using Merlin.Backend.Services.SpeechPresence;
 using Microsoft.Extensions.Options;
@@ -22,6 +23,7 @@ public sealed class WebSocketHandler
     private readonly ILiveUtteranceGate? _liveUtteranceGate;
     private readonly ILiveAssistantTurnService _liveTurnService;
     private readonly IAssistantSpeechPlaybackService _speechPlaybackService;
+    private readonly ILiveSpokenAnswerTrackingService? _spokenAnswerTracking;
     private readonly ISpeechPolicyService _speechPolicyService;
     private readonly ILogger<WebSocketHandler> _logger;
     private readonly IRuntimeStateService _runtimeStateService;
@@ -43,7 +45,8 @@ public sealed class WebSocketHandler
         ILiveUtteranceGate? liveUtteranceGate = null,
         IBargeInDebugSnapshotService? bargeInDebugSnapshots = null,
         IOptionsMonitor<VoiceInputOptions>? voiceInputOptions = null,
-        ISpeechPresenceDecisionLogSink? speechPresenceDecisionLogSink = null)
+        ISpeechPresenceDecisionLogSink? speechPresenceDecisionLogSink = null,
+        ILiveSpokenAnswerTrackingService? spokenAnswerTracking = null)
     {
         _commandRouter = commandRouter;
         _bargeInCoordinator = bargeInCoordinator;
@@ -51,6 +54,7 @@ public sealed class WebSocketHandler
         _liveUtteranceGate = liveUtteranceGate;
         _liveTurnService = liveTurnService;
         _speechPlaybackService = speechPlaybackService;
+        _spokenAnswerTracking = spokenAnswerTracking;
         _speechPolicyService = speechPolicyService;
         _logger = logger;
         _runtimeStateService = runtimeStateService;
@@ -715,13 +719,23 @@ public sealed class WebSocketHandler
 
         if (speechDecision.ShouldSpeak && speechDecision.ShouldQueue)
         {
+            var speechText = speechDecision.SpeechTextOverride ?? ResponseSpeechText(response);
             if (!string.IsNullOrWhiteSpace(response.CorrelationId))
             {
+                if (ShouldTrackMainAnswerSpeech(request, response))
+                {
+                    _spokenAnswerTracking?.StartAnswer(
+                        response.CorrelationId,
+                        response.CorrelationId,
+                        request?.Message ?? string.Empty,
+                        speechText);
+                }
+
                 _liveTurnService.UpdateTurnState(response.CorrelationId, LiveAssistantTurnState.Speaking);
             }
 
             await _speechPlaybackService.EnqueueAsync(
-                speechDecision.SpeechTextOverride ?? ResponseSpeechText(response),
+                speechText,
                 response.CorrelationId,
                 (visualEvent, token) => SendVisualEventAsync(webSocket, sendGate, visualEvent, token),
                 response.SpeechCacheKey,
@@ -773,6 +787,32 @@ public sealed class WebSocketHandler
                 }
             },
             CancellationToken.None);
+    }
+
+    internal static bool ShouldTrackMainAnswerSpeech(AssistantRequest? request, AssistantResponse response)
+    {
+        if (request is null || !response.Success)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Message) || string.IsNullOrWhiteSpace(response.CorrelationId))
+        {
+            return false;
+        }
+
+        if (response.SuppressSpeech || !string.IsNullOrWhiteSpace(response.SpeechCacheKey))
+        {
+            return false;
+        }
+
+        if (!string.Equals(response.ToolName, "General Conversation", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return string.Equals(response.Intent, "general_conversation", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(response.ResponseType, "assistant", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task PlayDevVisualFlowAsync(

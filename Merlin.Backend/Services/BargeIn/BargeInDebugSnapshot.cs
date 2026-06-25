@@ -6,9 +6,41 @@ public sealed record BargeInDebugSnapshot
 
     public bool? AssistantWasSpeaking { get; init; }
 
+    public bool? AssistantPlaybackContextActive { get; init; }
+
+    public bool? AssistantAudioActuallyPlaying { get; init; }
+
+    public bool? AudiblePlaybackActive { get; init; }
+
+    public bool? ActivePlaybackSnapshotIsActive { get; init; }
+
+    public bool? ActivePlaybackSnapshotIsHeld { get; init; }
+
+    public string? HoldId { get; init; }
+
     public string? CaptureSource { get; init; }
 
     public string? BargeInState { get; init; }
+
+    public string? AcousticCaptureMode { get; init; }
+
+    public bool? IdleRawMicPrimary { get; init; }
+
+    public bool? RawSpeechActive { get; init; }
+
+    public bool? AecSpeechActive { get; init; }
+
+    public bool? AecOnlyEnergyIgnored { get; init; }
+
+    public double? RawNoiseFloor { get; init; }
+
+    public double? AecNoiseFloor { get; init; }
+
+    public double? PlaybackReferenceAgeMs { get; init; }
+
+    public int? EndpointSilenceMs { get; init; }
+
+    public int? RequiredEndpointSilenceMs { get; init; }
 
     public double? MicRms { get; init; }
 

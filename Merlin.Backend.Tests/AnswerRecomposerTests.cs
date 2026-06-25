@@ -41,6 +41,7 @@ public sealed class AnswerRecomposerTests
         Assert.Contains("clarification context", prompt);
         Assert.Contains("Avoid repeating what the user already heard", prompt);
         Assert.Contains("Do not restart the answer from the beginning", prompt);
+        Assert.Contains("If the clean checkpoint is empty or insufficient, restart the relevant part naturally", prompt);
         Assert.Contains("Preserve the original answer's red wire", prompt);
         Assert.Contains("Return strict JSON", prompt);
         Assert.Contains("continuationText", prompt);

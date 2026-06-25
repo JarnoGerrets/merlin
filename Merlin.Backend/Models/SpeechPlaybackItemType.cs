@@ -4,5 +4,8 @@ public enum SpeechPlaybackItemType
 {
     FinalAnswer,
     Acknowledgement,
-    Progress
+    Progress,
+    InterruptionClarification,
+    InterruptionContinuation,
+    StopConfirmation
 }

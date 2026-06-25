@@ -50,6 +50,14 @@ public sealed class BargeInOptions
 
     public int VadEndSilenceMs { get; set; } = 450;
 
+    public bool EnableIdleRawMicPrimaryEndpointing { get; set; } = true;
+
+    public int IdleRawMicEndpointSilenceMs { get; set; } = 450;
+
+    public double IdleRawMicSpeechEnergyMultiplier { get; set; } = 1.0;
+
+    public double IdleAecOnlyEnergyIgnoreRawMaxMultiplier { get; set; } = 1.3;
+
     public double VadEnergyThreshold { get; set; } = 0.015;
 
     public bool VadUseAdaptiveNoiseFloor { get; set; } = true;

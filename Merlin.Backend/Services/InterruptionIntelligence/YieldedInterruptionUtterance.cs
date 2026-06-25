@@ -16,6 +16,26 @@ public sealed class YieldedInterruptionUtterance
 
     public string CorrelationId { get; init; } = string.Empty;
 
+    public string? OriginalObservedTurnId { get; init; }
+
+    public string? TurnBindingSource { get; init; }
+
+    public string? ActivePlaybackCorrelationId { get; init; }
+
+    public string? ActivePlaybackSpeechType { get; init; }
+
+    public string? ProvisionalAudioHoldId { get; init; }
+
+    public bool WasHeldByProvisionalAudioHold { get; init; }
+
+    public bool? AssistantWasSpeakingOriginal { get; init; }
+
+    public bool? AssistantWasSpeakingResolved { get; init; }
+
+    public bool RecentlyYieldedSnapshotFound { get; init; }
+
+    public double? RecentlyYieldedSnapshotAgeMs { get; init; }
+
     public double? Layer1Confidence { get; init; }
 
     public string? Layer1Decision { get; init; }

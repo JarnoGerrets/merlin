@@ -9,6 +9,12 @@ public enum AecMode
     Unavailable
 }
 
+public enum AcousticCaptureMode
+{
+    IdleUserRequest,
+    AssistantInterruption
+}
+
 public enum InterruptionType
 {
     None,
@@ -890,6 +896,28 @@ public sealed record InterruptionCaptureFrameDiagnostic
     public required bool ProcessedByAnalyzer { get; init; }
 
     public required int EndpointSilenceMs { get; init; }
+
+    public string AcousticCaptureMode { get; init; } = "";
+
+    public bool IdleRawMicPrimary { get; init; }
+
+    public bool RawSpeechActive { get; init; }
+
+    public bool AecSpeechActive { get; init; }
+
+    public bool AecOnlyEnergyIgnored { get; init; }
+
+    public double RawNoiseFloor { get; init; }
+
+    public double AecNoiseFloor { get; init; }
+
+    public bool AssistantPlaybackActive { get; init; }
+
+    public double PlaybackReferenceRms { get; init; }
+
+    public double? PlaybackReferenceAgeMs { get; init; }
+
+    public int RequiredEndpointSilenceMs { get; init; }
 }
 
 public sealed record BargeInDecision

@@ -10,6 +10,8 @@ const ROWS := [
 	{"label": "Playback Energy", "raw": "playbackEnergy", "percent": "", "kind": "energy"},
 	{"label": "Expected Echo", "raw": "estimatedEchoRms", "percent": "expectedEchoPercent", "kind": "energy"},
 	{"label": "Mic/Echo Ratio", "raw": "micToExpectedEchoRatio", "percent": "", "kind": "ratio"},
+	{"label": "Raw Noise Floor", "raw": "rawNoiseFloor", "percent": "", "kind": "energy"},
+	{"label": "AEC Noise Floor", "raw": "aecNoiseFloor", "percent": "", "kind": "energy"},
 	{"label": "VAD Confidence", "raw": "vadConfidence", "percent": "vadPercent", "kind": "unit"},
 	{"label": "Correlation", "raw": "correlationScore", "percent": "correlationPercent", "kind": "unit"},
 	{"label": "User Dominance", "raw": "userDominanceScore", "percent": "userDominancePercent", "kind": "unit"},
@@ -23,6 +25,14 @@ const ROWS := [
 
 const FIELDS := [
 	["Assistant Speaking", "assistantWasSpeaking"],
+	["Acoustic Mode", "acousticCaptureMode"],
+	["Idle Raw Primary", "idleRawMicPrimary"],
+	["Raw Speech", "rawSpeechActive"],
+	["AEC Speech", "aecSpeechActive"],
+	["AEC-Only Ignored", "aecOnlyEnergyIgnored"],
+	["Ref Age Ms", "playbackReferenceAgeMs"],
+	["Endpoint Silence", "endpointSilenceMs"],
+	["Required Silence", "requiredEndpointSilenceMs"],
 	["Capture Source", "captureSource"],
 	["Barge-In State", "bargeInState"],
 	["Presence State", "speechPresenceState"],

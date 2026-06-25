@@ -70,6 +70,7 @@ public sealed class AnswerRecomposerPromptBuilder
         AppendBlock(builder, "clarification context", request.ClarificationContext);
         builder.AppendLine("Task:");
         builder.AppendLine("Continue the original answer naturally from the last safe checkpoint.");
+        builder.AppendLine("If the clean checkpoint is empty or insufficient, restart the relevant part naturally instead of pretending to know the exact playback position.");
         builder.AppendLine("Preserve the original answer's red wire.");
         builder.AppendLine("Incorporate the user's clarification/context.");
         builder.AppendLine("Avoid repeating what the user already heard.");

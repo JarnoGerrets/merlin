@@ -1,14 +1,18 @@
+using Merlin.Backend.Models;
 using Merlin.Backend.Services.BargeIn;
+using Merlin.Backend.Services.InterruptionIntelligence;
 using Microsoft.Extensions.Options;
 
 namespace Merlin.Backend.Services.SpeechPresence;
 
 public sealed class FloorYieldController : IFloorYieldController
 {
-    public const string PlaybackYieldMode = "existing_pause_method_cancel_fallback";
+    public const string PlaybackYieldMode = "provisional_audio_hold";
+    public const string HoldUnavailableYieldMode = "provisional_audio_hold_unavailable";
 
     private readonly IAssistantPlaybackMonitor _assistantPlaybackMonitor;
     private readonly IAssistantSpeechPlaybackService _playbackService;
+    private readonly IRecentlyYieldedSpokenTurnStore? _recentlyYieldedTurns;
     private readonly ILogger<FloorYieldController> _logger;
     private readonly IOptionsMonitor<SpeechPresenceOptions> _options;
     private readonly object _syncRoot = new();
@@ -22,12 +26,14 @@ public sealed class FloorYieldController : IFloorYieldController
         IAssistantPlaybackMonitor assistantPlaybackMonitor,
         IAssistantSpeechPlaybackService playbackService,
         IOptionsMonitor<SpeechPresenceOptions> options,
-        ILogger<FloorYieldController> logger)
+        ILogger<FloorYieldController> logger,
+        IRecentlyYieldedSpokenTurnStore? recentlyYieldedTurns = null)
     {
         _assistantPlaybackMonitor = assistantPlaybackMonitor;
         _playbackService = playbackService;
         _options = options;
         _logger = logger;
+        _recentlyYieldedTurns = recentlyYieldedTurns;
     }
 
     public async Task HandleOfficialDecisionAsync(
@@ -158,8 +164,85 @@ public sealed class FloorYieldController : IFloorYieldController
             _candidatePeakVadConfidence = null;
         }
 
-        LogTriggered(decision, options, candidateStartFrameId, candidateDurationMs, requiredSustainedMs, candidatePeakVadConfidence);
-        await _playbackService.PauseCurrentSpeechAsync(cancellationToken);
+        var holdResult = await _playbackService.BeginProvisionalAudioHoldAsync(
+            GetActivePlaybackTurnId(),
+            decision.Result.Reason,
+            cancellationToken);
+        var yieldMode = holdResult.Success ? PlaybackYieldMode : HoldUnavailableYieldMode;
+        SetLastYieldMode(yieldMode);
+
+        LogTriggered(decision, options, candidateStartFrameId, candidateDurationMs, requiredSustainedMs, candidatePeakVadConfidence, yieldMode);
+        if (holdResult.Success)
+        {
+            LogHoldStarted(decision, holdResult, candidateDurationMs, requiredSustainedMs, candidatePeakVadConfidence, yieldMode);
+            RecordRecentlyYieldedTurn(decision, holdResult, yieldMode);
+            return;
+        }
+
+        LogHoldUnavailable(decision, holdResult, candidateDurationMs, requiredSustainedMs, candidatePeakVadConfidence, yieldMode);
+    }
+
+    private string GetActivePlaybackTurnId()
+    {
+        var snapshot = _playbackService.GetActivePlaybackSnapshot();
+        return snapshot?.AssistantTurnId ?? string.Empty;
+    }
+
+    private void SetLastYieldMode(string yieldMode)
+    {
+        lock (_syncRoot)
+        {
+            _debugState = _debugState with { LastMode = yieldMode };
+        }
+    }
+
+    private void RecordRecentlyYieldedTurn(
+        SpeechPresenceOfficialDecision decision,
+        ProvisionalAudioHoldResult holdResult,
+        string yieldMode)
+    {
+        if (_recentlyYieldedTurns is null)
+        {
+            return;
+        }
+
+        var snapshot = _playbackService.GetActivePlaybackSnapshot();
+        if (snapshot is not { IsActive: true }
+            || !string.Equals(snapshot.SpeechType, SpeechPlaybackItemType.FinalAnswer.ToString(), StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(snapshot.AssistantTurnId))
+        {
+            return;
+        }
+
+        _recentlyYieldedTurns.Record(new RecentlyYieldedSpokenTurnSnapshot
+        {
+            TurnId = snapshot.AssistantTurnId,
+            CorrelationId = string.IsNullOrWhiteSpace(snapshot.CorrelationId)
+                ? snapshot.AssistantTurnId
+                : snapshot.CorrelationId,
+            SpeechType = snapshot.SpeechType,
+            ItemType = snapshot.ItemType,
+            YieldedAtUtc = DateTimeOffset.UtcNow,
+            YieldReason = decision.Result.Reason,
+            YieldSource = nameof(FloorYieldController),
+            PlaybackWasCancelledByYieldFallback = false,
+            PlaybackWasHeldByProvisionalAudioHold = true,
+            HoldId = holdResult.HoldId,
+            YieldMode = yieldMode
+        });
+
+        _logger.LogInformation(
+            "recently_yielded_spoken_turn_recorded TurnId: {TurnId}. CorrelationId: {CorrelationId}. SpeechType: {SpeechType}. ItemType: {ItemType}. YieldReason: {YieldReason}. YieldSource: {YieldSource}. PlaybackWasCancelledByYieldFallback: {PlaybackWasCancelledByYieldFallback}. PlaybackWasHeldByProvisionalAudioHold: {PlaybackWasHeldByProvisionalAudioHold}. HoldId: {HoldId}. YieldMode: {YieldMode}.",
+            snapshot.AssistantTurnId,
+            snapshot.CorrelationId,
+            snapshot.SpeechType,
+            snapshot.ItemType,
+            decision.Result.Reason,
+            nameof(FloorYieldController),
+            false,
+            true,
+            holdResult.HoldId,
+            yieldMode);
     }
 
     public FloorYieldDebugState GetDebugState()
@@ -234,7 +317,8 @@ public sealed class FloorYieldController : IFloorYieldController
         long candidateStartFrameId,
         double candidateDurationMs,
         int requiredSustainedMs,
-        double candidatePeakVadConfidence)
+        double candidatePeakVadConfidence,
+        string playbackYieldMode)
     {
         var result = decision.Result;
         var evidence = result.Evidence;
@@ -257,7 +341,7 @@ public sealed class FloorYieldController : IFloorYieldController
                 candidatePeakVadConfidence,
                 evidence.PlaybackCorrelationScore,
                 _assistantPlaybackMonitor.IsPlaybackActive,
-                PlaybackYieldMode,
+                playbackYieldMode,
                 "official_speech_presence");
             return;
         }
@@ -275,8 +359,81 @@ public sealed class FloorYieldController : IFloorYieldController
             result.Evidence.VadConfidence,
             candidatePeakVadConfidence,
             _assistantPlaybackMonitor.IsPlaybackActive,
-            PlaybackYieldMode,
+            playbackYieldMode,
             "official_speech_presence");
+    }
+
+    private void LogHoldStarted(
+        SpeechPresenceOfficialDecision decision,
+        ProvisionalAudioHoldResult holdResult,
+        double candidateDurationMs,
+        int requiredSustainedMs,
+        double candidatePeakVadConfidence,
+        string playbackYieldMode)
+    {
+        var snapshot = _playbackService.GetActivePlaybackSnapshot();
+        LogHoldOutcome(
+            "FloorYieldProvisionalAudioHoldStarted",
+            decision,
+            holdResult,
+            snapshot,
+            candidateDurationMs,
+            requiredSustainedMs,
+            candidatePeakVadConfidence,
+            playbackYieldMode);
+    }
+
+    private void LogHoldUnavailable(
+        SpeechPresenceOfficialDecision decision,
+        ProvisionalAudioHoldResult holdResult,
+        double candidateDurationMs,
+        int requiredSustainedMs,
+        double candidatePeakVadConfidence,
+        string playbackYieldMode)
+    {
+        var snapshot = _playbackService.GetActivePlaybackSnapshot();
+        LogHoldOutcome(
+            "FloorYieldProvisionalAudioHoldUnavailable",
+            decision,
+            holdResult,
+            snapshot,
+            candidateDurationMs,
+            requiredSustainedMs,
+            candidatePeakVadConfidence,
+            playbackYieldMode);
+    }
+
+    private void LogHoldOutcome(
+        string eventName,
+        SpeechPresenceOfficialDecision decision,
+        ProvisionalAudioHoldResult holdResult,
+        ActiveSpeechPlaybackSnapshot? snapshot,
+        double candidateDurationMs,
+        int requiredSustainedMs,
+        double candidatePeakVadConfidence,
+        string playbackYieldMode)
+    {
+        var result = decision.Result;
+        var evidence = result.Evidence;
+        _logger.LogInformation(
+            "{EventName}. TurnId: {TurnId}. CorrelationId: {CorrelationId}. SpeechType: {SpeechType}. ItemType: {ItemType}. HoldId: {HoldId}. YieldReason: {YieldReason}. PlaybackYieldMode: {PlaybackYieldMode}. CandidateDurationMs: {CandidateDurationMs:N1}. RequiredSustainedMs: {RequiredSustainedMs}. VadConfidence: {VadConfidence:N2}. CandidatePeakVadConfidence: {CandidatePeakVadConfidence:N2}. PlaybackCorrelationScore: {PlaybackCorrelationScore}. RawMicRms: {RawMicRms:N4}. EchoReducedRms: {EchoReducedRms:N4}. PlaybackReferenceRms: {PlaybackReferenceRms:N4}. FailureReason: {FailureReason}.",
+            eventName,
+            holdResult.TurnId ?? snapshot?.AssistantTurnId,
+            snapshot?.CorrelationId,
+            snapshot?.SpeechType,
+            snapshot?.ItemType,
+            holdResult.HoldId,
+            result.Reason,
+            playbackYieldMode,
+            candidateDurationMs,
+            requiredSustainedMs,
+            evidence.VadConfidence,
+            candidatePeakVadConfidence,
+            evidence.PlaybackCorrelationScore,
+            evidence.RawMicRms,
+            evidence.EchoReducedRms,
+            evidence.PlaybackReferenceRms,
+            holdResult.FailureReason);
     }
 
     private void LogIgnored(string reason, SpeechPresenceOfficialDecision decision)

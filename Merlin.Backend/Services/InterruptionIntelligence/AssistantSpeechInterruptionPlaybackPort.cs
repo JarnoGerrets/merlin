@@ -52,6 +52,42 @@ public sealed class AssistantSpeechInterruptionPlaybackPort : IInterruptionPlayb
         await _playbackService.StopCurrentAsync(cancellationToken);
     }
 
+    public async Task FlushFinalAnswerSpeechForTurnAsync(string turnId, string reason, CancellationToken cancellationToken = default)
+    {
+        if (!CanExecutePlaybackAction("flush_final_answer", turnId, reason))
+        {
+            return;
+        }
+
+        await _playbackService.FlushFinalAnswerSpeechForTurnAsync(turnId, reason, cancellationToken);
+    }
+
+    public async Task<ProvisionalAudioHoldResult> ResumeProvisionalAudioHoldAsync(
+        string holdId,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        if (!CanExecutePlaybackAction("resume_provisional_audio_hold", holdId, reason))
+        {
+            return ProvisionalAudioHoldResult.Failed(null, reason, "Live playback actions are disabled.", holdId);
+        }
+
+        return await _playbackService.ResumeProvisionalAudioHoldAsync(holdId, reason, cancellationToken);
+    }
+
+    public async Task<ProvisionalAudioHoldResult> FlushProvisionalAudioHoldAsync(
+        string holdId,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        if (!CanExecutePlaybackAction("flush_provisional_audio_hold", holdId, reason))
+        {
+            return ProvisionalAudioHoldResult.Failed(null, reason, "Live playback actions are disabled.", holdId);
+        }
+
+        return await _playbackService.FlushProvisionalAudioHoldAsync(holdId, reason, cancellationToken);
+    }
+
     private bool CanExecutePlaybackAction(string action, string turnId, string reason)
     {
         if (!_options.Enabled || _options.EnableLiveShadowMode || !_options.EnableLivePlaybackActions)

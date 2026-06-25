@@ -137,6 +137,10 @@ public sealed class ConversationalInterruptionClassifierTests
     [Theory]
     [InlineData("what do you mean by liner", ConversationalInterruptionType.ClarificationQuestion)]
     [InlineData("but the water itself too right", ConversationalInterruptionType.RelatedFollowUpQuestion)]
+    [InlineData("The water itself too, right?", ConversationalInterruptionType.RelatedFollowUpQuestion)]
+    [InlineData("The water itself, too, right?", ConversationalInterruptionType.RelatedFollowUpQuestion)]
+    [InlineData("But the water itself too, right?", ConversationalInterruptionType.RelatedFollowUpQuestion)]
+    [InlineData("But the water itself, too, right?", ConversationalInterruptionType.RelatedFollowUpQuestion)]
     [InlineData("what about depth", ConversationalInterruptionType.RelatedFollowUpQuestion)]
     public void Classify_ClarificationOrFollowUp_RecomposesFromCheckpoint(
         string transcript,

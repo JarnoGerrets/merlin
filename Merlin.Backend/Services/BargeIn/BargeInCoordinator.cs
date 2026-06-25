@@ -20,6 +20,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     private readonly IBargeInDiagnosticsLogger _diagnostics;
     private readonly IInterruptionClassifier _interruptionClassifier;
     private readonly ILiveInterruptionIntegrationService? _liveInterruptionIntegrationService;
+    private readonly IActiveSpokenTurnResolver? _activeSpokenTurnResolver;
     private readonly ILiveUtteranceGate? _liveUtteranceGate;
     private readonly ILiveAssistantTurnService _liveTurnService;
     private readonly IOptionsMonitor<BargeInOptions> _options;
@@ -90,7 +91,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         ISpeechPresenceDetector? speechPresenceDetector = null,
         ISpeechPresenceDecisionLogSink? speechPresenceDecisionLogSink = null,
         IFloorYieldController? floorYieldController = null,
-        ILiveInterruptionIntegrationService? liveInterruptionIntegrationService = null)
+        ILiveInterruptionIntegrationService? liveInterruptionIntegrationService = null,
+        IActiveSpokenTurnResolver? activeSpokenTurnResolver = null)
     {
         _playbackReferenceTap = playbackReferenceTap;
         _assistantPlaybackMonitor = assistantPlaybackMonitor;
@@ -115,6 +117,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         _speechPresenceDetector = speechPresenceDetector;
         _speechPresenceDecisionLogSink = speechPresenceDecisionLogSink;
         _floorYieldController = floorYieldController;
+        _activeSpokenTurnResolver = activeSpokenTurnResolver;
 
         _playbackReferenceTap.SpeechStarted += OnSpeechStarted;
         _playbackReferenceTap.SpeechStopped += OnSpeechStopped;
@@ -231,11 +234,13 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 "active_capture_endpointing",
                 BargeInState.CapturingInterruption.ToString(),
                 speechPresence: activeSpeechPresence);
-            activeCaptureSession.Observe(CreateCaptureFrameObservation(
+            ObserveCaptureFrame(context, activeCaptureSession, CreateCaptureFrameObservation(
                 frame,
                 echoReducedFrame,
+                reference,
                 activeVad,
                 activeGateResult,
+                activeCaptureSession.Mode,
                 options));
             UpdateLiveDucking(context, echoReducedFrame, reference, correlation, options, cancellationToken);
             return;
@@ -313,7 +318,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                     echoReducedFrame,
                     comfortGateResult,
                     options,
-                    "burst_promotion"))
+                    "burst_promotion",
+                    burstPromotionSummary))
             {
                 _burstCaptureCandidate.Reset();
                 return;
@@ -325,7 +331,9 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             ResetFastNearEndDuckingCandidate();
             await StartTriggeredSpeechAsync(
                 context,
+                frame,
                 echoReducedFrame,
+                reference,
                 vad,
                 aecResult,
                 options,
@@ -417,12 +425,14 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 rollingSource,
                 cancellationToken);
 
-            if (_assistantPlaybackMonitor.IsPlaybackActive
+            if (IsAssistantAudioActuallyPlaying(_playbackService.GetActivePlaybackSnapshot())
                 && TryConsumeFastHardStopCandidate(echoReducedFrame, reference, vad, options, out var fastTriggerFrame))
             {
                 await StartTriggeredSpeechAsync(
                     context,
+                    echoReducedFrame,
                     fastTriggerFrame,
+                    reference,
                     vad,
                     aecResult,
                     options,
@@ -510,7 +520,9 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         ResetFastNearEndDuckingCandidate();
         await StartTriggeredSpeechAsync(
             context,
+            frame,
             echoReducedFrame,
+            reference,
             vad,
             aecResult,
             options,
@@ -571,7 +583,9 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
 
     private async Task StartTriggeredSpeechAsync(
         BargeInSpeechContext context,
+        BargeInAudioFrame rawFrame,
         BargeInAudioFrame echoReducedFrame,
+        ReadOnlyMemory<float> playbackReference,
         VadFrameResult vad,
         AecProcessResult aecResult,
         BargeInOptions options,
@@ -605,14 +619,19 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             _handlingTrigger = true;
             _sustainedUserSpeechScoreMs = 0;
             ResetRollingUserSpeechEvidence(context, options, "triggered_capture_started", null, "triggered_capture_started");
+            var acousticMode = captureKind is CaptureKind.FastHardStop
+                ? AcousticCaptureMode.AssistantInterruption
+                : SelectAcousticCaptureModeForFrame(playbackReference, options);
             captureSession = captureKind is CaptureKind.FastHardStop
                 ? BargeInCaptureSession.CreateFastHardStop(echoReducedFrame.Timestamp, options)
-                : BargeInCaptureSession.CreateNormal(echoReducedFrame.Timestamp, options);
-            captureSession.Observe(CreateCaptureFrameObservation(
+                : BargeInCaptureSession.CreateNormal(echoReducedFrame.Timestamp, options, acousticMode);
+            ObserveCaptureFrame(context, captureSession, CreateCaptureFrameObservation(
+                rawFrame,
                 echoReducedFrame,
-                echoReducedFrame,
+                playbackReference,
                 vad,
                 null,
+                acousticMode,
                 options));
             _activeCaptureSession = captureSession;
             ResetFastNearEndDuckingCandidate();
@@ -701,7 +720,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             return null;
         }
 
-        if (duckingOptions.RequireAssistantPlayback && !_assistantPlaybackMonitor.IsPlaybackActive)
+        if (duckingOptions.RequireAssistantPlayback && !IsAssistantAudioActuallyPlaying(_playbackService.GetActivePlaybackSnapshot()))
         {
             ResetFastNearEndDuckingCandidate();
             return null;
@@ -795,33 +814,94 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         BargeInAudioFrame frame,
         SelfSpeechGateResult? gateResult,
         BargeInOptions options,
-        string candidateType)
+        string candidateType,
+        BurstCapturePromotionSummary? burstPromotionSummary = null)
     {
         if (!options.RequireSustainedUserSpeechScoreDuringPlayback)
         {
             return true;
         }
 
-        var assistantWasSpeaking = _assistantPlaybackMonitor.IsPlaybackActive;
+        var activePlaybackSnapshot = _playbackService.GetActivePlaybackSnapshot();
+        var assistantPlaybackContextActive = IsAssistantPlaybackContextActive(activePlaybackSnapshot);
+        var assistantAudioActuallyPlaying = IsAssistantAudioActuallyPlaying(activePlaybackSnapshot);
         var threshold = Math.Clamp(options.SustainedUserSpeechScoreThreshold, 0.0, 1.0);
         var requiredDurationMs = Math.Max(1, options.SustainedUserSpeechScoreDurationMs);
         var userSpeechScore = gateResult?.UserSpeechScore;
         var userSpeechScoreText = FormatUserSpeechScore(userSpeechScore);
+        var gateApplies = assistantAudioActuallyPlaying;
 
         _logger.LogInformation(
-            "SustainedUserSpeechScoreGateEvaluated. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}.",
+            "SustainedUserSpeechScoreGateEvaluated. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. AssistantPlaybackContextActive: {AssistantPlaybackContextActive}. AssistantAudioActuallyPlaying: {AssistantAudioActuallyPlaying}. AudiblePlaybackActive: {AudiblePlaybackActive}. ActivePlaybackSnapshotIsActive: {ActivePlaybackSnapshotIsActive}. ActivePlaybackSnapshotIsHeld: {ActivePlaybackSnapshotIsHeld}. HoldId: {HoldId}. RequireSustainedUserSpeechScoreDuringPlaybackApplied: {RequireSustainedUserSpeechScoreDuringPlaybackApplied}. CandidateBurstMs: {CandidateBurstMs}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}.",
             candidateType,
             userSpeechScoreText,
             threshold,
             _sustainedUserSpeechScoreMs,
             requiredDurationMs,
-            assistantWasSpeaking,
+            assistantAudioActuallyPlaying,
+            assistantPlaybackContextActive,
+            assistantAudioActuallyPlaying,
+            assistantAudioActuallyPlaying,
+            activePlaybackSnapshot?.IsActive,
+            activePlaybackSnapshot?.IsHeld,
+            activePlaybackSnapshot?.HoldId,
+            gateApplies,
+            burstPromotionSummary?.CandidateBurstMsAtPromotion,
             gateResult?.Decision.ToString() ?? "Unavailable",
             gateResult?.Reason ?? "Self-speech gate result unavailable.");
 
-        if (!assistantWasSpeaking)
+        if (!assistantAudioActuallyPlaying)
         {
-            ResetSustainedUserSpeechScoreGate(context, options, "assistant_playback_inactive", gateResult, candidateType);
+            if (IsStrongHeldBurstCandidate(burstPromotionSummary, gateResult, threshold, options, activePlaybackSnapshot))
+            {
+                var seededDurationMs = Math.Max(
+                    _sustainedUserSpeechScoreMs,
+                    burstPromotionSummary!.CandidateBurstMsAtPromotion);
+                _sustainedUserSpeechScoreMs = Math.Max(_sustainedUserSpeechScoreMs, Math.Min(seededDurationMs, requiredDurationMs));
+                _logger.LogInformation(
+                    "sustained_user_speech_gate_seeded_from_burst CandidateType: {CandidateType}. SustainedGateSeededFromBurst: {SustainedGateSeededFromBurst}. SeededDurationMs: {SeededDurationMs}. CandidateBurstMs: {CandidateBurstMs}. UserSpeechScore: {UserSpeechScore}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantPlaybackContextActive: {AssistantPlaybackContextActive}. AssistantAudioActuallyPlaying: {AssistantAudioActuallyPlaying}. ActivePlaybackSnapshotIsActive: {ActivePlaybackSnapshotIsActive}. ActivePlaybackSnapshotIsHeld: {ActivePlaybackSnapshotIsHeld}. HoldId: {HoldId}. SelfSpeechGateDecision: {SelfSpeechGateDecision}.",
+                    candidateType,
+                    true,
+                    _sustainedUserSpeechScoreMs,
+                    burstPromotionSummary.CandidateBurstMsAtPromotion,
+                    userSpeechScoreText,
+                    threshold,
+                    _sustainedUserSpeechScoreMs,
+                    requiredDurationMs,
+                    assistantPlaybackContextActive,
+                    assistantAudioActuallyPlaying,
+                    activePlaybackSnapshot?.IsActive,
+                    activePlaybackSnapshot?.IsHeld,
+                    activePlaybackSnapshot?.HoldId,
+                    gateResult?.Decision.ToString() ?? "Unavailable");
+                _logger.LogInformation(
+                    "sustained_user_speech_gate_bypassed_for_held_burst CandidateType: {CandidateType}. CandidateBurstMs: {CandidateBurstMs}. UserSpeechScore: {UserSpeechScore}. Threshold: {Threshold:N3}. RequiredDurationMs: {RequiredDurationMs}. AssistantPlaybackContextActive: {AssistantPlaybackContextActive}. AssistantAudioActuallyPlaying: {AssistantAudioActuallyPlaying}. HoldId: {HoldId}.",
+                    candidateType,
+                    burstPromotionSummary.CandidateBurstMsAtPromotion,
+                    userSpeechScoreText,
+                    threshold,
+                    requiredDurationMs,
+                    assistantPlaybackContextActive,
+                    assistantAudioActuallyPlaying,
+                    activePlaybackSnapshot?.HoldId);
+                return true;
+            }
+
+            if (burstPromotionSummary is not null && activePlaybackSnapshot is { IsHeld: true })
+            {
+                _logger.LogInformation(
+                    "sustained_user_speech_gate_bypassed_for_held_burst CandidateType: {CandidateType}. CandidateBurstMs: {CandidateBurstMs}. UserSpeechScore: {UserSpeechScore}. Threshold: {Threshold:N3}. RequiredDurationMs: {RequiredDurationMs}. AssistantPlaybackContextActive: {AssistantPlaybackContextActive}. AssistantAudioActuallyPlaying: {AssistantAudioActuallyPlaying}. HoldId: {HoldId}.",
+                    candidateType,
+                    burstPromotionSummary.CandidateBurstMsAtPromotion,
+                    userSpeechScoreText,
+                    threshold,
+                    requiredDurationMs,
+                    assistantPlaybackContextActive,
+                    assistantAudioActuallyPlaying,
+                    activePlaybackSnapshot.HoldId);
+            }
+
+            ResetSustainedUserSpeechScoreGate(context, options, "assistant_audio_not_audible", gateResult, candidateType);
             return true;
         }
 
@@ -835,7 +915,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 threshold,
                 _sustainedUserSpeechScoreMs,
                 requiredDurationMs,
-                assistantWasSpeaking,
+                assistantAudioActuallyPlaying,
                 gateResult.Decision,
                 gateResult.Reason,
                 "suppressed_as_self_echo");
@@ -851,7 +931,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 threshold,
                 _sustainedUserSpeechScoreMs,
                 requiredDurationMs,
-                assistantWasSpeaking,
+                assistantAudioActuallyPlaying,
                 "Unavailable",
                 "Self-speech gate result unavailable.",
                 "missing_user_speech_score");
@@ -868,7 +948,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 threshold,
                 _sustainedUserSpeechScoreMs,
                 requiredDurationMs,
-                assistantWasSpeaking,
+                assistantAudioActuallyPlaying,
                 gateResult?.Decision.ToString() ?? "Unavailable",
                 gateResult?.Reason ?? "Self-speech gate result unavailable.",
                 "measured_score_below_threshold");
@@ -883,7 +963,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             threshold,
             _sustainedUserSpeechScoreMs,
             requiredDurationMs,
-            assistantWasSpeaking,
+            assistantAudioActuallyPlaying,
             gateResult?.Decision.ToString() ?? "Unavailable",
             gateResult?.Reason ?? "Self-speech gate result unavailable.");
 
@@ -896,7 +976,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 threshold,
                 _sustainedUserSpeechScoreMs,
                 requiredDurationMs,
-                assistantWasSpeaking,
+                assistantAudioActuallyPlaying,
                 gateResult?.Decision.ToString() ?? "Unavailable",
                 gateResult?.Reason ?? "Self-speech gate result unavailable.",
                 "UserSpeechScore has not been sustained long enough.");
@@ -910,11 +990,65 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             threshold,
             _sustainedUserSpeechScoreMs,
             requiredDurationMs,
-            assistantWasSpeaking,
+            assistantAudioActuallyPlaying,
             gateResult?.Decision.ToString() ?? "Unavailable",
             gateResult?.Reason ?? "Self-speech gate result unavailable.",
             "UserSpeechScore sustained for required duration.");
         return true;
+    }
+
+    private bool IsAssistantAudioActuallyPlaying(ActiveSpeechPlaybackSnapshot? activePlaybackSnapshot)
+    {
+        if (!_assistantPlaybackMonitor.IsPlaybackActive)
+        {
+            return false;
+        }
+
+        return activePlaybackSnapshot?.IsAudiblePlaybackActive
+            ?? activePlaybackSnapshot is not { IsHeld: true };
+    }
+
+    private bool IsAssistantPlaybackContextActive(ActiveSpeechPlaybackSnapshot? activePlaybackSnapshot)
+    {
+        return _assistantPlaybackMonitor.IsPlaybackActive
+            || activePlaybackSnapshot is { IsActive: true }
+            || activePlaybackSnapshot is { IsHeld: true };
+    }
+
+    private static bool IsStrongHeldBurstCandidate(
+        BurstCapturePromotionSummary? burstPromotionSummary,
+        SelfSpeechGateResult? gateResult,
+        double threshold,
+        BargeInOptions options,
+        ActiveSpeechPlaybackSnapshot? activePlaybackSnapshot)
+    {
+        if (burstPromotionSummary is null || activePlaybackSnapshot is not { IsHeld: true })
+        {
+            return false;
+        }
+
+        if (gateResult?.Decision is SelfSpeechDecision.SuppressAsSelfEcho)
+        {
+            return false;
+        }
+
+        if (gateResult?.UserSpeechScore is null || gateResult.UserSpeechScore < threshold)
+        {
+            return false;
+        }
+
+        var candidateBurstMs = burstPromotionSummary.CandidateBurstMsAtPromotion;
+        if (candidateBurstMs < Math.Max(1, options.BurstCapturePromotion.MinBurstMs))
+        {
+            return false;
+        }
+
+        var totalFrames = Math.Max(1, burstPromotionSummary.BurstTotalFrames);
+        var suppressFrames = burstPromotionSummary.BurstSuppressAsSelfEchoFrames;
+        var strongSelfEchoRatio = burstPromotionSummary.BurstStrongSelfEchoRatio;
+        var suppressDominant = suppressFrames / (double)totalFrames >= 0.5;
+        return !suppressDominant
+            && strongSelfEchoRatio < Math.Clamp(options.BurstCapturePromotion.StrongSelfEchoVetoRatio, 0.0, 1.0);
     }
 
     private static bool IsRollingUserSpeechEvidenceEnabled(BargeInOptions options)
@@ -952,7 +1086,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             return;
         }
 
-        var assistantWasSpeaking = _assistantPlaybackMonitor.IsPlaybackActive;
+        var activePlaybackSnapshot = _playbackService.GetActivePlaybackSnapshot();
+        var assistantWasSpeaking = IsAssistantAudioActuallyPlaying(activePlaybackSnapshot);
         if (!assistantWasSpeaking)
         {
             ResetRollingUserSpeechEvidence(context, options, "assistant_playback_inactive", gateResult, evidenceSource);
@@ -1078,7 +1213,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             snapshot.RecentHighFrameWindowMs,
             snapshot.ObservedMsInWindow,
             previousSnapshot.ObservedMsInWindow,
-            _assistantPlaybackMonitor.IsPlaybackActive,
+            IsAssistantAudioActuallyPlaying(_playbackService.GetActivePlaybackSnapshot()),
             gateResult?.Decision.ToString() ?? "Unavailable",
             gateResult?.Reason ?? "Self-speech gate result unavailable.",
             reason,
@@ -1107,7 +1242,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             Math.Clamp(options.SustainedUserSpeechScoreThreshold, 0.0, 1.0),
             previousDurationMs,
             Math.Max(1, options.SustainedUserSpeechScoreDurationMs),
-            _assistantPlaybackMonitor.IsPlaybackActive,
+            IsAssistantAudioActuallyPlaying(_playbackService.GetActivePlaybackSnapshot()),
             gateResult?.Decision.ToString() ?? "Unavailable",
             gateResult?.Reason ?? "Self-speech gate result unavailable.",
             reason,
@@ -1171,7 +1306,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             return false;
         }
 
-        if (promotionOptions.RequireAssistantPlayback && !_assistantPlaybackMonitor.IsPlaybackActive)
+        if (promotionOptions.RequireAssistantPlayback && !IsAssistantPlaybackContextActive(_playbackService.GetActivePlaybackSnapshot()))
         {
             ResetBurstCandidate(context, "assistant playback inactive");
             return false;
@@ -2541,9 +2676,11 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         var playbackStartedAt = _assistantPlaybackMonitor.PlaybackStartedAt;
         var currentPlaybackEnergy = _assistantPlaybackMonitor.CurrentPlaybackEnergy;
         var recentPlaybackEnergy = _assistantPlaybackMonitor.RecentPlaybackEnergy;
+        var activePlaybackSnapshot = _playbackService.GetActivePlaybackSnapshot();
+        var assistantAudioActuallyPlaying = IsAssistantAudioActuallyPlaying(activePlaybackSnapshot);
         var input = new SelfSpeechGateInput
         {
-            AssistantPlaybackActive = _assistantPlaybackMonitor.IsPlaybackActive,
+            AssistantPlaybackActive = assistantAudioActuallyPlaying,
             MicEnergy = vad?.Energy ?? CalculateRms(frame.Samples.Span),
             PlaybackEnergy = Math.Max(currentPlaybackEnergy, recentPlaybackEnergy),
             CurrentPlaybackEnergy = currentPlaybackEnergy,
@@ -2834,6 +2971,41 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             correlationId = currentTurn.CorrelationId;
         }
 
+        var originalAssistantWasSpeaking = playbackActive || state is LiveAssistantTurnState.Speaking;
+        var provisionalUtterance = new UserUtterance
+        {
+            Text = transcript.Trim(),
+            TimestampUtc = DateTimeOffset.UtcNow,
+            ActiveTurnId = activeTurnId,
+            CorrelationId = correlationId,
+            StateWhenCaptured = state,
+            AssistantWasSpeaking = originalAssistantWasSpeaking,
+            Source = "live_utterance_monitor",
+            Confidence = confidence
+        };
+        var resolution = _activeSpokenTurnResolver?.Resolve(context, provisionalUtterance);
+        if (resolution is { IsActiveAnswerTurn: true })
+        {
+            activeTurnId = resolution.ActiveTurnId;
+            correlationId = resolution.CorrelationId;
+            state = LiveAssistantTurnState.Speaking;
+            playbackActive = true;
+            _logger.LogInformation(
+                "conversational_interruption_turn_binding_resolved yieldedObservedTurnId: {YieldedObservedTurnId}. resolvedActiveTurnId: {ResolvedActiveTurnId}. turnBindingSource: {TurnBindingSource}. activePlaybackCorrelationId: {ActivePlaybackCorrelationId}. activePlaybackSpeechType: {ActivePlaybackSpeechType}. provisionalAudioHoldId: {ProvisionalAudioHoldId}. wasHeldByProvisionalAudioHold: {WasHeldByProvisionalAudioHold}. recentlyYieldedSnapshotFound: {RecentlyYieldedSnapshotFound}. recentlyYieldedSnapshotAgeMs: {RecentlyYieldedSnapshotAgeMs}. assistantWasSpeakingOriginal: {AssistantWasSpeakingOriginal}. assistantWasSpeakingResolved: {AssistantWasSpeakingResolved}. Reason: {Reason}.",
+                resolution.OriginalObservedTurnId,
+                resolution.ActiveTurnId,
+                resolution.Source,
+                resolution.ActivePlaybackCorrelationId,
+                resolution.ActivePlaybackSpeechType,
+                resolution.ProvisionalAudioHoldId,
+                resolution.WasHeldByProvisionalAudioHold,
+                resolution.RecentlyYieldedSnapshotFound,
+                resolution.RecentlyYieldedSnapshotAgeMs,
+                originalAssistantWasSpeaking,
+                true,
+                resolution.Reason);
+        }
+
         return new UserUtterance
         {
             Text = transcript.Trim(),
@@ -2903,6 +3075,18 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             var endedAtUtc = capturedUntil == default
                 ? utterance.TimestampUtc
                 : capturedUntil;
+            var turnResolution = _activeSpokenTurnResolver?.Resolve(context, utterance);
+            var resolvedActiveTurnId = turnResolution?.ActiveTurnId;
+            var resolvedCorrelationId = turnResolution?.CorrelationId;
+            var originalObservedTurnId = turnResolution?.OriginalObservedTurnId
+                ?? utterance.ActiveTurnId
+                ?? context.AssistantTurnId;
+            var activeTurnId = !string.IsNullOrWhiteSpace(resolvedActiveTurnId)
+                ? resolvedActiveTurnId
+                : utterance.ActiveTurnId ?? context.AssistantTurnId;
+            var correlationId = !string.IsNullOrWhiteSpace(resolvedCorrelationId)
+                ? resolvedCorrelationId
+                : utterance.CorrelationId ?? context.CorrelationId ?? string.Empty;
             // ConversationalInterruption starts after the existing yield/capture pipeline.
             // The acoustic/Jarno decision remains owned by BargeIn/SpeechPresence.
             // This hook only shadows conversational meaning of the yielded utterance.
@@ -2913,8 +3097,18 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 YieldReason = routeDecision.Reason,
                 CaptureKind = captureKind.ToString(),
                 RouteKind = routeDecision.Kind.ToString(),
-                CorrelationId = utterance.CorrelationId ?? context.CorrelationId ?? string.Empty,
-                ActiveTurnId = utterance.ActiveTurnId ?? context.AssistantTurnId,
+                CorrelationId = correlationId,
+                ActiveTurnId = activeTurnId,
+                OriginalObservedTurnId = originalObservedTurnId,
+                TurnBindingSource = turnResolution?.Source ?? "observed_context",
+                ActivePlaybackCorrelationId = turnResolution?.ActivePlaybackCorrelationId,
+                ActivePlaybackSpeechType = turnResolution?.ActivePlaybackSpeechType,
+                ProvisionalAudioHoldId = turnResolution?.ProvisionalAudioHoldId,
+                WasHeldByProvisionalAudioHold = turnResolution?.WasHeldByProvisionalAudioHold == true,
+                AssistantWasSpeakingOriginal = utterance.AssistantWasSpeaking,
+                AssistantWasSpeakingResolved = turnResolution?.IsActiveAnswerTurn == true || utterance.AssistantWasSpeaking,
+                RecentlyYieldedSnapshotFound = turnResolution?.RecentlyYieldedSnapshotFound == true,
+                RecentlyYieldedSnapshotAgeMs = turnResolution?.RecentlyYieldedSnapshotAgeMs,
                 Layer1Confidence = utterance.Confidence ?? vad.Confidence,
                 Layer1Decision = gateResult?.Decision.ToString() ?? routeDecision.Action,
                 CurrentAssistantSentence = null,
@@ -2928,26 +3122,56 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             if (outcome is not null)
             {
                 _logger.LogInformation(
-                    "conversational_interruption_live_hook_result TurnId: {TurnId}. CorrelationId: {CorrelationId}. WasHandled: {WasHandled}. ShouldContinueOldPath: {ShouldContinueOldPath}. ResultType: {ResultType}. DecisionType: {DecisionType}. Strategy: {Strategy}. Reason: {Reason}.",
+                    "conversational_interruption_live_hook_result TurnId: {TurnId}. CorrelationId: {CorrelationId}. WasEvaluated: {WasEvaluated}. WasHandled: {WasHandled}. AllowLegacyCleanup: {AllowLegacyCleanup}. AllowLegacySemanticRouting: {AllowLegacySemanticRouting}. ShouldCancelPlayback: {ShouldCancelPlayback}. ShouldCancelCurrentTurn: {ShouldCancelCurrentTurn}. ShouldRouteReplacementRequest: {ShouldRouteReplacementRequest}. ResultType: {ResultType}. DecisionType: {DecisionType}. Strategy: {Strategy}. Reason: {Reason}.",
                     yieldedUtterance.ActiveTurnId,
                     yieldedUtterance.CorrelationId,
-                    outcome.WasHandled,
-                    outcome.ShouldContinueOldPath,
+                    outcome.WasEvaluatedByConversationalInterruption,
+                    outcome.WasHandledByConversationalInterruption,
+                    outcome.AllowLegacyCleanup,
+                    outcome.AllowLegacySemanticRouting,
+                    outcome.ShouldCancelPlayback,
+                    outcome.ShouldCancelCurrentTurn,
+                    outcome.ShouldRouteReplacementRequest,
                     outcome.Result?.Type,
-                    outcome.Result?.Decision?.Type,
-                    outcome.Result?.Decision?.Strategy,
+                    outcome.InterruptionType,
+                    outcome.Strategy,
                     outcome.Reason);
 
-                if (outcome.WasHandled && !outcome.ShouldContinueOldPath)
+                if (outcome.ShouldRouteReplacementRequest && !string.IsNullOrWhiteSpace(outcome.RewrittenRequest))
                 {
-                    if (outcome.IsCorrectionRedirect && !string.IsNullOrWhiteSpace(outcome.RedirectedRequest))
+                    await CancelByUtteranceAsync(utterance, LiveAssistantTurnCancelReason.UserCorrection, outcome.RewrittenRequest, cancellationToken);
+                    await RaiseCorrectionRegenerationRequestedAsync(context, outcome.RewrittenRequest, cancellationToken);
+                    _logger.LogInformation(
+                        "conversational_interruption_replacement_routing_requested TurnId: {TurnId}. CorrelationId: {CorrelationId}. AllowLegacySemanticRouting: {AllowLegacySemanticRouting}.",
+                        yieldedUtterance.ActiveTurnId,
+                        yieldedUtterance.CorrelationId,
+                        outcome.AllowLegacySemanticRouting);
+                    return false;
+                }
+
+                if (outcome.ShouldCancelCurrentTurn)
+                {
+                    await CancelByUtteranceAsync(utterance, LiveAssistantTurnCancelReason.UserHardStop, null, cancellationToken);
+                    return false;
+                }
+
+                if (outcome.ShouldCancelPlayback)
+                {
+                    return false;
+                }
+
+                if (!outcome.AllowLegacySemanticRouting)
+                {
+                    _logger.LogInformation(
+                        "conversational_interruption_legacy_semantic_routing_suppressed TurnId: {TurnId}. CorrelationId: {CorrelationId}. AllowLegacyCleanup: {AllowLegacyCleanup}. ShouldResumeOrContinuePlaybackIfPossible: {ShouldResumeOrContinuePlaybackIfPossible}. Reason: {Reason}.",
+                        yieldedUtterance.ActiveTurnId,
+                        yieldedUtterance.CorrelationId,
+                        outcome.AllowLegacyCleanup,
+                        outcome.ShouldResumeOrContinuePlaybackIfPossible,
+                        outcome.Reason);
+                    if (outcome.AllowLegacyCleanup && outcome.ShouldResumeOrContinuePlaybackIfPossible)
                     {
-                        await CancelByUtteranceAsync(utterance, LiveAssistantTurnCancelReason.UserCorrection, outcome.RedirectedRequest, cancellationToken);
-                        await RaiseCorrectionRegenerationRequestedAsync(context, outcome.RedirectedRequest, cancellationToken);
-                    }
-                    else if (outcome.ShouldCancelActiveTurn)
-                    {
-                        await CancelByUtteranceAsync(utterance, LiveAssistantTurnCancelReason.UserHardStop, null, cancellationToken);
+                        await ResumePreviousSpeechAsync(context, outcome.Reason, cancellationToken);
                     }
 
                     return false;
@@ -3558,11 +3782,12 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         string sourcePath)
     {
         var correlationScore = gateResult?.CorrelationScore ?? correlation?.CorrelationScore;
+        var activePlaybackSnapshot = _playbackService.GetActivePlaybackSnapshot();
         return new SpeechPresenceEvidence
         {
             FrameId = frameId,
             TimestampUtc = rawFrame.Timestamp,
-            AssistantPlaybackActive = _assistantPlaybackMonitor.IsPlaybackActive,
+            AssistantPlaybackActive = IsAssistantAudioActuallyPlaying(activePlaybackSnapshot),
             RawMicRms = CalculateRms(rawFrame.Samples.Span),
             RawMicPeak = CalculatePeak(rawFrame.Samples.Span),
             EchoReducedRms = CalculateRms(echoReducedFrame.Samples.Span),
@@ -3629,14 +3854,62 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         var userDominanceScore = gateResult?.UserSpeechScore;
         var correlationScore = gateResult?.CorrelationScore ?? correlation?.CorrelationScore;
         var bestDelayMs = gateResult?.BestDelayMs ?? correlation?.BestDelayMs;
+        var options = _options.CurrentValue;
+        var acousticMode = SelectAcousticCaptureModeForFrame(playbackReference, options);
+        BargeInCaptureSession? activeCaptureSession;
+        lock (_syncRoot)
+        {
+            activeCaptureSession = _activeCaptureSession;
+        }
+
+        if (activeCaptureSession is not null)
+        {
+            acousticMode = activeCaptureSession.Mode;
+        }
+
+        var rawSpeechThreshold = Math.Max(0.0, options.CaptureContinuationRawEnergyThreshold)
+            * Math.Max(0.0, options.IdleRawMicSpeechEnergyMultiplier);
+        var aecSpeechThreshold = Math.Max(0.0, options.CaptureContinuationAecEnergyThreshold);
+        var aecRms = CalculateRms(echoReducedFrame.Samples.Span);
+        var rawSpeechActive = micRms >= rawSpeechThreshold;
+        var aecSpeechActive = vad?.IsSpeech == true || aecRms >= aecSpeechThreshold;
+        var idleRawMicPrimary = options.EnableIdleRawMicPrimaryEndpointing
+            && acousticMode is AcousticCaptureMode.IdleUserRequest;
+        var aecOnlyEnergyIgnored = idleRawMicPrimary
+            && !rawSpeechActive
+            && aecSpeechActive
+            && micRms <= rawSpeechThreshold * Math.Max(1.0, options.IdleAecOnlyEnergyIgnoreRawMaxMultiplier);
+        var playbackReferenceSnapshot = _playbackReferenceTap.GetDebugSnapshot();
+        var activePlaybackSnapshot = _playbackService.GetActivePlaybackSnapshot();
+        var assistantPlaybackContextActive = IsAssistantPlaybackContextActive(activePlaybackSnapshot);
+        var assistantAudioActuallyPlaying = IsAssistantAudioActuallyPlaying(activePlaybackSnapshot);
         var floorYield = _floorYieldController?.GetDebugState();
 
         _debugSnapshots.Publish(new BargeInDebugSnapshot
         {
             TimestampUtc = DateTimeOffset.UtcNow,
-            AssistantWasSpeaking = _assistantPlaybackMonitor.IsPlaybackActive,
+            AssistantWasSpeaking = assistantAudioActuallyPlaying,
+            AssistantPlaybackContextActive = assistantPlaybackContextActive,
+            AssistantAudioActuallyPlaying = assistantAudioActuallyPlaying,
+            AudiblePlaybackActive = assistantAudioActuallyPlaying,
+            ActivePlaybackSnapshotIsActive = activePlaybackSnapshot?.IsActive,
+            ActivePlaybackSnapshotIsHeld = activePlaybackSnapshot?.IsHeld,
+            HoldId = activePlaybackSnapshot?.HoldId,
             CaptureSource = captureSource,
             BargeInState = bargeInState,
+            AcousticCaptureMode = acousticMode.ToString(),
+            IdleRawMicPrimary = idleRawMicPrimary,
+            RawSpeechActive = rawSpeechActive,
+            AecSpeechActive = aecSpeechActive,
+            AecOnlyEnergyIgnored = aecOnlyEnergyIgnored,
+            RawNoiseFloor = rawSpeechThreshold / 3.0,
+            AecNoiseFloor = vad?.NoiseFloor,
+            PlaybackReferenceAgeMs = playbackReferenceSnapshot.ReferenceNewestAgeMilliseconds,
+            EndpointSilenceMs = activeCaptureSession?.GetCurrentSilenceMs(rawFrame.Timestamp),
+            RequiredEndpointSilenceMs = activeCaptureSession?.RequiredEndpointSilenceMs
+                ?? (acousticMode is AcousticCaptureMode.IdleUserRequest && options.EnableIdleRawMicPrimaryEndpointing
+                    ? Math.Max(0, options.IdleRawMicEndpointSilenceMs)
+                    : Math.Max(0, options.VadEndSilenceMs)),
             MicRms = micRms,
             MicPeak = micPeak,
             PlaybackReferenceRms = playbackReferenceRms,
@@ -3734,21 +4007,137 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         return Math.Clamp((energy - threshold) / threshold, 0.0, 1.0);
     }
 
+    internal static AcousticCaptureMode SelectAcousticCaptureMode(
+        bool assistantAudioActuallyPlaying,
+        double playbackReferenceRms,
+        double? playbackReferenceAgeMs,
+        ActiveSpeechPlaybackSnapshot? activePlaybackSnapshot,
+        BargeInOptions options)
+    {
+        if (assistantAudioActuallyPlaying)
+        {
+            return AcousticCaptureMode.AssistantInterruption;
+        }
+
+        if (activePlaybackSnapshot is { IsAudiblePlaybackActive: true })
+        {
+            return AcousticCaptureMode.AssistantInterruption;
+        }
+
+        if (activePlaybackSnapshot is { IsHeld: true, IsAudiblePlaybackActive: false })
+        {
+            return AcousticCaptureMode.IdleUserRequest;
+        }
+
+        var recentWindowMs = Math.Max(0, options.CapturedWindowSelfPlaybackRecentPlaybackMs);
+        var referenceIsRecent = playbackReferenceAgeMs is not null
+            && playbackReferenceAgeMs.Value >= 0
+            && playbackReferenceAgeMs.Value <= recentWindowMs;
+        var referenceIsNonZero = playbackReferenceRms > 0.0001;
+        if (referenceIsRecent || referenceIsNonZero)
+        {
+            return AcousticCaptureMode.AssistantInterruption;
+        }
+
+        return AcousticCaptureMode.IdleUserRequest;
+    }
+
+    private AcousticCaptureMode SelectAcousticCaptureModeForFrame(
+        ReadOnlyMemory<float> playbackReference,
+        BargeInOptions options)
+    {
+        var playbackReferenceRms = playbackReference.IsEmpty ? 0.0 : CalculateRms(playbackReference.Span);
+        var snapshot = _playbackReferenceTap.GetDebugSnapshot();
+        var activePlaybackSnapshot = _playbackService.GetActivePlaybackSnapshot();
+        return SelectAcousticCaptureMode(
+            IsAssistantAudioActuallyPlaying(activePlaybackSnapshot),
+            playbackReferenceRms,
+            snapshot.ReferenceNewestAgeMilliseconds,
+            activePlaybackSnapshot,
+            options);
+    }
+
+    private void ObserveCaptureFrame(
+        BargeInSpeechContext context,
+        BargeInCaptureSession captureSession,
+        CaptureFrameObservation observation)
+    {
+        if (observation.AecOnlyEnergyIgnored)
+        {
+            _logger.LogInformation(
+                "idle_aec_only_energy_ignored AcousticCaptureMode: {AcousticCaptureMode}. IdleRawMicPrimary: {IdleRawMicPrimary}. RawSpeechActive: {RawSpeechActive}. AecSpeechActive: {AecSpeechActive}. RawMicRms: {RawMicRms:N4}. EchoReducedRms: {EchoReducedRms:N4}. RawNoiseFloor: {RawNoiseFloor:N4}. AecNoiseFloor: {AecNoiseFloor:N4}. AssistantPlaybackActive: {AssistantPlaybackActive}. PlaybackReferenceRms: {PlaybackReferenceRms:N4}. PlaybackReferenceAgeMs: {PlaybackReferenceAgeMs}. EndpointSilenceMs: {EndpointSilenceMs}. RequiredEndpointSilenceMs: {RequiredEndpointSilenceMs}.",
+                observation.AcousticCaptureMode,
+                observation.IdleRawMicPrimary,
+                observation.RawSpeechActive,
+                observation.AecSpeechActive,
+                observation.RawEnergy,
+                observation.AecEnergy,
+                observation.RawNoiseFloor,
+                observation.AecNoiseFloor,
+                observation.AssistantPlaybackActive,
+                observation.PlaybackReferenceRms,
+                observation.PlaybackReferenceAgeMs,
+                captureSession.GetCurrentSilenceMs(observation.Timestamp),
+                captureSession.RequiredEndpointSilenceMs);
+        }
+
+        var endpointTriggered = captureSession.Observe(observation);
+        if (endpointTriggered && observation.AcousticCaptureMode is AcousticCaptureMode.IdleUserRequest)
+        {
+            _logger.LogInformation(
+                "idle_raw_mic_endpoint_triggered AcousticCaptureMode: {AcousticCaptureMode}. IdleRawMicPrimary: {IdleRawMicPrimary}. RawSpeechActive: {RawSpeechActive}. AecSpeechActive: {AecSpeechActive}. AecOnlyEnergyIgnored: {AecOnlyEnergyIgnored}. RawMicRms: {RawMicRms:N4}. EchoReducedRms: {EchoReducedRms:N4}. RawNoiseFloor: {RawNoiseFloor:N4}. AecNoiseFloor: {AecNoiseFloor:N4}. AssistantPlaybackActive: {AssistantPlaybackActive}. PlaybackReferenceRms: {PlaybackReferenceRms:N4}. PlaybackReferenceAgeMs: {PlaybackReferenceAgeMs}. EndpointSilenceMs: {EndpointSilenceMs}. RequiredEndpointSilenceMs: {RequiredEndpointSilenceMs}.",
+                observation.AcousticCaptureMode,
+                observation.IdleRawMicPrimary,
+                observation.RawSpeechActive,
+                observation.AecSpeechActive,
+                observation.AecOnlyEnergyIgnored,
+                observation.RawEnergy,
+                observation.AecEnergy,
+                observation.RawNoiseFloor,
+                observation.AecNoiseFloor,
+                observation.AssistantPlaybackActive,
+                observation.PlaybackReferenceRms,
+                observation.PlaybackReferenceAgeMs,
+                captureSession.GetCurrentSilenceMs(observation.Timestamp),
+                captureSession.RequiredEndpointSilenceMs);
+        }
+    }
+
     private CaptureFrameObservation CreateCaptureFrameObservation(
         BargeInAudioFrame rawFrame,
         BargeInAudioFrame echoReducedFrame,
+        ReadOnlyMemory<float> playbackReference,
         VadFrameResult vad,
         SelfSpeechGateResult? gateResult,
+        AcousticCaptureMode acousticMode,
         BargeInOptions options)
     {
         var rawEnergy = CalculateRms(rawFrame.Samples.Span);
         var aecEnergy = CalculateRms(echoReducedFrame.Samples.Span);
         var comfortWouldAllow = IsFastNearEndSpeechCandidate(vad, options.FastNearEndDucking);
-        var captureIsSpeech =
+        var rawSpeechThreshold = Math.Max(0.0, options.CaptureContinuationRawEnergyThreshold)
+            * Math.Max(0.0, options.IdleRawMicSpeechEnergyMultiplier);
+        var aecSpeechThreshold = Math.Max(0.0, options.CaptureContinuationAecEnergyThreshold);
+        var rawSpeechActive = rawEnergy >= rawSpeechThreshold;
+        var aecSpeechActive = (options.CaptureContinuationUseVad && vad.IsSpeech)
+            || comfortWouldAllow
+            || aecEnergy >= aecSpeechThreshold;
+        var idleRawMicPrimary = options.EnableIdleRawMicPrimaryEndpointing
+            && acousticMode is AcousticCaptureMode.IdleUserRequest;
+        var aecOnlyEnergyIgnored = idleRawMicPrimary
+            && !rawSpeechActive
+            && aecSpeechActive
+            && rawEnergy <= rawSpeechThreshold * Math.Max(1.0, options.IdleAecOnlyEnergyIgnoreRawMaxMultiplier);
+        var legacyCaptureIsSpeech =
             (options.CaptureContinuationUseVad && vad.IsSpeech)
             || comfortWouldAllow
-            || rawEnergy >= Math.Max(0.0, options.CaptureContinuationRawEnergyThreshold)
-            || aecEnergy >= Math.Max(0.0, options.CaptureContinuationAecEnergyThreshold);
+            || rawSpeechActive
+            || aecEnergy >= aecSpeechThreshold;
+        var captureIsSpeech = idleRawMicPrimary
+            ? rawSpeechActive
+            : legacyCaptureIsSpeech;
+        var playbackReferenceRms = playbackReference.IsEmpty ? 0.0 : CalculateRms(playbackReference.Span);
+        var playbackReferenceSnapshot = _playbackReferenceTap.GetDebugSnapshot();
 
         return new CaptureFrameObservation
         {
@@ -3762,6 +4151,16 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             SelfSpeechDecision = gateResult?.Decision.ToString() ?? "Unavailable",
             SelfSpeechReason = gateResult?.Reason ?? "Self-speech gate was not evaluated for this capture frame.",
             CaptureIsSpeechFrame = captureIsSpeech,
+            AcousticCaptureMode = acousticMode,
+            IdleRawMicPrimary = idleRawMicPrimary,
+            RawSpeechActive = rawSpeechActive,
+            AecSpeechActive = aecSpeechActive,
+            AecOnlyEnergyIgnored = aecOnlyEnergyIgnored,
+            RawNoiseFloor = rawSpeechThreshold / 3.0,
+            AecNoiseFloor = vad.NoiseFloor,
+            AssistantPlaybackActive = IsAssistantAudioActuallyPlaying(_playbackService.GetActivePlaybackSnapshot()),
+            PlaybackReferenceRms = playbackReferenceRms,
+            PlaybackReferenceAgeMs = playbackReferenceSnapshot.ReferenceNewestAgeMilliseconds,
             AppendedToCapture = true,
             AppendedToContinuousRecorder = rawFrame.SequenceNumber > 0,
             ProcessedByAnalyzer = true,
@@ -3772,8 +4171,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             QueueDepth = rawFrame.AnalysisQueueDepth,
             AnalysisFramesDropped = rawFrame.AnalysisFramesDropped,
             ProcessedAtUtc = DateTimeOffset.UtcNow,
-            RawSpeechEnergyThreshold = Math.Max(0.0, options.CaptureContinuationRawEnergyThreshold),
-            AecSpeechEnergyThreshold = Math.Max(0.0, options.CaptureContinuationAecEnergyThreshold)
+            RawSpeechEnergyThreshold = rawSpeechThreshold,
+            AecSpeechEnergyThreshold = aecSpeechThreshold
         };
     }
 
@@ -3786,6 +4185,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly List<InterruptionCaptureFrameDiagnostic> _frameDiagnostics = new();
         private readonly int _endSilenceMs;
+        private readonly AcousticCaptureMode _mode;
         private DateTimeOffset _lastSpeechAt;
         private DateTimeOffset _lastFrameAt;
         private DateTimeOffset? _firstSpeechAt;
@@ -3799,12 +4199,17 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         private double _maxProcessingLagMs;
         private long _analysisFramesDropped;
 
-        private BargeInCaptureSession(DateTimeOffset triggerTimestamp, int maxCaptureMs, int endSilenceMs)
+        private BargeInCaptureSession(
+            DateTimeOffset triggerTimestamp,
+            int maxCaptureMs,
+            int endSilenceMs,
+            AcousticCaptureMode mode)
         {
             _triggerTimestamp = triggerTimestamp;
             _lastSpeechAt = triggerTimestamp;
             _lastFrameAt = triggerTimestamp;
             _endSilenceMs = Math.Max(0, endSilenceMs);
+            _mode = mode;
             _maxCaptureUntil = triggerTimestamp + TimeSpan.FromMilliseconds(maxCaptureMs);
             if (maxCaptureMs <= 0)
             {
@@ -3813,12 +4218,20 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             }
         }
 
-        public static BargeInCaptureSession CreateNormal(DateTimeOffset triggerTimestamp, BargeInOptions options)
+        public static BargeInCaptureSession CreateNormal(
+            DateTimeOffset triggerTimestamp,
+            BargeInOptions options,
+            AcousticCaptureMode mode)
         {
+            var endSilenceMs = mode is AcousticCaptureMode.IdleUserRequest
+                && options.EnableIdleRawMicPrimaryEndpointing
+                    ? options.IdleRawMicEndpointSilenceMs
+                    : options.VadEndSilenceMs;
             return new BargeInCaptureSession(
                 triggerTimestamp,
                 BargeInCaptureTiming.GetMaxCaptureMs(options),
-                options.VadEndSilenceMs);
+                endSilenceMs,
+                mode);
         }
 
         public static BargeInCaptureSession CreateFastHardStop(DateTimeOffset triggerTimestamp, BargeInOptions options)
@@ -3826,7 +4239,20 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             return new BargeInCaptureSession(
                 triggerTimestamp,
                 Math.Max(1, options.FastHardStopCaptureWindowMs),
-                options.FastHardStopPostSpeechPaddingMs);
+                options.FastHardStopPostSpeechPaddingMs,
+                AcousticCaptureMode.AssistantInterruption);
+        }
+
+        public AcousticCaptureMode Mode => _mode;
+
+        public int RequiredEndpointSilenceMs => _endSilenceMs;
+
+        public int GetCurrentSilenceMs(DateTimeOffset timestamp)
+        {
+            lock (_sessionSync)
+            {
+                return Math.Max(0, (int)Math.Round((timestamp - _lastSpeechAt).TotalMilliseconds));
+            }
         }
 
         public string EndReason
@@ -3967,11 +4393,11 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             }
         }
 
-        public void Observe(CaptureFrameObservation observation)
+        public bool Observe(CaptureFrameObservation observation)
         {
             if (_endpoint.Task.IsCompleted)
             {
-                return;
+                return false;
             }
 
             DateTimeOffset? endpoint = null;
@@ -4034,7 +4460,18 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                     AppendedToCapture = observation.AppendedToCapture,
                     AppendedToContinuousRecorder = observation.AppendedToContinuousRecorder,
                     ProcessedByAnalyzer = observation.ProcessedByAnalyzer,
-                    EndpointSilenceMs = silenceMs
+                    EndpointSilenceMs = silenceMs,
+                    AcousticCaptureMode = observation.AcousticCaptureMode.ToString(),
+                    IdleRawMicPrimary = observation.IdleRawMicPrimary,
+                    RawSpeechActive = observation.RawSpeechActive,
+                    AecSpeechActive = observation.AecSpeechActive,
+                    AecOnlyEnergyIgnored = observation.AecOnlyEnergyIgnored,
+                    RawNoiseFloor = observation.RawNoiseFloor,
+                    AecNoiseFloor = observation.AecNoiseFloor,
+                    AssistantPlaybackActive = observation.AssistantPlaybackActive,
+                    PlaybackReferenceRms = observation.PlaybackReferenceRms,
+                    PlaybackReferenceAgeMs = observation.PlaybackReferenceAgeMs,
+                    RequiredEndpointSilenceMs = _endSilenceMs
                 });
 
                 if (observation.Timestamp >= _maxCaptureUntil)
@@ -4052,7 +4489,10 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             if (endpoint is not null)
             {
                 _endpoint.TrySetResult(endpoint.Value);
+                return true;
             }
+
+            return false;
         }
 
         public async Task<DateTimeOffset> WaitForEndpointAsync(CancellationToken cancellationToken)
@@ -4336,6 +4776,26 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         public required string SelfSpeechReason { get; init; }
 
         public required bool CaptureIsSpeechFrame { get; init; }
+
+        public required AcousticCaptureMode AcousticCaptureMode { get; init; }
+
+        public required bool IdleRawMicPrimary { get; init; }
+
+        public required bool RawSpeechActive { get; init; }
+
+        public required bool AecSpeechActive { get; init; }
+
+        public required bool AecOnlyEnergyIgnored { get; init; }
+
+        public required double RawNoiseFloor { get; init; }
+
+        public required double AecNoiseFloor { get; init; }
+
+        public required bool AssistantPlaybackActive { get; init; }
+
+        public required double PlaybackReferenceRms { get; init; }
+
+        public required double? PlaybackReferenceAgeMs { get; init; }
 
         public required bool AppendedToCapture { get; init; }
 

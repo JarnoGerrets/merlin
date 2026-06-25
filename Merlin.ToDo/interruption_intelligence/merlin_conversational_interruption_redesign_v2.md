@@ -2631,6 +2631,84 @@ Manual dev-test config:
 }
 ```
 
+### ConversationalInterruption PR 8 - Single Yielded-Utterance Runtime Path
+
+Status: Implemented
+
+Summary:
+- Replaced ambiguous old-path continuation with explicit cleanup vs semantic-routing ownership.
+- Added yielded interruption runtime outcome fields for evaluation, handling, cleanup, semantic routing, playback cancellation, turn cancellation, resume/continue, and replacement routing.
+- Backchannel and empty yielded utterances allow cleanup/resume but suppress legacy semantic routing.
+- Stop/cancel suppress legacy semantic routing and execute guarded stop/cancel behavior.
+- Correction/redirect requests replacement routing once when enabled and suppresses duplicate legacy semantic routing.
+- Clarification/recomposition/side-comment/follow-up strategies remain deferred to later PRs.
+- Layer 1 acoustic/yield behavior remains unchanged.
+- Model calls remain disabled.
+
+Tests:
+- default no-op
+- shadow mode unchanged
+- empty/backchannel suppress semantic routing but allow cleanup
+- stop/cancel handled without semantic routing
+- correction requests replacement routing once
+- correction disabled defers to legacy
+- clarification/side-comment deferred
+- low Layer1 confidence still classifies yielded utterance by transcript meaning
+
+Roadmap:
+- PR8: Single yielded-utterance runtime path
+- PR9: Passive SpokenAnswerTracker live wiring
+- PR10: Sequential clarification + recomposition
+- PR11: Parallel recomposition + queued follow-ups
+
+### ConversationalInterruption PR 9 - Passive SpokenAnswerTracker Live Wiring
+
+Status: Implemented
+
+Summary:
+- Added live spoken-answer tracking service.
+- Wired main answer speech lifecycle into SpokenAnswerTracker behind config.
+- Tracks answer start, chunk started, chunk completed, cancellation, and completion.
+- Keeps cancelled/incomplete chunk as unsafe partial context.
+- Does not track feedback/progress phrases as main answer.
+- Adds checkpoint availability diagnostics for yielded interruptions.
+- No model calls, no recomposition, no routing changes, no playback behavior changes.
+
+Tests:
+- tracking disabled no-op
+- start answer creates state
+- completed chunk updates spoken state
+- started/cancelled chunk remains partial
+- checkpoint contains safe spoken prefix and discarded partial
+- completion clears state
+- feedback/progress is not tracked as main answer where applicable
+- live yielded interruption diagnostics can see checkpoint availability
+
+### ConversationalInterruption PR 10 - Sequential Clarification + Recomposition
+
+Status: Implemented
+
+Summary:
+- Added config-gated sequential clarification + recomposition for yielded clarification/follow-up interruptions.
+- Added real/gated interruption model port for clarification and continuation generation.
+- Added speech output port for generated clarification and recomposed continuation content.
+- Uses SpokenAnswerTracker checkpoint when available.
+- Falls back to coarse checkpoint when needed.
+- Cancels unsafe old playback and suppresses legacy semantic routing for handled clarification.
+- Speaks clarification before recomposed continuation.
+- Does not implement parallel generation or queued follow-up execution.
+
+Tests:
+- disabled/deferred config
+- sequential clarification flow call order
+- clarification without continuation
+- model/clarification/continuation disabled gates
+- missing checkpoint fallback
+- missing original question failure
+- invalid JSON/model failure
+- continuation failure after clarification
+- prompt includes coarse-checkpoint restart instruction
+
 ## Phase 2: Add SpokenAnswerTracker
 
 Track:
@@ -2738,7 +2816,7 @@ Start behind config:
 
 Then enable in development.
 
-## Phase 7: Enable Recomposition For Meaningful Interruptions
+## Phase 7: PR10 - Clarification + Sequential Recomposition For Meaningful Interruptions
 
 Turn on:
 
@@ -2753,9 +2831,9 @@ No raw mid-sentence resume after meaningful interruption.
 Backchannels still continue.
 ```
 
-## Phase 8: Parallel Clarification/Continuation
+## Phase 8: PR11 - Parallel Clarification/Continuation
 
-After sequential flow works, optimize:
+After sequential PR10 flow works, optimize:
 
 ```text
 Clarification call first
@@ -2764,7 +2842,7 @@ Serialize audio output
 Use feedback if continuation is not ready
 ```
 
-## Phase 9: Queued Follow-ups
+## Phase 9: PR11 - Queued Follow-ups
 
 Add follow-up queue behavior.
 
@@ -3281,3 +3359,222 @@ ResponsiveFeedback phrases.
 DeepInfra answers/recomposes.
 SpeechPlayback serializes.
 ```
+
+---
+
+### ConversationalInterruption PR 10.1 - Active Turn Binding For Yielded Utterances
+
+Status: Implemented
+
+Summary:
+- Fixed yielded utterance binding so interruptions during active final-answer playback use the active answer turn id, not `live-utterance-monitor`.
+- Added active spoken turn resolution and active playback snapshot diagnostics.
+- Checkpoint lookup now uses the resolved active answer turn.
+- Preserves original observed turn id for diagnostics.
+- Added regression for "The water itself too, right?" as a related follow-up requiring clarification + recomposition.
+- Does not change Layer 1 acoustic/yield logic.
+
+Tests:
+- active playback turn wins over live monitor id
+- fallback when no active playback exists
+- speaking live assistant turn fallback when playback snapshot is absent
+- checkpoint lookup uses resolved turn
+- exact related-follow-up phrase classification
+- PR10 flow reaches recomposition when active turn is bound
+- idle monitor context still falls back to the observed idle turn when no active answer exists
+
+---
+
+### ConversationalInterruption PR 10.2 - Post-Yield Ownership Cleanup
+
+Status: Implemented
+
+Summary:
+- Added recently-yielded final-answer turn snapshot so STT results after destructive pause fallback still bind to the original `backend_voice` turn.
+- Resolver now prioritizes active playback, then recently yielded final-answer turn, then speaking live turn, then observed context.
+- ConversationalInterruption owns semantic handling for recently yielded final-answer utterances when enabled.
+- Legacy cleanup remains allowed where appropriate, but legacy semantic routing is suppressed when ConversationalInterruption handles the utterance.
+- Added related-follow-up classifier variants for "The water itself, too, right?".
+- Does not change VAD/AEC/self-echo/floor-yield thresholds.
+
+Tests:
+- recently yielded snapshot record/expiry
+- recent snapshot wins over `live-utterance-monitor`
+- active playback wins over recent snapshot
+- idle voice preserved without recent snapshot
+- expired snapshot does not hijack idle request
+- checkpoint lookup uses recent yielded turn
+- PR10 recomposition path reached through recent yielded binding
+- classifier phrase variants
+
+Roadmap:
+- PR10.2: Post-yield ownership cleanup
+- PR11: Parallel recomposition + queued follow-ups
+
+---
+
+### ConversationalInterruption PR 10.3 - Interruption Speech Channel Ownership + Stop Confirmation
+
+Status: Implemented
+
+Summary:
+- Added interruption speech channel ownership rules for recomposed/generated interruption content.
+- Recomposition and replacement outcomes now flush/invalidate obsolete final-answer speech before speaking new content.
+- Added stale/obsolete final-answer generation guard so late old TTS chunks cannot leak after interruption handling.
+- Added local rotating stop confirmation phrases.
+- Stop/cancel/shut-up now flushes old final-answer speech, speaks one short local confirmation, and never calls the model or continues.
+- Backchannels, noise/empty captures, and queued follow-ups do not trigger semantic flush/recomposition.
+- Does not change Layer 1 acoustic/yield behavior.
+
+Tests:
+- recomposition flushes before clarification
+- interruption-owned clarification plays before continuation
+- late obsolete old TTS chunk discarded
+- stop flushes and speaks local confirmation
+- stop confirmation phrase pool
+- backchannel no semantic flush
+- correction/redirect flushes old answer
+
+---
+
+### ConversationalInterruption PR 10.3.1 - Idle Request Guard
+
+Status: Implemented
+
+Summary:
+- Added an early live guard so ConversationalInterruption only runs when Merlin is currently speaking or there is a fresh recently-yielded final-answer snapshot.
+- Normal idle requests now skip CI before classification/checkpoint/model calls.
+- Prevents idle "what is..." questions from being misclassified as clarification interruptions.
+- Preserves active-speaking and recently-yielded interruption handling.
+- No Layer 1 acoustic/yield behavior changed.
+
+Tests:
+- idle normal question skips CI
+- idle "what is" does not become clarification
+- active speaking interruption still evaluates
+- recently-yielded interruption still evaluates
+- absent recent snapshot does not hijack idle request
+
+---
+
+### Provisional Audio Hold PR A - Playback Hold Foundation
+
+Status: Implemented
+
+Summary:
+- Added true provisional audio hold support to AssistantSpeechPlaybackService.
+- Active WaveOutEvent/BufferedWaveProvider playback can now be paused without cancelling the speech item.
+- Begin/resume hold preserve active snapshot, spoken-answer tracking state, and final-answer generation.
+- Flush hold uses semantic cancellation/invalidation and keeps PR10.3 stale generation protection.
+- Added timeout auto-resume to avoid stuck holds.
+- This PR does not yet wire FloorYieldController or Layer 2 outcomes to the hold API.
+
+Tests:
+- begin hold pauses without cancellation side effects
+- resume hold continues same item
+- flush hold cancels/invalidates
+- repeated hold coalesces
+- timeout resumes
+- tracker not cleared on hold
+- active snapshot available while held
+- flush releases gate for next speech
+
+---
+
+### Provisional Audio Hold PR B - FloorYield Uses Hold Instead Of Destructive Cancel
+
+Status: Implemented
+
+Summary:
+- FloorYieldController now begins a provisional audio hold instead of calling the legacy destructive pause/cancel fallback.
+- Successful floor-yield hold pauses active WaveOut playback without cancelling the speech item, clearing the active snapshot, marking spoken tracking cancelled, or advancing final-answer generation.
+- Recently-yielded snapshots now distinguish provisional hold from destructive cancellation and carry hold id/context.
+- If no Layer 2 decision resolves the hold, playback auto-resumes through the PR A timeout behavior.
+- Hold failure is logged and does not destructively cancel by default.
+- No VAD/AEC/self-echo threshold changes.
+- No Layer 2 semantic resolution wiring yet.
+
+Tests:
+- floor-yield calls BeginProvisionalAudioHoldAsync
+- destructive PauseCurrentSpeechAsync not called
+- hold snapshot recorded
+- hold failure does not destructively cancel by default
+- resolver treats held recent snapshot as interruption context
+- idle guard still skips normal requests
+
+---
+
+### Provisional Audio Hold PR C - Layer 2 Resolves Held Playback
+
+Status: Implemented
+
+Summary:
+- Layer 2 conversational-interruption outcomes now resolve provisional audio holds.
+- Noise/empty/echo/backchannel outcomes resume held playback.
+- Stop/cancel/shut-up outcomes flush held playback before speaking one local stop confirmation.
+- Clarification/follow-up/recomposition outcomes flush held playback before clarification and recomposed continuation.
+- Correction/redirect outcomes flush held playback before replacement routing.
+- Missing-hold cases are logged and handled safely.
+- Hold timeout remains as fallback.
+- No Layer 1 acoustic threshold changes.
+
+Tests:
+- noise/empty resumes hold
+- backchannel resumes hold
+- stop flushes hold before local confirmation
+- clarification flushes hold before clarification/continuation
+- correction flushes hold
+- missing hold safe fallback
+- idle guard still skips normal requests
+- recently-yielded held snapshot resolves via hold id
+
+---
+
+### Mode-Gated Acoustic Policy PR 1 - Idle Raw Mic Endpointing
+
+Status: Implemented
+
+Summary:
+- Added/clarified acoustic capture mode selection between IdleUserRequest and AssistantInterruption.
+- Idle user request capture now trusts raw mic as primary speech/endpointer evidence.
+- AEC/residual-only energy no longer extends idle capture when raw mic has dropped to silence.
+- Assistant interruption capture keeps existing echo-safe policy: AEC/residual, playback reference, correlation, and self-speech gate.
+- No global VAD threshold reduction.
+- No weakening of self-echo suppression while assistant playback is active or recent.
+
+Tests:
+- idle mode selected when playback inactive
+- interruption mode selected when playback active
+- interruption mode selected when playback reference recent
+- idle AEC-only energy ignored
+- idle raw speech keeps capture active
+- idle endpoints faster than interruption
+- interruption self-echo behavior unchanged
+
+---
+
+### Audible Playback State PR 1 - Separate Audible Playback From Held Answer Context
+
+Status: Implemented
+
+Summary:
+- Separated active assistant answer/playback context from actual audible playback state.
+- Held playback remains active for turn binding, hold id, checkpoint lookup, and Layer 2 interruption handling.
+- Held playback is no longer treated as actively audible for acoustic gating.
+- Barge-in acoustic gates now use audible playback state where the question is speaker contamination risk.
+- Burst promotion during held playback no longer loses already-collected evidence to a fresh sustained-score window.
+- Long corrections during held final-answer playback can reach normal gated STT again.
+- Echo-dominated candidates remain blocked.
+- No Layer 2 classifier/recomposition changes.
+
+Tests:
+- hold keeps context but disables audible playback
+- resume restores audible playback
+- acoustic gates use audible state
+- held playback does not force strict audible playback gating
+- long correction burst reaches STT path
+- sustained gate uses burst evidence
+- echo-dominated held candidate still blocks
+- audible playback still uses strict gates
+- held turn context still reaches CI
+- idle flow unchanged
