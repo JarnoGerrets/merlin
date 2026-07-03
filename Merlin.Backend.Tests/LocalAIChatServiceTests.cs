@@ -137,6 +137,8 @@ public sealed class LocalAIChatServiceTests
         Assert.Contains("Follow this policy silently.", client.LastPrompt);
         Assert.Contains("must not mention the Merlin Constitution", client.LastPrompt);
         Assert.Contains("You must not execute actions.", client.LastPrompt);
+        Assert.Contains("For spoken responses, prefer natural spoken prose.", client.LastPrompt);
+        Assert.Contains("Avoid markdown headings, bold text, bullet lists, numbered lists, and tables", client.LastPrompt);
         Assert.Contains("USER:", client.LastPrompt);
         Assert.Contains("how do you work", client.LastPrompt);
     }
@@ -243,6 +245,7 @@ public sealed class LocalAIChatServiceTests
         services.AddScoped<IPromptCompilationStore, EfPromptCompilationStore>();
         services.AddScoped<IUserProfileFactStore, EfUserProfileFactStore>();
         services.AddSingleton<IConceptExtractionService, LocalConceptExtractionService>();
+        services.AddSingleton<IRuntimeTopicSession, RuntimeTopicSession>();
         services.AddScoped<FollowUpCueDetector>();
         services.AddScoped<ActiveConceptMerger>();
         services.AddScoped<TopicBoundaryDetector>();

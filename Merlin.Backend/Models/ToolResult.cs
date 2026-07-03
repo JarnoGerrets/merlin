@@ -14,6 +14,8 @@ public sealed class ToolResult
 
     public bool IsReplayableSpeech { get; init; }
 
+    public bool SegmentedSpeechStarted { get; init; }
+
     public string? ErrorCode { get; init; }
 
     public string? ToolName { get; init; }

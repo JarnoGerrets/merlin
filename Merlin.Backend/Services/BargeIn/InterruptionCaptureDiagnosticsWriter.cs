@@ -34,7 +34,9 @@ public sealed class InterruptionCaptureDiagnosticsWriter : IInterruptionCaptureD
         CancellationToken cancellationToken)
     {
         var options = _options.CurrentValue;
-        if (!options.SaveDebugAudio || frames.Count == 0)
+        if (!options.SaveDebugAudio
+            || frames.Count == 0
+            || (IsSuppressedCapture(diagnostic) && !options.EnableSuppressedCaptureDiagnostics))
         {
             return Task.CompletedTask;
         }
@@ -122,6 +124,11 @@ public sealed class InterruptionCaptureDiagnosticsWriter : IInterruptionCaptureD
         var correlation = SanitizeFilePart(diagnostic.CorrelationId ?? diagnostic.AssistantTurnId);
         var sequence = Interlocked.Increment(ref _fileSequence);
         return $"{timestamp}_{sequence:000000}_{correlation}_{SanitizeFilePart(diagnostic.CaptureKind)}";
+    }
+
+    private static bool IsSuppressedCapture(InterruptionCaptureDiagnostic diagnostic)
+    {
+        return diagnostic.CaptureKind.StartsWith("suppressed_", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string SanitizeFilePart(string value)

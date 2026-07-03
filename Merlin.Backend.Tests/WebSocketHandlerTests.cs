@@ -130,6 +130,92 @@ public sealed class WebSocketHandlerTests
         Assert.Empty(sink.ManualMarkers);
     }
 
+    [Fact]
+    public void BuildResponseUiState_MapsConfirmationErrorAndNoneOverlays()
+    {
+        var confirmation = WebSocketHandler.BuildResponseUiState(new AssistantResponse
+        {
+            Success = false,
+            Message = "I need your confirmation first.",
+            CorrelationId = "turn-confirm",
+            ErrorCode = "CONFIRMATION_REQUIRED",
+            ResponseType = "confirmation"
+        });
+        var error = WebSocketHandler.BuildResponseUiState(new AssistantResponse
+        {
+            Success = false,
+            Message = "Tool failed.",
+            CorrelationId = "turn-error",
+            ErrorCode = "TOOL_FAILED",
+            ResponseType = "error"
+        });
+        var none = WebSocketHandler.BuildResponseUiState(new AssistantResponse
+        {
+            Success = true,
+            Message = "Done.",
+            CorrelationId = "turn-ok",
+            ResponseType = "assistant"
+        });
+
+        Assert.NotNull(confirmation);
+        Assert.Equal("assistant_ui_state", confirmation!.Type);
+        Assert.Equal("confirmation", confirmation.OverlayState);
+        Assert.Equal("confirmation_required", confirmation.Reason);
+        Assert.Equal("turn-confirm", confirmation.CorrelationId);
+
+        Assert.NotNull(error);
+        Assert.Equal("assistant_ui_state", error!.Type);
+        Assert.Equal("error", error.OverlayState);
+        Assert.Equal("error_response_generated", error.Reason);
+        Assert.Equal("turn-error", error.CorrelationId);
+
+        Assert.Null(none);
+    }
+
+    [Fact]
+    public void ShouldAppendAssistantChatLog_WhenVoiceSpeechWillSpeak_ReturnsTrue()
+    {
+        var shouldAppend = WebSocketHandler.ShouldAppendAssistantChatLog(
+            new AssistantRequest
+            {
+                InteractionSource = "voice_stream",
+                ClientMode = "orb"
+            },
+            new AssistantResponse
+            {
+                CorrelationId = "turn-1",
+                Success = true,
+                Message = "Hello."
+            },
+            new SpeechPolicyDecision
+            {
+                ShouldSpeak = true,
+                ShouldQueue = true
+            });
+
+        Assert.True(shouldAppend);
+    }
+
+    [Fact]
+    public void ShouldAppendAssistantChatLog_WhenNotVoiceOrNotSpoken_ReturnsFalse()
+    {
+        var response = new AssistantResponse
+        {
+            CorrelationId = "turn-1",
+            Success = true,
+            Message = "Hello."
+        };
+
+        Assert.False(WebSocketHandler.ShouldAppendAssistantChatLog(
+            new AssistantRequest { InteractionSource = "text" },
+            response,
+            new SpeechPolicyDecision { ShouldSpeak = true, ShouldQueue = true }));
+        Assert.False(WebSocketHandler.ShouldAppendAssistantChatLog(
+            new AssistantRequest { InteractionSource = "voice_stream" },
+            response,
+            new SpeechPolicyDecision { ShouldSpeak = false, ShouldQueue = true }));
+    }
+
     private static WebSocketHandler CreateHandler(ISpeechPresenceDecisionLogSink? speechPresenceDecisionLogSink = null)
     {
         var runtimeStateService = new RuntimeStateService();

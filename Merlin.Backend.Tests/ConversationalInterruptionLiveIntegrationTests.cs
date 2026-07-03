@@ -1,6 +1,7 @@
 using Merlin.Backend.Configuration;
 using Merlin.Backend.Services;
 using Merlin.Backend.Services.InterruptionIntelligence;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -617,6 +618,105 @@ public sealed class ConversationalInterruptionLiveIntegrationTests
         Assert.Equal(["hold-flush", "flush", "stop", "speak:stop_confirmation"], order);
     }
 
+    [Theory]
+    [InlineData("Merlin, stop.")]
+    [InlineData("Stop.")]
+    public async Task TryHandleYieldedInterruptionAsync_PlaybackControlStop_MapsToCiStopRequest(string transcript)
+    {
+        var logger = new RecordingLogger<LiveInterruptionIntegrationService>();
+        var classifier = new FakeClassifier
+        {
+            Decision = new ConversationalInterruptionDecision
+            {
+                Type = ConversationalInterruptionType.Unknown,
+                Strategy = ConversationalInterruptionHandlingStrategy.AskUserToClarifyInterruption,
+                Reason = "fake unknown fallback"
+            }
+        };
+        var playback = new FakePlaybackPort();
+        var speech = new FakeInterruptionSpeechOutputPort();
+        var service = CreateService(
+            classifier,
+            new FakeOrchestrator(),
+            MinimalOptions(enableSpokenTracking: true),
+            playback,
+            new FakeFeedbackPort(),
+            new FakeRouterPort(),
+            speechOutputPort: speech,
+            stopConfirmationPhraseSelector: new FakeStopConfirmationPhraseSelector("Got it, I'll stop."),
+            logger: logger);
+
+        var outcome = await service.TryHandleYieldedInterruptionAsync(YieldedUtterance(
+            transcript,
+            routeKind: "PauseAndClarify",
+            routeAction: "StopSpeechOnlyNoConfirmation",
+            layer1Decision: "AcceptPlaybackControl",
+            provisionalAudioHoldId: "hold-stop",
+            wasHeldByProvisionalAudioHold: true));
+
+        Assert.NotNull(outcome);
+        Assert.True(outcome.WasEvaluatedByConversationalInterruption);
+        Assert.True(outcome.WasHandledByConversationalInterruption);
+        Assert.False(outcome.AllowLegacyCleanup);
+        Assert.False(outcome.AllowLegacySemanticRouting);
+        Assert.True(outcome.ShouldCancelPlayback);
+        Assert.True(outcome.ShouldCancelCurrentTurn);
+        Assert.Equal(InterruptionHandlingResultType.Stopped, outcome.Result?.Type);
+        Assert.Equal(ConversationalInterruptionType.StopRequest, outcome.InterruptionType);
+        Assert.Equal(ConversationalInterruptionHandlingStrategy.StopPlayback, outcome.Strategy);
+        Assert.Equal(1, playback.FlushHoldCount);
+        Assert.Equal(1, playback.FlushCount);
+        Assert.Equal(1, playback.StopCount);
+        Assert.Equal(0, playback.CancelCount);
+        Assert.Equal(["stop_confirmation"], speech.ContentKinds);
+        Assert.Equal(0, classifier.CallCount);
+        Assert.Contains(logger.Messages, message => message.Contains("playback_control_stop_mapped_to_ci_stop", StringComparison.Ordinal)
+            && message.Contains("DecisionType: StopRequest", StringComparison.Ordinal)
+            && message.Contains("Strategy: StopPlayback", StringComparison.Ordinal)
+            && message.Contains("RouteAction: StopSpeechOnlyNoConfirmation", StringComparison.Ordinal));
+        Assert.DoesNotContain(logger.Messages, message => message.Contains("Ask-user-to-clarify is not executed live in PR7", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TryHandleYieldedInterruptionAsync_NonControlUnknown_DoesNotMapToStop()
+    {
+        var classifier = new FakeClassifier
+        {
+            Decision = new ConversationalInterruptionDecision
+            {
+                Type = ConversationalInterruptionType.Unknown,
+                Strategy = ConversationalInterruptionHandlingStrategy.AskUserToClarifyInterruption,
+                Reason = "fake unclear utterance"
+            }
+        };
+        var playback = new FakePlaybackPort();
+        var speech = new FakeInterruptionSpeechOutputPort();
+        var service = CreateService(
+            classifier,
+            new FakeOrchestrator(),
+            MinimalOptions(enableSpokenTracking: true),
+            playback,
+            new FakeFeedbackPort(),
+            new FakeRouterPort(),
+            speechOutputPort: speech);
+
+        var outcome = await service.TryHandleYieldedInterruptionAsync(YieldedUtterance(
+            "as well as the meaning of life",
+            routeKind: "PauseAndClarify",
+            routeAction: "AskClarification",
+            layer1Decision: "AskClarification"));
+
+        Assert.NotNull(outcome);
+        Assert.False(outcome.WasHandledByConversationalInterruption);
+        Assert.True(outcome.AllowLegacyCleanup);
+        Assert.True(outcome.AllowLegacySemanticRouting);
+        Assert.Equal(ConversationalInterruptionType.Unknown, outcome.InterruptionType);
+        Assert.Equal(ConversationalInterruptionHandlingStrategy.AskUserToClarifyInterruption, outcome.Strategy);
+        Assert.Equal(1, classifier.CallCount);
+        Assert.Equal(0, playback.StopCount);
+        Assert.Empty(speech.ContentKinds);
+    }
+
     [Fact]
     public async Task TryHandleYieldedInterruptionAsync_Backchannel_DoesNotSemanticallyFlush()
     {
@@ -863,7 +963,8 @@ public sealed class ConversationalInterruptionLiveIntegrationTests
         ILiveSpokenAnswerTrackingService? spokenTracking = null,
         IInterruptionModelPort? modelPort = null,
         IInterruptionSpeechOutputPort? speechOutputPort = null,
-        IStopConfirmationPhraseSelector? stopConfirmationPhraseSelector = null) =>
+        IStopConfirmationPhraseSelector? stopConfirmationPhraseSelector = null,
+        ILogger<LiveInterruptionIntegrationService>? logger = null) =>
         new(
             new ConversationalInterruptionCandidateFactory(),
             classifier,
@@ -872,7 +973,7 @@ public sealed class ConversationalInterruptionLiveIntegrationTests
             feedback ?? new FakeFeedbackPort(),
             router ?? new FakeRouterPort(),
             Options.Create(options),
-            NullLogger<LiveInterruptionIntegrationService>.Instance,
+            logger ?? NullLogger<LiveInterruptionIntegrationService>.Instance,
             spokenTracking,
             modelPort,
             speechOutputPort,
@@ -913,15 +1014,19 @@ public sealed class ConversationalInterruptionLiveIntegrationTests
         string correlationId = "correlation-1",
         string? turnBindingSource = "active_playback_snapshot",
         string? provisionalAudioHoldId = null,
-        bool wasHeldByProvisionalAudioHold = false) => new()
+        bool wasHeldByProvisionalAudioHold = false,
+        string routeKind = "CancelActiveTurn",
+        string routeAction = "CancelActiveTurn",
+        string layer1Decision = "AcceptCancellation") => new()
     {
         Transcript = transcript,
         YieldedByLayer1 = yieldedByLayer1,
         YieldReason = "floor_yield",
         CaptureKind = "NormalInterruption",
-        RouteKind = "CancelActiveTurn",
+        RouteKind = routeKind,
+        RouteAction = routeAction,
         Layer1Confidence = layer1Confidence,
-        Layer1Decision = "AcceptCancellation",
+        Layer1Decision = layer1Decision,
         CorrelationId = correlationId,
         ActiveTurnId = activeTurnId,
         OriginalObservedTurnId = activeTurnId,
@@ -1214,5 +1319,43 @@ public sealed class ConversationalInterruptionLiveIntegrationTests
         }
 
         public string SelectPhrase() => _phrase;
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        private readonly object _sync = new();
+        private readonly List<string> _messages = [];
+
+        public IReadOnlyList<string> Messages
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _messages.ToArray();
+                }
+            }
+        }
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull
+        {
+            return null;
+        }
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            lock (_sync)
+            {
+                _messages.Add(formatter(state, exception));
+            }
+        }
     }
 }

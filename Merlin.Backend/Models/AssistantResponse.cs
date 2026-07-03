@@ -16,7 +16,11 @@ public sealed class AssistantResponse
 
     public bool SuppressSpeech { get; init; }
 
+    public bool SegmentedSpeechStarted { get; init; }
+
     public string CorrelationId { get; init; } = string.Empty;
+
+    public string? CaptureId { get; init; }
 
     public string? ErrorCode { get; init; }
 

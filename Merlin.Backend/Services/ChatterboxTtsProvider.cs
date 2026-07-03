@@ -37,6 +37,17 @@ public sealed class ChatterboxTtsProvider : IVoiceSynthesisService
         string text,
         Func<VoiceSynthesisStreamMetadata, CancellationToken, Task> onMetadataAsync,
         Func<ReadOnlyMemory<byte>, CancellationToken, Task> onAudioAsync,
+        CancellationToken cancellationToken) =>
+        await StreamSynthesizeChunksAsync(
+            text,
+            onMetadataAsync,
+            (chunk, token) => onAudioAsync(chunk.Audio, token),
+            cancellationToken);
+
+    public async Task StreamSynthesizeChunksAsync(
+        string text,
+        Func<VoiceSynthesisStreamMetadata, CancellationToken, Task> onMetadataAsync,
+        Func<VoiceSynthesisAudioChunk, CancellationToken, Task> onAudioChunkAsync,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -141,7 +152,14 @@ public sealed class ChatterboxTtsProvider : IVoiceSynthesisService
                         cancellationToken);
                 }
 
-                await onAudioAsync(result.Audio, cancellationToken);
+                await onAudioChunkAsync(
+                    new VoiceSynthesisAudioChunk
+                    {
+                        Audio = result.Audio,
+                        ChunkIndex = index + 1,
+                        ChunkCount = chunks.Count
+                    },
+                    cancellationToken);
                 totalBytes += result.Audio.Length;
                 totalDurationSeconds += result.DurationSeconds;
                 chunkStopwatch.Stop();

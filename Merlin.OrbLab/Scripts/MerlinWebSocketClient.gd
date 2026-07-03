@@ -4,6 +4,7 @@ class_name MerlinWebSocketClient
 signal connection_state_changed(state: String, detail: String)
 signal visual_state_received(state: Dictionary)
 signal response_received(response: Dictionary)
+signal assistant_ui_state_received(state: Dictionary)
 signal voice_transcript_received(transcript: Dictionary)
 signal visual_event_received(event: Dictionary)
 signal barge_in_debug_snapshot_received(snapshot: Dictionary)
@@ -37,6 +38,7 @@ var _backend_stress_fake_mode := false
 var _fake_stress_payload := ""
 var _fake_stress_timer := 0.0
 var _fake_stress_sequence := 0
+var last_assistant_ui_state_sequence := -1
 
 
 func _ready() -> void:
@@ -297,6 +299,9 @@ func _route_raw_message(raw_message: String, packet_size: int, metrics: Dictiona
 		if _is_visual_state_packet(packet):
 			_emit_timed("visual_state_received", [_extract_visual_state(packet)], packet_size, metrics)
 			return
+		if String(packet.get("type", "")) == "assistant_ui_state":
+			_route_assistant_ui_state_packet(packet, packet_size, metrics)
+			return
 		if String(packet.get("type", "")) == "voice_transcript":
 			_emit_timed("voice_transcript_received", [packet], packet_size, metrics)
 			return
@@ -332,6 +337,10 @@ func _drain_parsed_payloads(metrics: Dictionary) -> void:
 			continue
 		if kind == "malformed":
 			_emit_timed("malformed_response", [String(item.get("raw", "")), String(item.get("detail", ""))], int(item.get("packet_size", 0)), metrics)
+		elif kind == "assistant_ui_state":
+			var assistant_ui_state_payload = item.get("payload", {})
+			if typeof(assistant_ui_state_payload) == TYPE_DICTIONARY:
+				_route_assistant_ui_state_packet(assistant_ui_state_payload, int(item.get("packet_size", 0)), metrics)
 		else:
 			_emit_timed("response_received", [item.get("payload", {})], int(item.get("packet_size", 0)), metrics)
 		signal_ms += _elapsed_ms_since(emit_started_usec)
@@ -346,6 +355,8 @@ func _emit_timed(signal_name: String, args: Array, packet_size: int, metrics: Di
 			visual_event_received.emit(args[0])
 		"response_received":
 			response_received.emit(args[0])
+		"assistant_ui_state_received":
+			assistant_ui_state_received.emit(args[0])
 		"voice_transcript_received":
 			voice_transcript_received.emit(args[0])
 		"barge_in_debug_snapshot_received":
@@ -369,6 +380,10 @@ func _looks_like_control_packet(raw_message: String, packet_size: int) -> bool:
 		return true
 	if raw_message.find("\"type\": \"visual_state\"") >= 0:
 		return true
+	if raw_message.find("\"type\":\"assistant_ui_state\"") >= 0:
+		return true
+	if raw_message.find("\"type\": \"assistant_ui_state\"") >= 0:
+		return true
 	if raw_message.find("\"type\":\"voice_transcript\"") >= 0:
 		return true
 	if raw_message.find("\"type\": \"voice_transcript\"") >= 0:
@@ -388,6 +403,14 @@ func _looks_like_control_packet(raw_message: String, packet_size: int) -> bool:
 
 func _is_visual_state_packet(packet: Dictionary) -> bool:
 	return String(packet.get("type", "")) == "visual_state"
+
+
+func _route_assistant_ui_state_packet(packet: Dictionary, packet_size: int, metrics: Dictionary) -> void:
+	var sequence := int(packet.get("sequence", -1))
+	if sequence <= last_assistant_ui_state_sequence:
+		return
+	last_assistant_ui_state_sequence = sequence
+	_emit_timed("assistant_ui_state_received", [packet], packet_size, metrics)
 
 
 func _extract_visual_state(packet: Dictionary) -> Dictionary:
@@ -503,6 +526,14 @@ func _payload_parse_worker() -> void:
 			if String(parsed_packet.get("type", "")) == "stress_payload":
 				result = {
 					"kind": "stress",
+					"packet_size": packet_size,
+					"decode_ms": decode_ms,
+					"parse_ms": parse_ms,
+				}
+			elif String(parsed_packet.get("type", "")) == "assistant_ui_state":
+				result = {
+					"kind": "assistant_ui_state",
+					"payload": parsed_packet,
 					"packet_size": packet_size,
 					"decode_ms": decode_ms,
 					"parse_ms": parse_ms,

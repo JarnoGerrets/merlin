@@ -644,6 +644,17 @@ public sealed class CorrectionRegenerationDispatcherTests
         {
             try
             {
+                using var document = JsonDocument.Parse(json);
+                if (document.RootElement.TryGetProperty("type", out var type)
+                    && string.Equals(type.GetString(), "assistant_ui_state", StringComparison.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
+                if (document.RootElement.TryGetProperty("event", out _))
+                {
+                    return null;
+                }
+
                 return JsonSerializer.Deserialize<AssistantResponse>(json, JsonOptions);
             }
             catch (JsonException)

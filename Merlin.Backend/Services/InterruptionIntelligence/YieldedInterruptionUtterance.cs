@@ -2,6 +2,8 @@ namespace Merlin.Backend.Services.InterruptionIntelligence;
 
 public sealed class YieldedInterruptionUtterance
 {
+    public string? CaptureId { get; init; }
+
     public string Transcript { get; init; } = string.Empty;
 
     public bool YieldedByLayer1 { get; init; } = true;
@@ -11,6 +13,8 @@ public sealed class YieldedInterruptionUtterance
     public string CaptureKind { get; init; } = string.Empty;
 
     public string RouteKind { get; init; } = string.Empty;
+
+    public string RouteAction { get; init; } = string.Empty;
 
     public string ActiveTurnId { get; init; } = string.Empty;
 

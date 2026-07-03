@@ -1,7 +1,10 @@
 using Merlin.Backend.Configuration;
 using Merlin.Backend.Core.Memory.Services;
+using Merlin.Backend.Models;
+using Merlin.Backend.Services.StreamingResponses;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
+using System.Text;
 
 namespace Merlin.Backend.Services;
 
@@ -20,6 +23,9 @@ public sealed class LocalAIChatService : ILocalAIChatService
     private readonly LocalLlmProvider _localProvider;
     private readonly object _circuitBreakerLock = new();
     private readonly IAssistantPolicyProvider _policyProvider;
+    private readonly IServiceProvider? _serviceProvider;
+    private readonly StreamingResponseOptions _streamingOptions;
+    private readonly DeepInfraStreamingChatClient? _streamingDeepInfraProvider;
     private DateTimeOffset? _deepInfraUnhealthyUntilUtc;
     private int _deepInfraConsecutiveFailures;
 
@@ -30,7 +36,10 @@ public sealed class LocalAIChatService : ILocalAIChatService
         IAssistantPolicyProvider policyProvider,
         ILogger<LocalAIChatService> logger,
         IOptions<CoreMemoryOptions>? coreMemoryOptions = null,
-        IServiceScopeFactory? serviceScopeFactory = null)
+        IServiceScopeFactory? serviceScopeFactory = null,
+        IOptions<StreamingResponseOptions>? streamingOptions = null,
+        DeepInfraStreamingChatClient? streamingDeepInfraProvider = null,
+        IServiceProvider? serviceProvider = null)
     {
         _deepInfraProvider = deepInfraProvider;
         _localProvider = localProvider;
@@ -39,6 +48,9 @@ public sealed class LocalAIChatService : ILocalAIChatService
         _policyProvider = policyProvider;
         _logger = logger;
         _serviceScopeFactory = serviceScopeFactory;
+        _serviceProvider = serviceProvider;
+        _streamingOptions = streamingOptions?.Value ?? new StreamingResponseOptions();
+        _streamingDeepInfraProvider = streamingDeepInfraProvider;
     }
 
     public async Task<LocalAIChatResult> GenerateResponseAsync(
@@ -132,6 +144,218 @@ public sealed class LocalAIChatService : ILocalAIChatService
 
         _logger.LogInformation("LLM provider routing selected local-only mode. ProviderConfig: {Provider}", _llmOptions.Provider);
         return await UseLocalFallbackAsync(message, messages, notifyUser: false, cancellationToken);
+    }
+
+    public async Task<StreamingConversationResult> GenerateStreamingResponseAsync(
+        string message,
+        string? correlationId,
+        Func<AssistantVisualEvent, CancellationToken, Task>? sendEventAsync,
+        bool shouldSpeak,
+        Action? streamingFinalAnswerStarted = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!_streamingOptions.Enabled)
+        {
+            var fallback = await GenerateResponseAsync(message, cancellationToken);
+            return new StreamingConversationResult
+            {
+                Success = fallback.Success,
+                Message = fallback.Message,
+                ErrorCode = fallback.ErrorCode,
+                FallbackUsed = true
+            };
+        }
+
+        var coreMemoryHealth = await CheckCoreMemoryForConversationAsync(cancellationToken);
+        if (!coreMemoryHealth.IsHealthy)
+        {
+            return new StreamingConversationResult
+            {
+                Success = false,
+                Message = CoreMemoryUnavailableMessage,
+                ErrorCode = CoreMemoryUnavailableErrorCode
+            };
+        }
+
+        var provider = _llmOptions.Provider.Trim().ToLowerInvariant();
+        var preparation = _coreMemoryOptions.RequireCoreMemoryForConversation
+            ? await PrepareMemoryOrFailClosedAsync(message, cancellationToken)
+            : null;
+        if (preparation is { ConversationId: "memory-fallback" })
+        {
+            return new StreamingConversationResult
+            {
+                Success = false,
+                Message = CoreMemoryUnavailableMessage,
+                ErrorCode = CoreMemoryUnavailableErrorCode
+            };
+        }
+
+        if (!string.IsNullOrWhiteSpace(preparation?.LocalResponse))
+        {
+            return new StreamingConversationResult
+            {
+                Success = true,
+                Message = preparation.LocalResponse
+            };
+        }
+
+        var messages = preparation is null
+            ? BuildMessages(message)
+            : [new ChatMessage("user", preparation.CompiledPrompt)];
+
+        ISpeechSegmentQueue? activeSpeechQueue = null;
+        try
+        {
+            var stream = CreateGenerationStream(provider, messages);
+            var fullText = new StringBuilder();
+            var segmentedSpeechStarted = false;
+            var segmentsGenerated = 0;
+            ISpeechSegmentQueue? speechQueue = null;
+            StreamingResponseAssembler? assembler = null;
+            ISpeakableTextSanitizer? sanitizer = null;
+            IStreamedTextDetokenizer? detokenizer = null;
+            var stopwatch = Stopwatch.StartNew();
+            long? firstDeltaMs = null;
+            long? firstSegmentMs = null;
+            var streamingStartedNotified = false;
+
+            if (shouldSpeak && _streamingOptions.UseSegmentedTts && sendEventAsync is not null && _serviceProvider is not null)
+            {
+                speechQueue = _serviceProvider.GetService<ISpeechSegmentQueue>();
+                activeSpeechQueue = speechQueue;
+                sanitizer = _serviceProvider.GetService<ISpeakableTextSanitizer>() ?? new SpeakableTextSanitizer(_streamingOptions);
+                detokenizer = _serviceProvider.GetService<IStreamedTextDetokenizer>() ?? new StreamedTextDetokenizer();
+                assembler = new StreamingResponseAssembler(_streamingOptions);
+            }
+
+            await foreach (var delta in stream.WithCancellation(cancellationToken))
+            {
+                if (firstDeltaMs is null && !string.IsNullOrEmpty(delta.Text))
+                {
+                    firstDeltaMs = stopwatch.ElapsedMilliseconds;
+                }
+
+                fullText.Append(delta.Text);
+                if (assembler is null || speechQueue is null || sanitizer is null || sendEventAsync is null)
+                {
+                    continue;
+                }
+
+                assembler.Append(delta);
+                var readySegments = assembler.DrainReadySegments(delta.IsFinal);
+                foreach (var segment in readySegments)
+                {
+                    var cleanText = sanitizer.Sanitize(
+                        segment.Text,
+                        new SpeakableTextSanitizationContext(IsFirstSegment: segment.SequenceNumber == 0));
+                    if (string.IsNullOrWhiteSpace(cleanText))
+                    {
+                        continue;
+                    }
+
+                    var detokenized = detokenizer?.Detokenize(cleanText)
+                        ?? new StreamedTextDetokenizationResult(cleanText.Trim(), 0);
+                    cleanText = detokenized.Text;
+                    if (string.IsNullOrWhiteSpace(cleanText))
+                    {
+                        continue;
+                    }
+
+                    firstSegmentMs ??= stopwatch.ElapsedMilliseconds;
+                    segmentsGenerated++;
+                    segmentedSpeechStarted = true;
+                    if (!streamingStartedNotified)
+                    {
+                        streamingStartedNotified = true;
+                        streamingFinalAnswerStarted?.Invoke();
+                    }
+
+                    await speechQueue.EnqueueAsync(
+                        cleanText,
+                        segment,
+                        new SpeechSegmentQueueContext(correlationId, sendEventAsync, message),
+                        cancellationToken);
+                }
+            }
+
+            if (speechQueue is not null)
+            {
+                await speechQueue.CompleteAsync(cancellationToken);
+            }
+
+            var response = fullText.ToString().Trim();
+            if (string.IsNullOrWhiteSpace(response))
+            {
+                return new StreamingConversationResult
+                {
+                    Success = false,
+                    Message = UnavailableErrorCode,
+                    ErrorCode = UnavailableErrorCode
+                };
+            }
+
+            if (preparation is not null)
+            {
+                await ProcessMemoryResponseAsync(message, response, preparation, cancellationToken);
+            }
+
+            _logger.LogInformation(
+                "StreamingResponseCompleted CorrelationId: {CorrelationId}. FirstDeltaMs: {FirstDeltaMs}. FirstSegmentMs: {FirstSegmentMs}. SegmentsGenerated: {SegmentsGenerated}. FallbackUsed: {FallbackUsed}.",
+                correlationId,
+                firstDeltaMs,
+                firstSegmentMs,
+                segmentsGenerated,
+                false);
+
+            return new StreamingConversationResult
+            {
+                Success = true,
+                Message = response,
+                SegmentedSpeechStarted = segmentedSpeechStarted,
+                SpeechSegmentsGenerated = segmentsGenerated
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogInformation("StreamingResponseCancelled CorrelationId: {CorrelationId}. Reason: cancellation_token", correlationId);
+            if (activeSpeechQueue is not null)
+            {
+                await activeSpeechQueue.CancelAsync("model_stream_cancelled", CancellationToken.None);
+            }
+
+            throw;
+        }
+        catch (Exception exception) when (_streamingOptions.FallbackToFullResponse)
+        {
+            _logger.LogWarning(exception, "Streaming response failed. Falling back to full response. CorrelationId: {CorrelationId}", correlationId);
+            var fallback = await GenerateResponseAsync(message, cancellationToken);
+            return new StreamingConversationResult
+            {
+                Success = fallback.Success,
+                Message = fallback.Message,
+                ErrorCode = fallback.ErrorCode,
+                FallbackUsed = true
+            };
+        }
+    }
+
+    private IAsyncEnumerable<ModelTextDelta> CreateGenerationStream(
+        string provider,
+        IReadOnlyList<ChatMessage> messages)
+    {
+        if (provider == "deepinfra"
+            && _streamingOptions.UseDeepInfraStreaming
+            && _streamingDeepInfraProvider is not null
+            && !DeepInfraCircuitOpen())
+        {
+            return _streamingDeepInfraProvider.StreamAsync(messages);
+        }
+
+        IChatProvider fullProvider = provider == "deepinfra"
+            ? _deepInfraProvider
+            : _localProvider;
+        return new NonStreamingGenerationAdapter(fullProvider).StreamAsync(messages);
     }
 
     private async Task<Merlin.Backend.Core.Memory.Models.MemoryPreparationResult?> PrepareMemoryAsync(
@@ -325,6 +549,8 @@ You must not claim memory exists if memory is not implemented.
 You must keep answers concise.
 You must not output tool commands.
 You must answer in plain conversational language.
+For spoken responses, prefer natural spoken prose. Avoid markdown headings, bold text, bullet lists, numbered lists, and tables unless explicitly necessary.
+Do not use em dashes. Use commas, periods, or separate sentences instead.
 If the user asks for current or recent information, say you do not have web access yet.
 If the user asks you to perform an action, explain that conversation cannot perform actions and supported actions must go through Merlin's tool system.
 """;

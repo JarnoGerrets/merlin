@@ -56,7 +56,15 @@ public sealed class GeneralConversationTool : ITool
             ? ExtractMessage(context.NormalizedCommand)
             : context.OriginalMessage;
 
-        var result = await _localAIChatService.GenerateResponseAsync(message, cancellationToken);
+        var result = context.ShouldSpeak && context.SpeechEventSender is not null
+            ? await _localAIChatService.GenerateStreamingResponseAsync(
+                message,
+                context.CorrelationId,
+                context.SpeechEventSender,
+                shouldSpeak: true,
+                context.StreamingFinalAnswerStarted,
+                cancellationToken)
+            : await GenerateFullResponseAsync(message, cancellationToken);
 
         return new ToolResult
         {
@@ -64,7 +72,21 @@ public sealed class GeneralConversationTool : ITool
             Message = result.Message,
             ErrorCode = result.ErrorCode,
             ToolName = Name,
-            Intent = IntentName
+            Intent = IntentName,
+            SegmentedSpeechStarted = result.SegmentedSpeechStarted
+        };
+    }
+
+    private async Task<Services.StreamingResponses.StreamingConversationResult> GenerateFullResponseAsync(
+        string message,
+        CancellationToken cancellationToken)
+    {
+        var result = await _localAIChatService.GenerateResponseAsync(message, cancellationToken);
+        return new Services.StreamingResponses.StreamingConversationResult
+        {
+            Success = result.Success,
+            Message = result.Message,
+            ErrorCode = result.ErrorCode
         };
     }
 

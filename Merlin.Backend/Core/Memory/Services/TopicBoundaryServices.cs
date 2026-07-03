@@ -139,26 +139,49 @@ public sealed class CurrentConversationMemoryService
     private readonly IConceptExtractionService _conceptExtractor;
     private readonly TopicBoundaryDetector _topicBoundaryDetector;
     private readonly Stores.IConversationStateStore _conversationStore;
+    private readonly IRuntimeTopicSession _runtimeTopicSession;
+    private readonly ILogger<CurrentConversationMemoryService> _logger;
 
     public CurrentConversationMemoryService(
         Stores.IConversationStateStore conversationStore,
         IConceptExtractionService conceptExtractor,
         TopicBoundaryDetector topicBoundaryDetector,
-        ActiveConceptMerger conceptMerger)
+        ActiveConceptMerger conceptMerger,
+        IRuntimeTopicSession runtimeTopicSession,
+        ILogger<CurrentConversationMemoryService> logger)
     {
         _conversationStore = conversationStore;
         _conceptExtractor = conceptExtractor;
         _topicBoundaryDetector = topicBoundaryDetector;
         _conceptMerger = conceptMerger;
+        _runtimeTopicSession = runtimeTopicSession;
+        _logger = logger;
     }
 
     public async Task<CurrentConversationState> GetOrCreateCurrentStateAsync(CancellationToken cancellationToken = default)
     {
         var conversation = await _conversationStore.GetOrCreateActiveConversationAsync(cancellationToken);
-        var topic = await _conversationStore.GetActiveTopicAsync(conversation.Id, cancellationToken)
-            ?? await _conversationStore.StartTopicAsync(conversation.Id, "General conversation", cancellationToken);
+        var topic = await _conversationStore.GetActiveTopicAsync(conversation.Id, cancellationToken);
+        if (topic is null)
+        {
+            return CreateNeutralState(conversation.Id);
+        }
 
-        return ToState(conversation.Id, topic);
+        if (!_runtimeTopicSession.IsTopicTouchedInCurrentProcess(topic.Id))
+        {
+            _logger.LogInformation(
+                "stale_current_topic_ignored. TopicId: {TopicId}. TopicTitle: {TopicTitle}. TopicUpdatedAt: {TopicUpdatedAt}. BackendStartedAt: {BackendStartedAt}. Reason: {Reason}. ConversationId: {ConversationId}. CorrelationId: {CorrelationId}.",
+                topic.Id,
+                topic.Title,
+                topic.StartedAt,
+                _runtimeTopicSession.BackendStartedAtUtc,
+                "topic_not_touched_in_current_process",
+                conversation.Id,
+                null);
+            return CreateNeutralState(conversation.Id);
+        }
+
+        return ToState(conversation.Id, topic, touchedInCurrentProcess: true);
     }
 
     public async Task<TopicBoundaryDecision> AnalyzeUserMessageAsync(
@@ -190,12 +213,14 @@ public sealed class CurrentConversationMemoryService
                 state.ConversationId,
                 decision.SuggestedTopicTitle ?? TopicBoundaryDetector.CreateTopicTitle(userMessage, concepts),
                 cancellationToken);
+            _runtimeTopicSession.MarkTopicTouched(topic.Id);
             state = state with { ActiveConcepts = [], RecentSummary = null };
         }
         else
         {
             topic = await _conversationStore.GetTopicAsync(state.ActiveTopicId!, cancellationToken)
                 ?? await _conversationStore.StartTopicAsync(state.ConversationId, decision.SuggestedTopicTitle ?? "General conversation", cancellationToken);
+            _runtimeTopicSession.MarkTopicTouched(topic.Id);
         }
 
         var mergedConcepts = _conceptMerger.Merge(ParseConcepts(topic.Summary).Concat(state.ActiveConcepts).ToList(), concepts);
@@ -230,10 +255,21 @@ public sealed class CurrentConversationMemoryService
         var merged = _conceptMerger.Merge(state.ActiveConcepts, concepts);
         var summary = TopicSummarySanitizer.BuildRollingAssistantSummary(topic.Summary, assistantResponse, merged);
         await _conversationStore.UpdateTopicSummaryAsync(topic.Id, summary, cancellationToken);
+        _runtimeTopicSession.MarkTopicTouched(topic.Id);
         return ToState(state.ConversationId, topic with { Summary = summary }, merged);
     }
 
-    private static CurrentConversationState ToState(string conversationId, ConversationTopicRecord topic, IReadOnlyList<string>? concepts = null)
+    private static CurrentConversationState CreateNeutralState(string conversationId) => new()
+    {
+        ConversationId = conversationId,
+        LastUpdatedUtc = DateTimeOffset.UtcNow
+    };
+
+    private static CurrentConversationState ToState(
+        string conversationId,
+        ConversationTopicRecord topic,
+        IReadOnlyList<string>? concepts = null,
+        bool touchedInCurrentProcess = true)
     {
         var parsedConcepts = concepts ?? ParseConcepts(topic.Summary);
         return new CurrentConversationState
@@ -241,6 +277,8 @@ public sealed class CurrentConversationMemoryService
             ConversationId = conversationId,
             ActiveTopicId = topic.Id,
             ActiveTopicTitle = topic.Title,
+            ActiveTopicUpdatedAt = topic.StartedAt,
+            ActiveTopicTouchedInCurrentProcess = touchedInCurrentProcess,
             RecentSummary = TopicSummarySanitizer.SanitizeForSession(topic.Summary, topic.Title),
             ActiveConcepts = parsedConcepts,
             CurrentGoal = topic.Title,

@@ -14,4 +14,22 @@ public interface IVoiceSynthesisService
         Func<VoiceSynthesisStreamMetadata, CancellationToken, Task> onMetadataAsync,
         Func<ReadOnlyMemory<byte>, CancellationToken, Task> onAudioAsync,
         CancellationToken cancellationToken);
+
+    Task StreamSynthesizeChunksAsync(
+        string text,
+        Func<VoiceSynthesisStreamMetadata, CancellationToken, Task> onMetadataAsync,
+        Func<VoiceSynthesisAudioChunk, CancellationToken, Task> onAudioChunkAsync,
+        CancellationToken cancellationToken) =>
+        StreamSynthesizeAsync(
+            text,
+            onMetadataAsync,
+            (audio, token) => onAudioChunkAsync(
+                new VoiceSynthesisAudioChunk
+                {
+                    Audio = audio,
+                    ChunkIndex = null,
+                    ChunkCount = null
+                },
+                token),
+            cancellationToken);
 }

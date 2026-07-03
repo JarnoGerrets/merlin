@@ -126,6 +126,240 @@ public sealed class CommandRouterTests
         Assert.Equal("https://terminal.nl", launcher.LaunchedTarget);
     }
 
+    [Theory]
+    [InlineData("show chat")]
+    [InlineData("open chat")]
+    [InlineData("show the chat")]
+    [InlineData("open the chat")]
+    [InlineData("show chatlog")]
+    [InlineData("open chatlog")]
+    [InlineData("show chat log")]
+    [InlineData("open chat log")]
+    [InlineData("open jetlog")]
+    [InlineData("Merlin, please show chat")]
+    [InlineData("Hey Merlin, show chat")]
+    [InlineData("Okay Merlin, open chat")]
+    [InlineData("Merlin, can you show the chat please")]
+    [InlineData("Can you show chat please")]
+    public async Task RouteAsync_WhenChatLogOpenCommand_ReturnsUiPanelShowWithoutIntentParsing(string command)
+    {
+        var parser = new ThrowingIntentParser();
+        var router = new CommandRouter(
+            parser,
+            new ToolRegistry([new ThrowingTool()]),
+            NullLogger<CommandRouter>.Instance,
+            new RuntimeStateService(),
+            new NoOpResponsePolisher());
+
+        var response = await router.RouteAsync(new AssistantRequest
+        {
+            Message = command,
+            InteractionSource = "voice"
+        });
+
+        Assert.True(response.Success);
+        Assert.Equal("Chat Panel", response.ToolName);
+        Assert.Equal("ui_panel_show", response.Intent);
+        Assert.Equal("ui_panel", response.CapabilityId);
+        Assert.Equal(nameof(ChatLogCommandMatcher), response.ParserUsed);
+        Assert.Equal("Opening chat.", response.Message);
+        Assert.False(parser.WasCalled);
+    }
+
+    [Theory]
+    [InlineData("hide chat")]
+    [InlineData("close chat")]
+    [InlineData("hide the chat")]
+    [InlineData("close the chat")]
+    [InlineData("hide chatlog")]
+    [InlineData("close chatlog")]
+    [InlineData("hide chat log")]
+    [InlineData("close chat log")]
+    [InlineData("close jetlog")]
+    [InlineData("Hi Merlin, close chat")]
+    public async Task RouteAsync_WhenChatLogCloseCommand_ReturnsUiPanelHideWithoutIntentParsing(string command)
+    {
+        var parser = new ThrowingIntentParser();
+        var router = new CommandRouter(
+            parser,
+            new ToolRegistry([new ThrowingTool()]),
+            NullLogger<CommandRouter>.Instance,
+            new RuntimeStateService(),
+            new NoOpResponsePolisher());
+
+        var response = await router.RouteAsync(new AssistantRequest
+        {
+            Message = command,
+            InteractionSource = "voice"
+        });
+
+        Assert.True(response.Success);
+        Assert.Equal("Chat Panel", response.ToolName);
+        Assert.Equal("ui_panel_hide", response.Intent);
+        Assert.Equal("Closing chat.", response.Message);
+        Assert.False(parser.WasCalled);
+    }
+
+    [Fact]
+    public async Task RouteAsync_WhenChatLogShowRepeated_IsIdempotent()
+    {
+        var router = new CommandRouter(
+            new ThrowingIntentParser(),
+            new ToolRegistry([new ThrowingTool()]),
+            NullLogger<CommandRouter>.Instance,
+            new RuntimeStateService(),
+            new NoOpResponsePolisher());
+
+        var first = await router.RouteAsync("show chat");
+        var second = await router.RouteAsync("show chat");
+
+        Assert.True(first.Success);
+        Assert.True(second.Success);
+        Assert.Equal("ui_panel_show", first.Intent);
+        Assert.Equal("ui_panel_show", second.Intent);
+    }
+
+    [Fact]
+    public async Task RouteAsync_WhenChatLogHideRepeated_IsIdempotent()
+    {
+        var router = new CommandRouter(
+            new ThrowingIntentParser(),
+            new ToolRegistry([new ThrowingTool()]),
+            NullLogger<CommandRouter>.Instance,
+            new RuntimeStateService(),
+            new NoOpResponsePolisher());
+
+        var first = await router.RouteAsync("hide chat");
+        var second = await router.RouteAsync("hide chat");
+
+        Assert.True(first.Success);
+        Assert.True(second.Success);
+        Assert.Equal("ui_panel_hide", first.Intent);
+        Assert.Equal("ui_panel_hide", second.Intent);
+    }
+
+    [Theory]
+    [InlineData("let me control the UI")]
+    [InlineData("start UI control")]
+    [InlineData("enable UI control")]
+    [InlineData("gesture mode")]
+    [InlineData("start gesture mode")]
+    [InlineData("edit the UI")]
+    [InlineData("let me edit the UI")]
+    [InlineData("Hey Merlin, let me control the UI")]
+    [InlineData("Okay Merlin, start gesture mode")]
+    [InlineData("Hi Merlin, start UI control")]
+    [InlineData("Merlin, let me control UI")]
+    [InlineData("Hey Merlin, give me control of the UI")]
+    public async Task RouteAsync_WhenUiControlStartCommand_ReturnsStartedWithoutIntentParsing(string command)
+    {
+        var parser = new ThrowingIntentParser();
+        var controller = new UiControlModeController(NullLogger<UiControlModeController>.Instance);
+        var router = new CommandRouter(
+            parser,
+            new ToolRegistry([new ThrowingTool()]),
+            NullLogger<CommandRouter>.Instance,
+            new RuntimeStateService(),
+            new NoOpResponsePolisher(),
+            uiControlModeController: controller);
+
+        var response = await router.RouteAsync(new AssistantRequest
+        {
+            Message = command,
+            InteractionSource = "voice"
+        });
+
+        Assert.True(response.Success);
+        Assert.Equal("UI Control Mode", response.ToolName);
+        Assert.Equal("ui_control_mode_start", response.Intent);
+        Assert.Equal("ui_control_mode", response.CapabilityId);
+        Assert.Equal(nameof(UiControlModeCommandMatcher), response.ParserUsed);
+        Assert.Equal("UI control mode started.", response.Message);
+        Assert.Equal(UiControlModeState.Active, controller.State);
+        Assert.False(parser.WasCalled);
+    }
+
+    [Theory]
+    [InlineData("I'm done with the UI")]
+    [InlineData("stop UI control")]
+    [InlineData("disable UI control")]
+    [InlineData("exit gesture mode")]
+    [InlineData("cancel UI control")]
+    [InlineData("done controlling")]
+    [InlineData("Hey Merlin, I am done with the UI")]
+    [InlineData("Okay Merlin, stop gesture mode")]
+    [InlineData("Merlin, close UI control")]
+    public async Task RouteAsync_WhenUiControlStopCommand_ReturnsStoppedWithoutIntentParsing(string command)
+    {
+        var parser = new ThrowingIntentParser();
+        var controller = new UiControlModeController(NullLogger<UiControlModeController>.Instance);
+        controller.Start();
+        var router = new CommandRouter(
+            parser,
+            new ToolRegistry([new ThrowingTool()]),
+            NullLogger<CommandRouter>.Instance,
+            new RuntimeStateService(),
+            new NoOpResponsePolisher(),
+            uiControlModeController: controller);
+
+        var response = await router.RouteAsync(new AssistantRequest
+        {
+            Message = command,
+            InteractionSource = "voice"
+        });
+
+        Assert.True(response.Success);
+        Assert.Equal("UI Control Mode", response.ToolName);
+        Assert.Equal("ui_control_mode_stop", response.Intent);
+        Assert.Equal("UI control mode stopped.", response.Message);
+        Assert.Equal(UiControlModeState.Off, controller.State);
+        Assert.False(parser.WasCalled);
+    }
+
+    [Fact]
+    public async Task RouteAsync_WhenUiControlStartRepeated_IsIdempotent()
+    {
+        var controller = new UiControlModeController(NullLogger<UiControlModeController>.Instance);
+        var router = new CommandRouter(
+            new ThrowingIntentParser(),
+            new ToolRegistry([new ThrowingTool()]),
+            NullLogger<CommandRouter>.Instance,
+            new RuntimeStateService(),
+            new NoOpResponsePolisher(),
+            uiControlModeController: controller);
+
+        var first = await router.RouteAsync("gesture mode");
+        var second = await router.RouteAsync("gesture mode");
+
+        Assert.True(first.Success);
+        Assert.True(second.Success);
+        Assert.Equal("ui_control_mode_start", first.Intent);
+        Assert.Equal("ui_control_mode_start", second.Intent);
+        Assert.Equal(UiControlModeState.Active, controller.State);
+    }
+
+    [Fact]
+    public async Task RouteAsync_WhenUiControlStopRepeated_IsIdempotent()
+    {
+        var controller = new UiControlModeController(NullLogger<UiControlModeController>.Instance);
+        var router = new CommandRouter(
+            new ThrowingIntentParser(),
+            new ToolRegistry([new ThrowingTool()]),
+            NullLogger<CommandRouter>.Instance,
+            new RuntimeStateService(),
+            new NoOpResponsePolisher(),
+            uiControlModeController: controller);
+
+        var first = await router.RouteAsync("stop UI control");
+        var second = await router.RouteAsync("stop UI control");
+
+        Assert.True(first.Success);
+        Assert.True(second.Success);
+        Assert.Equal("ui_control_mode_stop", first.Intent);
+        Assert.Equal("ui_control_mode_stop", second.Intent);
+        Assert.Equal(UiControlModeState.Off, controller.State);
+    }
+
     [Fact]
     public async Task RouteAsync_WhenVoiceMappingEditContainsDottedDomain_PreservesDomain()
     {
@@ -443,6 +677,19 @@ public sealed class CommandRouterTests
             CancellationToken cancellationToken = default)
         {
             return Task.FromResult(_result);
+        }
+    }
+
+    private sealed class ThrowingIntentParser : IIntentParser
+    {
+        public bool WasCalled { get; private set; }
+
+        public Task<IntentParseResult> ParseAsync(
+            string message,
+            CancellationToken cancellationToken = default)
+        {
+            WasCalled = true;
+            throw new InvalidOperationException("Intent parser should not be called.");
         }
     }
 

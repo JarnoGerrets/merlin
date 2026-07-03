@@ -34,6 +34,17 @@ public sealed class TtsRouter : IVoiceSynthesisService
         string text,
         Func<VoiceSynthesisStreamMetadata, CancellationToken, Task> onMetadataAsync,
         Func<ReadOnlyMemory<byte>, CancellationToken, Task> onAudioAsync,
+        CancellationToken cancellationToken) =>
+        await StreamSynthesizeChunksAsync(
+            text,
+            onMetadataAsync,
+            (chunk, token) => onAudioAsync(chunk.Audio, token),
+            cancellationToken);
+
+    public async Task StreamSynthesizeChunksAsync(
+        string text,
+        Func<VoiceSynthesisStreamMetadata, CancellationToken, Task> onMetadataAsync,
+        Func<VoiceSynthesisAudioChunk, CancellationToken, Task> onAudioChunkAsync,
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -43,7 +54,7 @@ public sealed class TtsRouter : IVoiceSynthesisService
             _logger.LogInformation("TTS provider selected: Piper.");
             try
             {
-                await _piperProvider.StreamSynthesizeAsync(text, onMetadataAsync, onAudioAsync, cancellationToken);
+                await _piperProvider.StreamSynthesizeChunksAsync(text, onMetadataAsync, onAudioChunkAsync, cancellationToken);
             }
             finally
             {
@@ -66,7 +77,7 @@ public sealed class TtsRouter : IVoiceSynthesisService
             _logger.LogWarning("Unknown TTS provider '{Provider}'. Using Piper.", _options.Provider);
             try
             {
-                await _piperProvider.StreamSynthesizeAsync(text, onMetadataAsync, onAudioAsync, cancellationToken);
+                await _piperProvider.StreamSynthesizeChunksAsync(text, onMetadataAsync, onAudioChunkAsync, cancellationToken);
             }
             finally
             {
@@ -89,7 +100,7 @@ public sealed class TtsRouter : IVoiceSynthesisService
             const string reason = "Chatterbox circuit breaker is open.";
             try
             {
-                await UseFallbackAsync(text, onMetadataAsync, onAudioAsync, reason, cancellationToken);
+                await UseFallbackAsync(text, onMetadataAsync, onAudioChunkAsync, reason, cancellationToken);
             }
             finally
             {
@@ -109,7 +120,7 @@ public sealed class TtsRouter : IVoiceSynthesisService
 
         try
         {
-            await _chatterboxProvider.StreamSynthesizeAsync(text, onMetadataAsync, onAudioAsync, cancellationToken);
+            await _chatterboxProvider.StreamSynthesizeChunksAsync(text, onMetadataAsync, onAudioChunkAsync, cancellationToken);
             MarkChatterboxSuccess();
             stopwatch.Stop();
             _timingLog.RecordRouter(new ChatterboxTimingLogService.RouterTiming
@@ -132,7 +143,7 @@ public sealed class TtsRouter : IVoiceSynthesisService
             MarkChatterboxFailure(exception.Message);
             try
             {
-                await UseFallbackAsync(text, onMetadataAsync, onAudioAsync, exception.Message, cancellationToken);
+                await UseFallbackAsync(text, onMetadataAsync, onAudioChunkAsync, exception.Message, cancellationToken);
             }
             finally
             {
@@ -153,7 +164,7 @@ public sealed class TtsRouter : IVoiceSynthesisService
     private async Task UseFallbackAsync(
         string text,
         Func<VoiceSynthesisStreamMetadata, CancellationToken, Task> onMetadataAsync,
-        Func<ReadOnlyMemory<byte>, CancellationToken, Task> onAudioAsync,
+        Func<VoiceSynthesisAudioChunk, CancellationToken, Task> onAudioChunkAsync,
         string reason,
         CancellationToken cancellationToken)
     {
@@ -163,7 +174,7 @@ public sealed class TtsRouter : IVoiceSynthesisService
         }
 
         _logger.LogWarning("TTS degraded fallback mode. Provider: Piper. Reason: {Reason}", reason);
-        await _piperProvider.StreamSynthesizeAsync(text, onMetadataAsync, onAudioAsync, cancellationToken);
+        await _piperProvider.StreamSynthesizeChunksAsync(text, onMetadataAsync, onAudioChunkAsync, cancellationToken);
     }
 
     private bool ChatterboxCircuitOpen()

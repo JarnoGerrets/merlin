@@ -8,6 +8,8 @@ public sealed class AssistantRequest
 
     public string? CorrelationId { get; init; }
 
+    public string? CaptureId { get; init; }
+
     public bool? SpeakResponse { get; init; }
 
     public string? InteractionSource { get; init; }

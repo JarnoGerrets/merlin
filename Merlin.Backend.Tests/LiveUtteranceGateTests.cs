@@ -80,6 +80,37 @@ public sealed class LiveUtteranceGateTests
     }
 
     [Theory]
+    [InlineData("open the chat")]
+    [InlineData("show chat")]
+    [InlineData("Merlin, open jetlog")]
+    [InlineData("Hey Merlin, show chat")]
+    public void ChatPanelCommands_RouteBeforeIncompleteFragmentHeuristic(string text)
+    {
+        var result = Evaluate(text, LiveAssistantTurnState.IdleListening, source: "live_utterance_monitor");
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AcceptNewRequest, result.Decision);
+        Assert.True(result.ShouldRouteToCommandRouter);
+        Assert.Contains("chat_panel", result.PositiveSignals);
+    }
+
+    [Theory]
+    [InlineData("let me control the UI")]
+    [InlineData("gesture mode")]
+    [InlineData("I'm done with the UI")]
+    [InlineData("stop UI control")]
+    [InlineData("cancel UI control")]
+    [InlineData("Okay Merlin, start gesture mode")]
+    public void UiControlModeCommands_RouteBeforeIncompleteFragmentHeuristic(string text)
+    {
+        var result = Evaluate(text, LiveAssistantTurnState.IdleListening, source: "live_utterance_monitor");
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AcceptNewRequest, result.Decision);
+        Assert.True(result.ShouldRouteToCommandRouter);
+        Assert.False(result.ShouldCallDeepInfra);
+        Assert.Contains("ui_control_mode_command", result.PositiveSignals);
+    }
+
+    [Theory]
     [InlineData("What's the meaning of life?")]
     [InlineData("What is the meaning of life?")]
     [InlineData("How's that different?")]
@@ -249,6 +280,87 @@ public sealed class LiveUtteranceGateTests
         Assert.Equal("CancelPendingCommandAndStartReplacement", route.Action);
         Assert.NotEqual("StopSpeechOnlyNoConfirmation", route.Action);
         Assert.True(result.ShouldCallDeepInfra);
+    }
+
+    [Fact]
+    public void PrefixOnlyCorrection_HoldsWithoutReplacementCommand()
+    {
+        var result = Evaluate("No, what I meant is.", LiveAssistantTurnState.Speaking, assistantWasSpeaking: true);
+        var route = _gate.ToRouteDecision(CreateUtteranceForRoute("No, what I meant is.", LiveAssistantTurnState.Speaking, assistantWasSpeaking: true), result);
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.HoldForMoreSpeech, result.Decision);
+        Assert.False(result.ShouldRouteToCommandRouter);
+        Assert.False(result.ShouldCallDeepInfra);
+        Assert.Null(result.ReplacementText);
+        Assert.Equal("HoldForMoreSpeech", route.Action);
+        Assert.NotEqual("CancelPendingCommandAndStartReplacement", route.Action);
+        Assert.Null(route.ReplacementText);
+    }
+
+    [Theory]
+    [InlineData("What I meant is.")]
+    [InlineData("I meant.")]
+    [InlineData("I mean.")]
+    [InlineData("No, I meant.")]
+    [InlineData("No, I mean.")]
+    [InlineData("Actually, I meant.")]
+    [InlineData("Wait, I meant.")]
+    [InlineData("Sorry, I meant.")]
+    [InlineData("No, what I mean is.")]
+    [InlineData("What I mean is.")]
+    public void PrefixOnlyCorrectionVariants_HoldWithoutCommandRouting(string text)
+    {
+        var result = Evaluate(text, LiveAssistantTurnState.Speaking, assistantWasSpeaking: true);
+        var route = _gate.ToRouteDecision(CreateUtteranceForRoute(text, LiveAssistantTurnState.Speaking, assistantWasSpeaking: true), result);
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.HoldForMoreSpeech, result.Decision);
+        Assert.False(result.ShouldRouteToCommandRouter);
+        Assert.False(result.ShouldCallDeepInfra);
+        Assert.Null(result.ReplacementText);
+        Assert.NotEqual("CancelPendingCommandAndStartReplacement", route.Action);
+        Assert.Null(route.ReplacementText);
+    }
+
+    [Fact]
+    public void NoWhatIMeantIs_DoesNotProduceOpenWhatIMeantIs()
+    {
+        var result = Evaluate("No, what I meant is.", LiveAssistantTurnState.Speaking, assistantWasSpeaking: true);
+        var route = _gate.ToRouteDecision(CreateUtteranceForRoute("No, what I meant is.", LiveAssistantTurnState.Speaking, assistantWasSpeaking: true), result);
+
+        Assert.NotEqual("open what i meant is", result.ReplacementText);
+        Assert.NotEqual("open what i meant is", route.ReplacementText);
+    }
+
+    [Fact]
+    public void NoWhatIMeantIsQuestion_PreservesCorrectedQuestionWithoutOpenPrefix()
+    {
+        var result = Evaluate("No, what I meant is what is the meaning of a wife?", LiveAssistantTurnState.Speaking, assistantWasSpeaking: true);
+        var route = _gate.ToRouteDecision(CreateUtteranceForRoute("No, what I meant is what is the meaning of a wife?", LiveAssistantTurnState.Speaking, assistantWasSpeaking: true), result);
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AcceptCorrection, result.Decision);
+        Assert.Equal("what is the meaning of a wife", result.ReplacementText);
+        Assert.False(result.ReplacementText?.StartsWith("open ", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("CancelPendingCommandAndStartReplacement", route.Action);
+        Assert.Equal("what is the meaning of a wife", route.ReplacementText);
+        Assert.True(result.ShouldCallDeepInfra);
+    }
+
+    [Fact]
+    public void ActuallyOpenChrome_StillPreservesExplicitAppReplacement()
+    {
+        var result = Evaluate("Actually, open Chrome.", LiveAssistantTurnState.AwaitingToolCommit, pendingCommand: "Open URL: open facebook");
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AcceptReplacement, result.Decision);
+        Assert.Equal("open chrome", result.ReplacementText);
+    }
+
+    [Fact]
+    public void NoOpenSpotifyInstead_StillPreservesExplicitAppCorrection()
+    {
+        var result = Evaluate("No, open Spotify instead.", LiveAssistantTurnState.AwaitingToolCommit, pendingCommand: "Open URL: open facebook");
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AcceptReplacement, result.Decision);
+        Assert.Equal("open spotify instead", result.ReplacementText);
     }
 
     [Fact]

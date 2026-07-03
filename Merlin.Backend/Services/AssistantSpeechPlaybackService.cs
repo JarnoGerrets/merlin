@@ -1,9 +1,11 @@
 using System.Diagnostics;
 using System.Collections.Concurrent;
+using System.Threading.Channels;
 using Merlin.Backend.Configuration;
 using Merlin.Backend.Models;
 using Merlin.Backend.Services.BargeIn;
 using Merlin.Backend.Services.InterruptionIntelligence;
+using Merlin.Backend.Services.StreamingResponses;
 using Microsoft.Extensions.Options;
 using NAudio.Wave;
 
@@ -20,7 +22,11 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
     private readonly IPlaybackReferenceTap _playbackReferenceTap;
     private readonly ISpeakerDuckingService _speakerDuckingService;
     private readonly ILiveSpokenAnswerTrackingService? _spokenAnswerTracking;
+    private readonly AssistantUiStateBroadcaster? _assistantUiStateBroadcaster;
+    private readonly IGpuWorkScheduler? _gpuWorkScheduler;
+    private readonly ITtsTextSanitizer _ttsTextSanitizer;
     private readonly InterruptionHandlingOptions _interruptionOptions;
+    private readonly StreamingResponseOptions _streamingOptions;
     private readonly ILogger<AssistantSpeechPlaybackService> _logger;
     private readonly Func<IWavePlayer> _wavePlayerFactory;
     private readonly SemaphoreSlim _speechGate = new(1, 1);
@@ -30,6 +36,7 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
     private CancellationTokenSource? _activeSpeechCancellation;
     private ActiveSpeechPlaybackSnapshot? _activePlaybackSnapshot;
     private ActivePlaybackControlState? _activePlaybackState;
+    private StreamingFinalAnswerPlaybackSession? _activeStreamingSession;
     private Action<float>? _activeVolumeSetter;
     private long _queueGeneration;
 
@@ -40,13 +47,21 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
         ILogger<AssistantSpeechPlaybackService> logger,
         ILiveSpokenAnswerTrackingService? spokenAnswerTracking = null,
         IOptions<InterruptionHandlingOptions>? interruptionOptions = null,
-        Func<IWavePlayer>? wavePlayerFactory = null)
+        Func<IWavePlayer>? wavePlayerFactory = null,
+        AssistantUiStateBroadcaster? assistantUiStateBroadcaster = null,
+        IGpuWorkScheduler? gpuWorkScheduler = null,
+        ITtsTextSanitizer? ttsTextSanitizer = null,
+        IOptions<StreamingResponseOptions>? streamingOptions = null)
     {
         _voiceSynthesisService = voiceSynthesisService;
         _playbackReferenceTap = playbackReferenceTap;
         _speakerDuckingService = speakerDuckingService;
         _spokenAnswerTracking = spokenAnswerTracking;
+        _assistantUiStateBroadcaster = assistantUiStateBroadcaster;
+        _gpuWorkScheduler = gpuWorkScheduler;
+        _ttsTextSanitizer = ttsTextSanitizer ?? new TtsTextSanitizer();
         _interruptionOptions = interruptionOptions?.Value ?? new InterruptionHandlingOptions();
+        _streamingOptions = streamingOptions?.Value ?? new StreamingResponseOptions();
         _logger = logger;
         _wavePlayerFactory = wavePlayerFactory ?? (() => new WaveOutEvent { DesiredLatency = 100 });
         _speakerDuckingService.DuckingChanged += OnDuckingChanged;
@@ -66,6 +81,28 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
         if (string.IsNullOrWhiteSpace(spokenText))
         {
             return Task.CompletedTask;
+        }
+
+        if (itemType is SpeechPlaybackItemType.FinalAnswer)
+        {
+            var sanitization = _ttsTextSanitizer.Sanitize(spokenText);
+            _logger.LogInformation(
+                "tts_text_sanitized RawChars: {RawChars}. SanitizedChars: {SanitizedChars}. MarkdownRemoved: {MarkdownRemoved}. ListMarkersConverted: {ListMarkersConverted}. CodeBlocksRemoved: {CodeBlocksRemoved}. UrlsRemoved: {UrlsRemoved}. PreviewBefore: {PreviewBefore}. PreviewAfter: {PreviewAfter}. CorrelationId: {CorrelationId}. TurnId: {TurnId}.",
+                sanitization.RawChars,
+                sanitization.SanitizedChars,
+                sanitization.MarkdownRemoved,
+                sanitization.ListMarkersConverted,
+                sanitization.CodeBlocksRemoved,
+                sanitization.UrlsRemoved,
+                PreviewText(spokenText),
+                PreviewText(sanitization.Text),
+                correlationId,
+                correlationId);
+            spokenText = sanitization.Text;
+            if (string.IsNullOrWhiteSpace(spokenText))
+            {
+                return Task.CompletedTask;
+            }
         }
 
         var queueGeneration = Volatile.Read(ref _queueGeneration);
@@ -92,11 +129,14 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
     public Task StopCurrentAsync(CancellationToken cancellationToken = default)
     {
         CancellationTokenSource? cancellation;
+        StreamingFinalAnswerPlaybackSession? streamingSession;
         lock (_playbackControlLock)
         {
             cancellation = _activeSpeechCancellation;
+            streamingSession = _activeStreamingSession;
         }
 
+        _ = streamingSession?.CancelAsync("stop_current_requested", cancellationToken);
         cancellation?.Cancel();
         return Task.CompletedTask;
     }
@@ -130,7 +170,63 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
     public Task ClearQueueAsync(CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref _queueGeneration);
+        StreamingFinalAnswerPlaybackSession? streamingSession;
+        lock (_playbackControlLock)
+        {
+            streamingSession = _activeStreamingSession;
+        }
+
+        _ = streamingSession?.CancelAsync("queue_cleared", cancellationToken);
         return StopCurrentAsync(cancellationToken);
+    }
+
+    public Task<IStreamingFinalAnswerPlaybackSession> BeginStreamingFinalAnswerAsync(
+        string turnId,
+        string? correlationId,
+        Func<AssistantVisualEvent, CancellationToken, Task> sendEventAsync,
+        string? originalUserQuestion = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(turnId))
+        {
+            throw new ArgumentException("Turn id is required.", nameof(turnId));
+        }
+
+        var normalizedTurnId = turnId.Trim();
+        var normalizedCorrelationId = string.IsNullOrWhiteSpace(correlationId)
+            ? normalizedTurnId
+            : correlationId.Trim();
+        var generationId = IncrementFinalAnswerGeneration(normalizedTurnId);
+        var session = new StreamingFinalAnswerPlaybackSession(
+            this,
+            normalizedTurnId,
+            normalizedCorrelationId,
+            generationId,
+            sendEventAsync,
+            originalUserQuestion,
+            _streamingOptions,
+            cancellationToken);
+
+        StreamingFinalAnswerPlaybackSession? previousSession;
+        lock (_playbackControlLock)
+        {
+            previousSession = _activeStreamingSession;
+            _activeStreamingSession = session;
+        }
+
+        if (previousSession is not null)
+        {
+            _ = previousSession.CancelAsync("superseded_by_new_streaming_final_answer", CancellationToken.None);
+        }
+
+        session.Start();
+        _logger.LogInformation(
+            "StreamingFinalAnswerSessionStarted TurnId: {TurnId}. CorrelationId: {CorrelationId}. GenerationId: {GenerationId}. SessionId: {SessionId}.",
+            normalizedTurnId,
+            normalizedCorrelationId,
+            generationId,
+            session.SessionId);
+        return Task.FromResult<IStreamingFinalAnswerPlaybackSession>(session);
     }
 
     public Task<ProvisionalAudioHoldResult> BeginProvisionalAudioHoldAsync(
@@ -212,6 +308,18 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
                 state.BufferedWaveProvider?.BufferedBytes,
                 state.BufferedWaveProvider?.BufferDuration,
                 state.TurnGeneration);
+
+            _ = EmitAssistantUiStateImmediateAsync(
+                AssistantUiStateEvent.Create(
+                    "listening",
+                    "provisional_audio_hold_started",
+                    state.CorrelationId,
+                    state.TurnId,
+                    speechItemType: MapSpeechItemType(state.ItemType),
+                    audiblePlaybackActive: false,
+                    interruptionState: "held_for_user_speech"),
+                nameof(AssistantSpeechPlaybackService),
+                cancellationToken);
 
             return Task.FromResult(new ProvisionalAudioHoldResult(
                 Success: true,
@@ -320,9 +428,16 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
 
         CancellationTokenSource? cancellation = null;
         ActiveSpeechPlaybackSnapshot? snapshot = null;
+        StreamingFinalAnswerPlaybackSession? streamingSession = null;
         lock (_playbackControlLock)
         {
             snapshot = _activePlaybackSnapshot;
+            if (_activeStreamingSession is not null
+                && string.Equals(_activeStreamingSession.TurnId, normalizedTurnId, StringComparison.OrdinalIgnoreCase))
+            {
+                streamingSession = _activeStreamingSession;
+            }
+
             if (snapshot is { IsActive: true }
                 && string.Equals(snapshot.AssistantTurnId, normalizedTurnId, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(snapshot.SpeechType, SpeechPlaybackItemType.FinalAnswer.ToString(), StringComparison.OrdinalIgnoreCase))
@@ -331,6 +446,7 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
             }
         }
 
+        _ = streamingSession?.CancelAsync(reason, cancellationToken);
         cancellation?.Cancel();
         _logger.LogInformation(
             "conversational_interruption_speech_channel_flushed TurnId: {TurnId}. CorrelationId: {CorrelationId}. SpeechType: {SpeechType}. ItemType: {ItemType}. CurrentGenerationId: {CurrentGenerationId}. ActivePlaybackCancelled: {ActivePlaybackCancelled}. Reason: {Reason}.",
@@ -426,11 +542,28 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
 
             if (queueGeneration != Volatile.Read(ref _queueGeneration))
             {
-                _logger.LogInformation(
-                    "Speech playback item skipped because queue generation changed. CorrelationId: {CorrelationId}. ItemType: {ItemType}.",
-                    correlationId,
-                    itemType);
-                return;
+                var currentQueueGeneration = Volatile.Read(ref _queueGeneration);
+                if (itemType is SpeechPlaybackItemType.StopConfirmation)
+                {
+                    _logger.LogInformation(
+                        "stop_confirmation_generation_mismatch_ignored TurnId: {TurnId}. CorrelationId: {CorrelationId}. ExpectedGenerationId: {ExpectedGenerationId}. CurrentGenerationId: {CurrentGenerationId}. ItemType: {ItemType}. WasStopConfirmation: {WasStopConfirmation}.",
+                        correlationId,
+                        correlationId,
+                        queueGeneration,
+                        currentQueueGeneration,
+                        itemType,
+                        true);
+                }
+                else
+                {
+                    LogQueueGenerationSkipped(
+                        correlationId,
+                        itemType,
+                        queueGeneration,
+                        currentQueueGeneration,
+                        "queue_generation_changed");
+                    return;
+                }
             }
 
             if (cancelOnlyBeforePlayback && cancellationToken.IsCancellationRequested)
@@ -456,6 +589,16 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
                     "Interruption-owned speech playback active. CorrelationId: {CorrelationId}. ItemType: {ItemType}.",
                     correlationId,
                     itemType);
+                if (itemType is SpeechPlaybackItemType.StopConfirmation)
+                {
+                    _logger.LogInformation(
+                        "stop_confirmation_playback_started TurnId: {TurnId}. CorrelationId: {CorrelationId}. ItemType: {ItemType}. ExpectedGenerationId: {ExpectedGenerationId}. CurrentGenerationId: {CurrentGenerationId}.",
+                        correlationId,
+                        correlationId,
+                        itemType,
+                        queueGeneration,
+                        Volatile.Read(ref _queueGeneration));
+                }
             }
             else
             {
@@ -486,6 +629,14 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
             {
                 _logger.LogInformation(
                     "Active acknowledgement/progress playback completed. CorrelationId: {CorrelationId}. ItemType: {ItemType}.",
+                    correlationId,
+                    itemType);
+            }
+            else if (itemType is SpeechPlaybackItemType.StopConfirmation)
+            {
+                _logger.LogInformation(
+                    "stop_confirmation_playback_completed TurnId: {TurnId}. CorrelationId: {CorrelationId}. ItemType: {ItemType}.",
+                    correlationId,
                     correlationId,
                     itemType);
             }
@@ -543,6 +694,10 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
         var totalBytes = 0;
         var sampleRate = 0;
         var channels = 0;
+        var audioWriteStarted = false;
+        var finalAnswerChunkSequence = 0;
+        var ttsCompleted = 0;
+        var finalAnswerInChunkGap = 0;
         var speechContext = new BargeInSpeechContext
         {
             AssistantTurnId = string.IsNullOrWhiteSpace(correlationId) ? Guid.NewGuid().ToString("N") : correlationId,
@@ -554,7 +709,18 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
         try
         {
             using var logContext = SpeechSynthesisLogContext.Push(speechCacheKey, isReplayableSpeech);
-            await _voiceSynthesisService.StreamSynthesizeAsync(
+            if (itemType is SpeechPlaybackItemType.StopConfirmation)
+            {
+                _logger.LogInformation(
+                    "stop_confirmation_tts_started TurnId: {TurnId}. CorrelationId: {CorrelationId}. Text: {Text}. TextChars: {TextChars}. CancellationRequested: {CancellationRequested}.",
+                    correlationId,
+                    correlationId,
+                    text,
+                    text.Length,
+                    cancellationToken.IsCancellationRequested);
+            }
+
+            await _voiceSynthesisService.StreamSynthesizeChunksAsync(
                 text,
                 (metadata, token) =>
                 {
@@ -576,6 +742,19 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
                         bufferedWaveProvider,
                         _playbackReferenceTap,
                         correlationId));
+                    if (itemType is SpeechPlaybackItemType.StopConfirmation)
+                    {
+                        _logger.LogInformation(
+                            "stop_confirmation_output_opened TurnId: {TurnId}. CorrelationId: {CorrelationId}. SampleRate: {SampleRate}. Channels: {Channels}. WaveOutPlaybackState: {WaveOutPlaybackState}. Volume: {Volume}. CancellationRequested: {CancellationRequested}.",
+                            correlationId,
+                            correlationId,
+                            sampleRate,
+                            channels,
+                            waveOut.PlaybackState,
+                            waveOut.Volume,
+                            token.IsCancellationRequested);
+                    }
+
                     lock (_playbackControlLock)
                     {
                         if (ReferenceEquals(_activePlaybackState, activeState))
@@ -587,8 +766,13 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
                     }
                     return Task.CompletedTask;
                 },
-                async (audio, token) =>
+                async (chunk, token) =>
                 {
+                    if (itemType is SpeechPlaybackItemType.FinalAnswer)
+                    {
+                        await WaitWhilePlaybackHeldAsync(activeState, token);
+                    }
+
                     if (IsObsoleteFinalAnswer(correlationId, itemType, turnGeneration, out var currentGeneration))
                     {
                         LogObsoleteSpeechDiscarded(correlationId, itemType, turnGeneration, currentGeneration, "obsolete_during_tts_stream");
@@ -600,10 +784,57 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
                         return;
                     }
 
-                    var buffer = audio.ToArray();
+                    var buffer = chunk.Audio.ToArray();
+                    if (itemType is SpeechPlaybackItemType.StopConfirmation && !audioWriteStarted)
+                    {
+                        audioWriteStarted = true;
+                        _logger.LogInformation(
+                            "stop_confirmation_audio_write_started TurnId: {TurnId}. CorrelationId: {CorrelationId}. AudioBytes: {AudioBytes}. BufferedBytes: {BufferedBytes}. WaveOutPlaybackState: {WaveOutPlaybackState}. Volume: {Volume}. WasCancellationRequested: {WasCancellationRequested}.",
+                            correlationId,
+                            correlationId,
+                            buffer.Length,
+                            bufferedWaveProvider.BufferedBytes,
+                            waveOut.PlaybackState,
+                            waveOut.Volume,
+                            token.IsCancellationRequested);
+                    }
+
                     await WaitForPlaybackBufferSpaceAsync(bufferedWaveProvider, buffer.Length, token);
                     bufferedWaveProvider.AddSamples(buffer, 0, buffer.Length);
                     totalBytes += buffer.Length;
+                    var finalAnswerChunkSequenceForThisAudio = itemType is SpeechPlaybackItemType.FinalAnswer
+                        ? Interlocked.Increment(ref finalAnswerChunkSequence)
+                        : 0;
+                    if (itemType is SpeechPlaybackItemType.FinalAnswer && !chunk.IsFinalChunk)
+                    {
+                        ScheduleFinalAnswerChunkGapAsync(
+                            activeState,
+                            bufferedWaveProvider,
+                            playbackStopwatch,
+                            totalBytes,
+                            sampleRate,
+                            channels,
+                            correlationId,
+                            finalAnswerChunkSequenceForThisAudio,
+                            () => Volatile.Read(ref finalAnswerChunkSequence),
+                            () => Volatile.Read(ref ttsCompleted) == 1,
+                            () => Volatile.Write(ref finalAnswerInChunkGap, 1),
+                            cancellationToken);
+                    }
+
+                    if (itemType is SpeechPlaybackItemType.StopConfirmation)
+                    {
+                        _logger.LogInformation(
+                            "stop_confirmation_audio_write_completed TurnId: {TurnId}. CorrelationId: {CorrelationId}. AudioBytes: {AudioBytes}. TotalAudioBytes: {TotalAudioBytes}. BufferedBytes: {BufferedBytes}. WaveOutPlaybackState: {WaveOutPlaybackState}. Volume: {Volume}. WasCancellationRequested: {WasCancellationRequested}.",
+                            correlationId,
+                            correlationId,
+                            buffer.Length,
+                            totalBytes,
+                            bufferedWaveProvider.BufferedBytes,
+                            waveOut.PlaybackState,
+                            waveOut.Volume,
+                            token.IsCancellationRequested);
+                    }
 
                     if (!playbackStarted)
                     {
@@ -624,10 +855,49 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
                         }
 
                         await TrySendEventAsync(sendEventAsync, "SPEAKING_START", correlationId, null, token);
+                        await EmitAssistantUiStateImmediateAsync(
+                            AssistantUiStateEvent.Create(
+                                "speaking",
+                                itemType is SpeechPlaybackItemType.StopConfirmation
+                                    ? "stop_confirmation_playback_started"
+                                    : "audio_playback_started",
+                                correlationId,
+                                correlationId,
+                                speechItemType: MapSpeechItemType(itemType),
+                                audiblePlaybackActive: true),
+                            nameof(AssistantSpeechPlaybackService),
+                            token);
                         _logger.LogInformation(
                             "Voice timing: backend playback started. CorrelationId: {CorrelationId}. ElapsedMs: {ElapsedMs}.",
                             correlationId,
                             stopwatch.Elapsed.TotalMilliseconds);
+                        if (itemType is SpeechPlaybackItemType.StopConfirmation)
+                        {
+                            _logger.LogInformation(
+                                "stop_confirmation_output_playback_started TurnId: {TurnId}. CorrelationId: {CorrelationId}. AudioBytes: {AudioBytes}. BufferedBytes: {BufferedBytes}. WaveOutPlaybackState: {WaveOutPlaybackState}. Volume: {Volume}. WasCancellationRequested: {WasCancellationRequested}.",
+                                correlationId,
+                                correlationId,
+                                totalBytes,
+                                bufferedWaveProvider.BufferedBytes,
+                                waveOut.PlaybackState,
+                                waveOut.Volume,
+                                token.IsCancellationRequested);
+                        }
+                    }
+                    else if (itemType is SpeechPlaybackItemType.FinalAnswer
+                             && Volatile.Read(ref finalAnswerInChunkGap) == 1
+                             && Interlocked.Exchange(ref finalAnswerInChunkGap, 0) == 1)
+                    {
+                        await EmitAssistantUiStateImmediateAsync(
+                            AssistantUiStateEvent.Create(
+                                "speaking",
+                                "audio_playback_started",
+                                correlationId,
+                                correlationId,
+                                speechItemType: "final_answer",
+                                audiblePlaybackActive: true),
+                            nameof(AssistantSpeechPlaybackService),
+                            token);
                     }
 
                     if (lastEnergyEvent.ElapsedMilliseconds >= EnergyEventIntervalMs)
@@ -637,10 +907,37 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
                     }
                 },
                 cancellationToken);
+            Volatile.Write(ref ttsCompleted, 1);
+            if (itemType is SpeechPlaybackItemType.StopConfirmation)
+            {
+                _logger.LogInformation(
+                    "stop_confirmation_tts_completed TurnId: {TurnId}. CorrelationId: {CorrelationId}. Text: {Text}. TextChars: {TextChars}. AudioBytes: {AudioBytes}. AudioDurationSeconds: {AudioDurationSeconds}. CancellationRequested: {CancellationRequested}.",
+                    correlationId,
+                    correlationId,
+                    text,
+                    text.Length,
+                    totalBytes,
+                    CalculateExpectedPlaybackMs(totalBytes, sampleRate, channels) / 1000.0,
+                    cancellationToken.IsCancellationRequested);
+            }
 
             if (waveOut is not null && bufferedWaveProvider is not null)
             {
                 var drainStartedMs = stopwatch.Elapsed.TotalMilliseconds;
+                if (itemType is SpeechPlaybackItemType.StopConfirmation)
+                {
+                    _logger.LogInformation(
+                        "stop_confirmation_output_drain_started TurnId: {TurnId}. CorrelationId: {CorrelationId}. AudioBytes: {AudioBytes}. BufferedBytes: {BufferedBytes}. PlaybackElapsedMs: {PlaybackElapsedMs}. WaveOutPlaybackState: {WaveOutPlaybackState}. Volume: {Volume}. WasCancellationRequested: {WasCancellationRequested}.",
+                        correlationId,
+                        correlationId,
+                        totalBytes,
+                        bufferedWaveProvider.BufferedBytes,
+                        playbackStopwatch.Elapsed.TotalMilliseconds,
+                        waveOut.PlaybackState,
+                        waveOut.Volume,
+                        cancellationToken.IsCancellationRequested);
+                }
+
                 await WaitForPlaybackDrainAsync(
                     bufferedWaveProvider,
                     playbackStopwatch,
@@ -655,6 +952,20 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
                     stopwatch.Elapsed.TotalMilliseconds - drainStartedMs,
                     playbackStopwatch.Elapsed.TotalMilliseconds,
                     bufferedWaveProvider.BufferedBytes);
+                if (itemType is SpeechPlaybackItemType.StopConfirmation)
+                {
+                    _logger.LogInformation(
+                        "stop_confirmation_output_drain_completed TurnId: {TurnId}. CorrelationId: {CorrelationId}. AudioBytes: {AudioBytes}. BufferedBytes: {BufferedBytes}. PlaybackElapsedMs: {PlaybackElapsedMs}. DrainMs: {DrainMs}. WaveOutPlaybackState: {WaveOutPlaybackState}. Volume: {Volume}. WasCancellationRequested: {WasCancellationRequested}.",
+                        correlationId,
+                        correlationId,
+                        totalBytes,
+                        bufferedWaveProvider.BufferedBytes,
+                        playbackStopwatch.Elapsed.TotalMilliseconds,
+                        stopwatch.Elapsed.TotalMilliseconds - drainStartedMs,
+                        waveOut.PlaybackState,
+                        waveOut.Volume,
+                        cancellationToken.IsCancellationRequested);
+                }
 
                 waveOut.Stop();
             }
@@ -668,6 +979,17 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
                 }
 
                 await TrySendEventAsync(sendEventAsync, "SPEAKING_END", correlationId, null, cancellationToken);
+                await EmitPlaybackCompletionUiStateAsync(
+                    AssistantUiStateEvent.Create(
+                        CompletionBaseState(itemType),
+                        CompletionReason(itemType),
+                        correlationId,
+                        correlationId,
+                        speechItemType: MapSpeechItemType(itemType),
+                        audiblePlaybackActive: false),
+                    itemType,
+                    nameof(AssistantSpeechPlaybackService),
+                    cancellationToken);
             }
 
             _logger.LogInformation(
@@ -675,6 +997,82 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
                 correlationId,
                 totalBytes,
                 stopwatch.Elapsed.TotalMilliseconds);
+        }
+        catch (OperationCanceledException exception)
+        {
+            if (itemType is SpeechPlaybackItemType.StopConfirmation)
+            {
+                if (totalBytes <= 0)
+                {
+                    _logger.LogInformation(
+                        exception,
+                        "stop_confirmation_tts_cancelled TurnId: {TurnId}. CorrelationId: {CorrelationId}. Text: {Text}. TextChars: {TextChars}. AudioBytes: {AudioBytes}. CancellationRequested: {CancellationRequested}. ExceptionType: {ExceptionType}. ExceptionMessage: {ExceptionMessage}.",
+                        correlationId,
+                        correlationId,
+                        text,
+                        text.Length,
+                        totalBytes,
+                        cancellationToken.IsCancellationRequested,
+                        exception.GetType().Name,
+                        exception.Message);
+                }
+
+                _logger.LogInformation(
+                    exception,
+                    "stop_confirmation_playback_cancelled_after_start TurnId: {TurnId}. CorrelationId: {CorrelationId}. Reason: {Reason}. CancellationSource: {CancellationSource}. CurrentItemType: {CurrentItemType}. PreviousItemType: {PreviousItemType}. ExpectedGenerationId: {ExpectedGenerationId}. CurrentGenerationId: {CurrentGenerationId}. WasActivePlaybackReplaced: {WasActivePlaybackReplaced}. WasClearQueueCalled: {WasClearQueueCalled}. WasCancelCurrentSpeechCalled: {WasCancelCurrentSpeechCalled}. WasBackendSpeechPlaybackCancelledRaised: {WasBackendSpeechPlaybackCancelledRaised}. AudioBytes: {AudioBytes}. PlaybackStarted: {PlaybackStarted}. WasCancellationRequested: {WasCancellationRequested}. ExceptionType: {ExceptionType}. ExceptionMessage: {ExceptionMessage}.",
+                    correlationId,
+                    correlationId,
+                    "stop_confirmation_playback_cancelled",
+                    cancellationToken.IsCancellationRequested ? "playback_cancellation_token" : "unknown",
+                    itemType,
+                    null,
+                    turnGeneration,
+                    Volatile.Read(ref _queueGeneration),
+                    !ReferenceEquals(_activePlaybackState, activeState),
+                    cancellationToken.IsCancellationRequested,
+                    cancellationToken.IsCancellationRequested,
+                    true,
+                    totalBytes,
+                    playbackStarted,
+                    cancellationToken.IsCancellationRequested,
+                    exception.GetType().Name,
+                    exception.Message);
+            }
+
+            throw;
+        }
+        catch (Exception exception)
+        {
+            if (itemType is SpeechPlaybackItemType.StopConfirmation)
+            {
+                if (totalBytes <= 0)
+                {
+                    _logger.LogError(
+                        exception,
+                        "stop_confirmation_tts_failed TurnId: {TurnId}. CorrelationId: {CorrelationId}. Text: {Text}. TextChars: {TextChars}. AudioBytes: {AudioBytes}. CancellationRequested: {CancellationRequested}. ExceptionType: {ExceptionType}. ExceptionMessage: {ExceptionMessage}.",
+                        correlationId,
+                        correlationId,
+                        text,
+                        text.Length,
+                        totalBytes,
+                        cancellationToken.IsCancellationRequested,
+                        exception.GetType().Name,
+                        exception.Message);
+                }
+
+                _logger.LogError(
+                    exception,
+                    "stop_confirmation_playback_failed TurnId: {TurnId}. CorrelationId: {CorrelationId}. AudioBytes: {AudioBytes}. PlaybackStarted: {PlaybackStarted}. WasCancellationRequested: {WasCancellationRequested}. ExceptionType: {ExceptionType}. ExceptionMessage: {ExceptionMessage}.",
+                    correlationId,
+                    correlationId,
+                    totalBytes,
+                    playbackStarted,
+                    cancellationToken.IsCancellationRequested,
+                    exception.GetType().Name,
+                    exception.Message);
+            }
+
+            throw;
         }
         finally
         {
@@ -798,6 +1196,60 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
         }
     }
 
+    private void ScheduleFinalAnswerChunkGapAsync(
+        ActivePlaybackControlState activeState,
+        BufferedWaveProvider bufferedWaveProvider,
+        Stopwatch playbackStopwatch,
+        int bytesAfterChunk,
+        int sampleRate,
+        int channels,
+        string? correlationId,
+        int chunkSequence,
+        Func<int> getLatestChunkSequence,
+        Func<bool> isTtsCompleted,
+        Action markChunkGap,
+        CancellationToken cancellationToken)
+    {
+        _ = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    await WaitForPlaybackDrainAsync(
+                        bufferedWaveProvider,
+                        playbackStopwatch,
+                        activeState,
+                        bytesAfterChunk,
+                        sampleRate,
+                        channels,
+                        cancellationToken);
+
+                    if (cancellationToken.IsCancellationRequested
+                        || isTtsCompleted()
+                        || getLatestChunkSequence() != chunkSequence)
+                    {
+                        return;
+                    }
+
+                    markChunkGap();
+                    await EmitAssistantUiStateCoalescedAsync(
+                        AssistantUiStateEvent.Create(
+                            "idle",
+                            "tts_chunk_gap",
+                            correlationId,
+                            correlationId,
+                            speechItemType: "final_answer",
+                            audiblePlaybackActive: false),
+                        nameof(AssistantSpeechPlaybackService),
+                        cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+            },
+            CancellationToken.None);
+    }
+
     private static long CalculateExpectedPlaybackMs(int totalBytes, int sampleRate, int channels)
     {
         if (totalBytes <= 0 || sampleRate <= 0 || channels <= 0)
@@ -839,6 +1291,34 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
         lock (_playbackControlLock)
         {
             return ReferenceEquals(_activePlaybackState, state) && state.IsHeld;
+        }
+    }
+
+    private async Task WaitWhilePlaybackHeldAsync(
+        ActivePlaybackControlState state,
+        CancellationToken cancellationToken)
+    {
+        var logged = false;
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            if (!IsPlaybackHeld(state))
+            {
+                return;
+            }
+
+            if (!logged)
+            {
+                logged = true;
+                _logger.LogInformation(
+                    "future_tts_chunk_suspended_during_interruption TurnId: {TurnId}. CorrelationId: {CorrelationId}. HoldId: {HoldId}. ItemType: {ItemType}. InterruptionSttPending: {InterruptionSttPending}.",
+                    state.TurnId,
+                    state.CorrelationId,
+                    state.HoldId,
+                    state.ItemType,
+                    _gpuWorkScheduler?.HasPendingInterruptionStt == true);
+            }
+
+            await Task.Delay(DrainPollMs, cancellationToken);
         }
     }
 
@@ -892,11 +1372,38 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
             try
             {
                 await Task.Delay(timeoutMs, timeoutCancellation.Token);
+                var safetyTimeoutMs = Math.Max(timeoutMs, 30000);
+                var safetyDeadline = DateTimeOffset.UtcNow.AddMilliseconds(safetyTimeoutMs);
+                var loggedSttPendingDeferral = false;
+                while (_gpuWorkScheduler?.HasPendingInterruptionStt == true
+                       && DateTimeOffset.UtcNow < safetyDeadline)
+                {
+                    if (!loggedSttPendingDeferral)
+                    {
+                        loggedSttPendingDeferral = true;
+                        _logger.LogInformation(
+                            "provisional_audio_hold_timeout_resume_blocked_stt_pending HoldId: {HoldId}. TimeoutMs: {TimeoutMs}. SafetyTimeoutMs: {SafetyTimeoutMs}.",
+                            holdId,
+                            timeoutMs,
+                            safetyTimeoutMs);
+                    }
+
+                    await Task.Delay(Math.Min(250, timeoutMs), timeoutCancellation.Token);
+                }
+
                 lock (_playbackControlLock)
                 {
                     if (IsMatchingHeldPlayback(_activePlaybackState, holdId))
                     {
-                        ResumeHeldPlaybackLocked(_activePlaybackState!, "provisional audio hold timed out", "provisional_audio_hold_timeout_resumed");
+                        var sttStillPending = _gpuWorkScheduler?.HasPendingInterruptionStt == true;
+                        ResumeHeldPlaybackLocked(
+                            _activePlaybackState!,
+                            sttStillPending
+                                ? "provisional audio hold safety timeout expired while interruption STT was still pending"
+                                : "provisional audio hold timed out",
+                            sttStillPending
+                                ? "provisional_audio_hold_safety_timeout_resumed"
+                                : "provisional_audio_hold_timeout_resumed");
                     }
                 }
             }
@@ -1031,6 +1538,47 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
             reason);
     }
 
+    private void LogQueueGenerationSkipped(
+        string? turnId,
+        SpeechPlaybackItemType itemType,
+        long expectedGenerationId,
+        long currentGenerationId,
+        string reason)
+    {
+        var wasStopConfirmation = itemType is SpeechPlaybackItemType.StopConfirmation;
+        if (wasStopConfirmation)
+        {
+            _logger.LogInformation(
+                "stop_confirmation_playback_skipped TurnId: {TurnId}. CorrelationId: {CorrelationId}. Reason: {Reason}. ExpectedGenerationId: {ExpectedGenerationId}. CurrentGenerationId: {CurrentGenerationId}. ItemType: {ItemType}. WasStopConfirmation: {WasStopConfirmation}.",
+                turnId,
+                turnId,
+                reason,
+                expectedGenerationId,
+                currentGenerationId,
+                itemType,
+                wasStopConfirmation);
+            return;
+        }
+
+        _logger.LogInformation(
+            "Speech playback item skipped because queue generation changed. TurnId: {TurnId}. CorrelationId: {CorrelationId}. Reason: {Reason}. ExpectedGenerationId: {ExpectedGenerationId}. CurrentGenerationId: {CurrentGenerationId}. ItemType: {ItemType}. WasStopConfirmation: {WasStopConfirmation}.",
+            turnId,
+            turnId,
+            reason,
+            expectedGenerationId,
+            currentGenerationId,
+            itemType,
+            wasStopConfirmation);
+    }
+
+    private static string PreviewText(string text)
+    {
+        var normalized = text.ReplaceLineEndings(" ").Trim();
+        return normalized.Length <= 160
+            ? normalized
+            : $"{normalized[..157]}...";
+    }
+
     private static async Task TrySendEventAsync(
         Func<AssistantVisualEvent, CancellationToken, Task> sendEventAsync,
         string eventName,
@@ -1063,6 +1611,73 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
         }
     }
 
+    private Task EmitAssistantUiStateImmediateAsync(
+        AssistantUiStateEvent uiState,
+        string source,
+        CancellationToken cancellationToken)
+    {
+        return _assistantUiStateBroadcaster?.EmitImmediateAsync(uiState, source, cancellationToken)
+            ?? Task.CompletedTask;
+    }
+
+    private Task EmitAssistantUiStateCoalescedAsync(
+        AssistantUiStateEvent uiState,
+        string source,
+        CancellationToken cancellationToken)
+    {
+        return _assistantUiStateBroadcaster?.RequestCoalescedStateAsync(uiState, source, cancellationToken)
+            ?? Task.CompletedTask;
+    }
+
+    private Task EmitPlaybackCompletionUiStateAsync(
+        AssistantUiStateEvent uiState,
+        SpeechPlaybackItemType itemType,
+        string source,
+        CancellationToken cancellationToken)
+    {
+        if (itemType is SpeechPlaybackItemType.FinalAnswer or SpeechPlaybackItemType.StopConfirmation)
+        {
+            return _assistantUiStateBroadcaster?.EmitTerminalAsync(uiState, source, cancellationToken)
+                ?? Task.CompletedTask;
+        }
+
+        return _assistantUiStateBroadcaster?.RequestCoalescedStateAsync(uiState, source, cancellationToken)
+            ?? Task.CompletedTask;
+    }
+
+    private static string CompletionBaseState(SpeechPlaybackItemType itemType)
+    {
+        return itemType is SpeechPlaybackItemType.Acknowledgement or SpeechPlaybackItemType.Progress
+            ? "thinking"
+            : "idle";
+    }
+
+    private static string CompletionReason(SpeechPlaybackItemType itemType)
+    {
+        return itemType switch
+        {
+            SpeechPlaybackItemType.FinalAnswer => "final_answer_completed",
+            SpeechPlaybackItemType.StopConfirmation => "stop_confirmation_playback_completed",
+            SpeechPlaybackItemType.Acknowledgement => "acknowledgement_playback_completed",
+            SpeechPlaybackItemType.Progress => "progress_playback_completed",
+            _ => "audio_playback_completed"
+        };
+    }
+
+    internal static string MapSpeechItemType(SpeechPlaybackItemType itemType)
+    {
+        return itemType switch
+        {
+            SpeechPlaybackItemType.Acknowledgement => "acknowledgement",
+            SpeechPlaybackItemType.Progress => "progress",
+            SpeechPlaybackItemType.FinalAnswer => "final_answer",
+            SpeechPlaybackItemType.StopConfirmation => "stop_confirmation",
+            SpeechPlaybackItemType.InterruptionClarification => "clarification",
+            SpeechPlaybackItemType.InterruptionContinuation => "continuation",
+            _ => "none"
+        };
+    }
+
     private static double CalculatePcm16Energy(byte[] pcm)
     {
         if (pcm.Length < 2)
@@ -1087,6 +1702,557 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
 
         var rms = Math.Sqrt(sumSquares / sampleCount);
         return Math.Clamp(rms * 4.0, 0.0, 1.0);
+    }
+
+    private Task<StreamingFinalAnswerAudioSegment> SynthesizeStreamingSegmentAsync(
+        StreamingFinalAnswerTextSegment segment,
+        CancellationToken cancellationToken)
+    {
+        return Task.Run(async () =>
+        {
+            var stopwatch = Stopwatch.StartNew();
+            VoiceSynthesisStreamMetadata? metadata = null;
+            var chunks = new List<byte[]>();
+            var audioDurationMs = 0L;
+            await _voiceSynthesisService.StreamSynthesizeChunksAsync(
+                segment.Text,
+                (streamMetadata, _) =>
+                {
+                    metadata = streamMetadata;
+                    return Task.CompletedTask;
+                },
+                (chunk, _) =>
+                {
+                    var audio = chunk.Audio.ToArray();
+                    chunks.Add(audio);
+                    if (metadata is not null)
+                    {
+                        audioDurationMs += CalculateExpectedPlaybackMs(
+                            audio.Length,
+                            metadata.SampleRate,
+                            metadata.Channels);
+                    }
+
+                    return Task.CompletedTask;
+                },
+                cancellationToken);
+
+            stopwatch.Stop();
+            if (metadata is null)
+            {
+                throw new InvalidOperationException("Streaming TTS produced no metadata.");
+            }
+
+            var totalBytes = chunks.Sum(chunk => chunk.Length);
+            var audio = new byte[totalBytes];
+            var offset = 0;
+            foreach (var chunk in chunks)
+            {
+                Buffer.BlockCopy(chunk, 0, audio, offset, chunk.Length);
+                offset += chunk.Length;
+            }
+
+            return new StreamingFinalAnswerAudioSegment(
+                segment,
+                metadata,
+                audio,
+                audioDurationMs,
+                stopwatch.Elapsed);
+        }, CancellationToken.None);
+    }
+
+    private bool IsCurrentStreamingSession(StreamingFinalAnswerPlaybackSession session)
+    {
+        lock (_playbackControlLock)
+        {
+            return ReferenceEquals(_activeStreamingSession, session)
+                && _activeStreamingSession.GenerationId == session.GenerationId;
+        }
+    }
+
+    private void ClearCurrentStreamingSession(StreamingFinalAnswerPlaybackSession session)
+    {
+        lock (_playbackControlLock)
+        {
+            if (ReferenceEquals(_activeStreamingSession, session))
+            {
+                _activeStreamingSession = null;
+            }
+        }
+    }
+
+    private sealed record StreamingFinalAnswerAudioSegment(
+        StreamingFinalAnswerTextSegment TextSegment,
+        VoiceSynthesisStreamMetadata Metadata,
+        byte[] Audio,
+        long AudioDurationMs,
+        TimeSpan TtsDuration);
+
+    private sealed class StreamingFinalAnswerPlaybackSession : IStreamingFinalAnswerPlaybackSession
+    {
+        private readonly AssistantSpeechPlaybackService _owner;
+        private readonly Func<AssistantVisualEvent, CancellationToken, Task> _sendEventAsync;
+        private readonly string? _originalUserQuestion;
+        private readonly Channel<StreamingFinalAnswerTextSegment> _textSegments;
+        private readonly Channel<StreamingFinalAnswerAudioSegment> _readyAudio;
+        private readonly CancellationTokenSource _cancellation;
+        private readonly Stopwatch _stopwatch = Stopwatch.StartNew();
+        private Task? _ttsTask;
+        private Task? _playbackTask;
+        private int _acceptedSegments;
+        private int _audioSegments;
+        private int _playedSegments;
+        private double _totalTtsMs;
+        private double _totalInterSegmentGapMs;
+        private long? _firstSegmentAcceptedMs;
+        private long? _firstAudioReadyMs;
+        private long? _firstPlaybackStartedMs;
+        private string? _cancellationReason;
+
+        public StreamingFinalAnswerPlaybackSession(
+            AssistantSpeechPlaybackService owner,
+            string turnId,
+            string correlationId,
+            long generationId,
+            Func<AssistantVisualEvent, CancellationToken, Task> sendEventAsync,
+            string? originalUserQuestion,
+            StreamingResponseOptions options,
+            CancellationToken cancellationToken)
+        {
+            _owner = owner;
+            TurnId = turnId;
+            CorrelationId = correlationId;
+            GenerationId = generationId;
+            _sendEventAsync = sendEventAsync;
+            _originalUserQuestion = originalUserQuestion;
+            _cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            SessionId = Guid.NewGuid().ToString("N");
+
+            _textSegments = Channel.CreateBounded<StreamingFinalAnswerTextSegment>(new BoundedChannelOptions(Math.Max(1, options.MaxPendingTtsSegments))
+            {
+                FullMode = BoundedChannelFullMode.Wait,
+                SingleReader = true,
+                SingleWriter = false
+            });
+            var readyAudioCapacity = Math.Max(1, Math.Min(
+                Math.Max(1, options.MaxReadyAudioSegments),
+                Math.Max(1, options.PrebufferSegments + 1)));
+            _readyAudio = Channel.CreateBounded<StreamingFinalAnswerAudioSegment>(new BoundedChannelOptions(readyAudioCapacity)
+            {
+                FullMode = BoundedChannelFullMode.Wait,
+                SingleReader = true,
+                SingleWriter = true
+            });
+        }
+
+        public string SessionId { get; }
+
+        public string TurnId { get; }
+
+        public string CorrelationId { get; }
+
+        public long GenerationId { get; }
+
+        public void Start()
+        {
+            _ttsTask = Task.Run(RunTtsProducerAsync, CancellationToken.None);
+            _playbackTask = Task.Run(RunPlaybackConsumerAsync, CancellationToken.None);
+        }
+
+        public async Task EnqueueTextSegmentAsync(
+            StreamingFinalAnswerTextSegment segment,
+            CancellationToken cancellationToken = default)
+        {
+            if (!_owner.IsCurrentStreamingSession(this) || segment.GenerationId != GenerationId)
+            {
+                _owner._logger.LogInformation(
+                    "StreamingSegmentDroppedBecauseStale TurnId: {TurnId}. CorrelationId: {CorrelationId}. GenerationId: {GenerationId}. SegmentIndex: {SegmentIndex}. SessionId: {SessionId}.",
+                    segment.TurnId,
+                    segment.CorrelationId,
+                    segment.GenerationId,
+                    segment.SegmentIndex,
+                    SessionId);
+                return;
+            }
+
+            _firstSegmentAcceptedMs ??= _stopwatch.ElapsedMilliseconds;
+            Interlocked.Increment(ref _acceptedSegments);
+            _owner._logger.LogInformation(
+                "StreamingFinalAnswerFirstSegmentAccepted TurnId: {TurnId}. CorrelationId: {CorrelationId}. GenerationId: {GenerationId}. SegmentIndex: {SegmentIndex}. SessionId: {SessionId}. ElapsedMs: {ElapsedMs}. TextChars: {TextChars}. BoundaryKind: {BoundaryKind}.",
+                TurnId,
+                CorrelationId,
+                GenerationId,
+                segment.SegmentIndex,
+                SessionId,
+                _stopwatch.ElapsedMilliseconds,
+                segment.Text.Length,
+                segment.BoundaryKind);
+            using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(_cancellation.Token, cancellationToken);
+            await _textSegments.Writer.WriteAsync(segment, linkedCancellation.Token);
+        }
+
+        public async Task CompleteInputAsync(CancellationToken cancellationToken = default)
+        {
+            _textSegments.Writer.TryComplete();
+            await Task.CompletedTask;
+        }
+
+        public async Task CancelAsync(string reason, CancellationToken cancellationToken = default)
+        {
+            _cancellationReason = reason;
+            _owner._logger.LogInformation(
+                "StreamingFinalAnswerSessionCancelled TurnId: {TurnId}. CorrelationId: {CorrelationId}. GenerationId: {GenerationId}. SessionId: {SessionId}. Reason: {Reason}.",
+                TurnId,
+                CorrelationId,
+                GenerationId,
+                SessionId,
+                reason);
+            await _cancellation.CancelAsync();
+            _textSegments.Writer.TryComplete();
+            _readyAudio.Writer.TryComplete();
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await CancelAsync("disposed", CancellationToken.None);
+            _cancellation.Dispose();
+        }
+
+        private async Task RunTtsProducerAsync()
+        {
+            try
+            {
+                await foreach (var segment in _textSegments.Reader.ReadAllAsync(_cancellation.Token))
+                {
+                    if (!_owner.IsCurrentStreamingSession(this) || segment.GenerationId != GenerationId)
+                    {
+                        _owner._logger.LogInformation(
+                            "StreamingSegmentDroppedBecauseStale TurnId: {TurnId}. CorrelationId: {CorrelationId}. GenerationId: {GenerationId}. SegmentIndex: {SegmentIndex}. SessionId: {SessionId}.",
+                            segment.TurnId,
+                            segment.CorrelationId,
+                            segment.GenerationId,
+                            segment.SegmentIndex,
+                            SessionId);
+                        continue;
+                    }
+
+                    var queuedMs = _stopwatch.ElapsedMilliseconds;
+                    _owner._logger.LogInformation(
+                        "StreamingFinalAnswerTtsQueued TurnId: {TurnId}. CorrelationId: {CorrelationId}. GenerationId: {GenerationId}. SegmentIndex: {SegmentIndex}. SessionId: {SessionId}. ElapsedMs: {ElapsedMs}. TextChars: {TextChars}.",
+                        TurnId,
+                        CorrelationId,
+                        GenerationId,
+                        segment.SegmentIndex,
+                        SessionId,
+                        queuedMs,
+                        segment.Text.Length);
+                    var audio = await _owner.SynthesizeStreamingSegmentAsync(segment, _cancellation.Token);
+                    if (!_owner.IsCurrentStreamingSession(this) || segment.GenerationId != GenerationId)
+                    {
+                        _owner._logger.LogInformation(
+                            "StreamingTtsResultDroppedBecauseStale TurnId: {TurnId}. CorrelationId: {CorrelationId}. GenerationId: {GenerationId}. SegmentIndex: {SegmentIndex}. SessionId: {SessionId}.",
+                            segment.TurnId,
+                            segment.CorrelationId,
+                            segment.GenerationId,
+                            segment.SegmentIndex,
+                            SessionId);
+                        continue;
+                    }
+
+                    _firstAudioReadyMs ??= _stopwatch.ElapsedMilliseconds;
+                    Interlocked.Increment(ref _audioSegments);
+                    _totalTtsMs += audio.TtsDuration.TotalMilliseconds;
+                    _owner._logger.LogInformation(
+                        "StreamingFinalAnswerFirstAudioReady TurnId: {TurnId}. CorrelationId: {CorrelationId}. GenerationId: {GenerationId}. SegmentIndex: {SegmentIndex}. SessionId: {SessionId}. ElapsedMs: {ElapsedMs}. TtsMs: {TtsMs}. AudioDurationMs: {AudioDurationMs}. AudioBytes: {AudioBytes}.",
+                        TurnId,
+                        CorrelationId,
+                        GenerationId,
+                        segment.SegmentIndex,
+                        SessionId,
+                        _stopwatch.ElapsedMilliseconds,
+                        audio.TtsDuration.TotalMilliseconds,
+                        audio.AudioDurationMs,
+                        audio.Audio.Length);
+                    await _readyAudio.Writer.WriteAsync(audio, _cancellation.Token);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            finally
+            {
+                _readyAudio.Writer.TryComplete();
+            }
+        }
+
+        private async Task RunPlaybackConsumerAsync()
+        {
+            try
+            {
+                await _owner._speechGate.WaitAsync(_cancellation.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            using var speechCancellation = CancellationTokenSource.CreateLinkedTokenSource(_cancellation.Token);
+            var activeState = new ActivePlaybackControlState
+            {
+                TurnId = TurnId,
+                CorrelationId = CorrelationId,
+                ItemType = SpeechPlaybackItemType.FinalAnswer,
+                TurnGeneration = GenerationId,
+                Cancellation = speechCancellation,
+                StartedAtUtc = DateTimeOffset.UtcNow
+            };
+            lock (_owner._playbackControlLock)
+            {
+                _owner._activeSpeechCancellation = speechCancellation;
+                _owner._activePlaybackState = activeState;
+                _owner.UpdateActivePlaybackSnapshotLocked(activeState);
+            }
+
+            IWavePlayer? waveOut = null;
+            BufferedWaveProvider? bufferedWaveProvider = null;
+            BargeInSpeechContext? speechContext = null;
+            var playbackStarted = false;
+            var playbackStopwatch = new Stopwatch();
+            var totalBytes = 0;
+            var segmentCompletionTasks = new List<Task>();
+            long cumulativeAudioMs = 0;
+            var spokenTrackingStarted = false;
+
+            try
+            {
+                await foreach (var audio in _readyAudio.Reader.ReadAllAsync(speechCancellation.Token))
+                {
+                    if (!_owner.IsCurrentStreamingSession(this) || audio.TextSegment.GenerationId != GenerationId)
+                    {
+                        _owner._logger.LogInformation(
+                            "StreamingAudioDroppedBecauseStale TurnId: {TurnId}. CorrelationId: {CorrelationId}. GenerationId: {GenerationId}. SegmentIndex: {SegmentIndex}. SessionId: {SessionId}.",
+                            audio.TextSegment.TurnId,
+                            audio.TextSegment.CorrelationId,
+                            audio.TextSegment.GenerationId,
+                            audio.TextSegment.SegmentIndex,
+                            SessionId);
+                        continue;
+                    }
+
+                    if (bufferedWaveProvider is null || waveOut is null)
+                    {
+                        var waveFormat = new WaveFormat(audio.Metadata.SampleRate, 16, audio.Metadata.Channels);
+                        bufferedWaveProvider = new BufferedWaveProvider(waveFormat)
+                        {
+                            BufferDuration = TimeSpan.FromSeconds(PlaybackBufferSeconds),
+                            DiscardOnBufferOverflow = false
+                        };
+                        waveOut = _owner._wavePlayerFactory();
+                        waveOut.Init(new PlaybackReferenceWaveProvider(
+                            bufferedWaveProvider,
+                            _owner._playbackReferenceTap,
+                            CorrelationId));
+                        lock (_owner._playbackControlLock)
+                        {
+                            if (ReferenceEquals(_owner._activePlaybackState, activeState))
+                            {
+                                activeState.WavePlayer = waveOut;
+                                activeState.BufferedWaveProvider = bufferedWaveProvider;
+                                _owner.UpdateActivePlaybackSnapshotLocked(activeState);
+                            }
+                        }
+                    }
+
+                    await _owner.WaitWhilePlaybackHeldAsync(activeState, speechCancellation.Token);
+                    var waitedForTtsWithEmptyPlaybackBuffer = playbackStarted && bufferedWaveProvider.BufferedBytes <= 0;
+                    await WaitForStreamingBufferSpaceAsync(bufferedWaveProvider, audio.Audio.Length, speechCancellation.Token);
+                    bufferedWaveProvider.AddSamples(audio.Audio, 0, audio.Audio.Length);
+                    totalBytes += audio.Audio.Length;
+                    var segmentPlaybackStart = TimeSpan.FromMilliseconds(cumulativeAudioMs);
+                    cumulativeAudioMs += audio.AudioDurationMs;
+                    if (!spokenTrackingStarted)
+                    {
+                        spokenTrackingStarted = true;
+                        _owner._spokenAnswerTracking?.StartAnswer(
+                            TurnId,
+                            CorrelationId,
+                            _originalUserQuestion ?? string.Empty);
+                    }
+
+                    _owner._spokenAnswerTracking?.MarkChunkStarted(TurnId, audio.TextSegment.Text, segmentPlaybackStart);
+
+                    if (!playbackStarted)
+                    {
+                        playbackStarted = true;
+                        playbackStopwatch.Start();
+                        speechContext = new BargeInSpeechContext
+                        {
+                            AssistantTurnId = TurnId,
+                            CorrelationId = CorrelationId,
+                            SpeechType = SpeechPlaybackItemType.FinalAnswer,
+                            SpokenText = audio.TextSegment.Text
+                        };
+                        if (_owner._speakerDuckingService.IsDucked)
+                        {
+                            _owner._speakerDuckingService.Restore(speechContext, "streaming_playback_start_reset_stale_ducking");
+                        }
+
+                        _owner.SetActiveVolumeSetter(volume => waveOut.Volume = volume);
+                        _owner.ApplyOutputVolume(_owner._speakerDuckingService.CurrentVolumeMultiplier, "streaming_playback_start");
+                        waveOut.Play();
+                        _owner._playbackReferenceTap.NotifySpeechStarted(speechContext);
+                        _firstPlaybackStartedMs ??= _stopwatch.ElapsedMilliseconds;
+                        await TrySendEventAsync(_sendEventAsync, "SPEAKING_START", CorrelationId, null, speechCancellation.Token);
+                        await _owner.EmitAssistantUiStateImmediateAsync(
+                            AssistantUiStateEvent.Create(
+                                "speaking",
+                                "streaming_final_answer_playback_started",
+                                CorrelationId,
+                                TurnId,
+                                speechItemType: "final_answer",
+                                audiblePlaybackActive: true),
+                            nameof(AssistantSpeechPlaybackService),
+                            speechCancellation.Token);
+                        _owner._logger.LogInformation(
+                            "StreamingFinalAnswerFirstPlaybackStarted TurnId: {TurnId}. CorrelationId: {CorrelationId}. GenerationId: {GenerationId}. SegmentIndex: {SegmentIndex}. SessionId: {SessionId}. ElapsedMs: {ElapsedMs}.",
+                            TurnId,
+                            CorrelationId,
+                            GenerationId,
+                            audio.TextSegment.SegmentIndex,
+                            SessionId,
+                            _stopwatch.ElapsedMilliseconds);
+                    }
+
+                    if (_playedSegments > 0 && waitedForTtsWithEmptyPlaybackBuffer)
+                    {
+                        _totalInterSegmentGapMs += DrainPollMs;
+                    }
+
+                    var completionDueMs = cumulativeAudioMs;
+                    segmentCompletionTasks.Add(Task.Run(async () =>
+                    {
+                        try
+                        {
+                            while (!speechCancellation.Token.IsCancellationRequested)
+                            {
+                                if (playbackStopwatch.ElapsedMilliseconds >= completionDueMs)
+                                {
+                                    break;
+                                }
+
+                                await Task.Delay(DrainPollMs, speechCancellation.Token);
+                            }
+
+                            Interlocked.Increment(ref _playedSegments);
+                            _owner._spokenAnswerTracking?.MarkChunkCompleted(TurnId, audio.TextSegment.Text, playbackStopwatch.Elapsed);
+                            _owner._logger.LogInformation(
+                                "StreamingFinalAnswerSegmentPlaybackCompleted TurnId: {TurnId}. CorrelationId: {CorrelationId}. GenerationId: {GenerationId}. SegmentIndex: {SegmentIndex}. SessionId: {SessionId}. PlaybackElapsedMs: {PlaybackElapsedMs}. WasTtsReadyBeforePreviousEnded: {WasTtsReadyBeforePreviousEnded}.",
+                                TurnId,
+                                CorrelationId,
+                                GenerationId,
+                                audio.TextSegment.SegmentIndex,
+                                SessionId,
+                                playbackStopwatch.Elapsed.TotalMilliseconds,
+                                !waitedForTtsWithEmptyPlaybackBuffer);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                        }
+                    }, CancellationToken.None));
+                }
+
+                if (bufferedWaveProvider is not null && waveOut is not null)
+                {
+                    await _owner.WaitForPlaybackDrainAsync(
+                        bufferedWaveProvider,
+                        playbackStopwatch,
+                        activeState,
+                        totalBytes,
+                        bufferedWaveProvider.WaveFormat.SampleRate,
+                        bufferedWaveProvider.WaveFormat.Channels,
+                        speechCancellation.Token);
+                }
+
+                await Task.WhenAll(segmentCompletionTasks);
+
+                if (waveOut is not null)
+                {
+                    waveOut.Stop();
+                }
+
+                if (playbackStarted)
+                {
+                    _owner._spokenAnswerTracking?.CompleteAnswer(TurnId);
+                    await TrySendEventAsync(_sendEventAsync, "SPEAKING_END", CorrelationId, null, CancellationToken.None);
+                    await _owner.EmitPlaybackCompletionUiStateAsync(
+                        AssistantUiStateEvent.Create(
+                            "idle",
+                            "final_answer_completed",
+                            CorrelationId,
+                            TurnId,
+                            speechItemType: "final_answer",
+                            audiblePlaybackActive: false),
+                        SpeechPlaybackItemType.FinalAnswer,
+                        nameof(AssistantSpeechPlaybackService),
+                        CancellationToken.None);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                _owner._spokenAnswerTracking?.MarkPlaybackCancelled(TurnId, _cancellationReason ?? "streaming_final_answer_cancelled");
+                await TrySendEventAsync(_sendEventAsync, "SPEAKING_CANCELLED", CorrelationId, null, CancellationToken.None);
+            }
+            finally
+            {
+                if (playbackStarted && speechContext is not null)
+                {
+                    _owner._playbackReferenceTap.NotifySpeechStopped(speechContext);
+                }
+
+                _owner.ClearActiveVolumeSetter();
+                waveOut?.Dispose();
+                lock (_owner._playbackControlLock)
+                {
+                    if (ReferenceEquals(_owner._activeSpeechCancellation, speechCancellation))
+                    {
+                        activeState.HoldTimeoutCancellation?.Cancel();
+                        activeState.HoldTimeoutCancellation?.Dispose();
+                        _owner._activeSpeechCancellation = null;
+                        _owner._activePlaybackState = null;
+                        _owner._activePlaybackSnapshot = null;
+                    }
+                }
+
+                _owner.ClearCurrentStreamingSession(this);
+                _owner._speechGate.Release();
+                _owner._logger.LogInformation(
+                    "StreamingFinalAnswerSessionTimingSummary TurnId: {TurnId}. CorrelationId: {CorrelationId}. GenerationId: {GenerationId}. SessionId: {SessionId}. FirstSegmentAcceptedMs: {FirstSegmentAcceptedMs}. FirstAudioReadyMs: {FirstAudioReadyMs}. FirstPlaybackStartMs: {FirstPlaybackStartMs}. TotalSegments: {TotalSegments}. AudioSegments: {AudioSegments}. PlayedSegments: {PlayedSegments}. TotalTtsMs: {TotalTtsMs}. TotalInterSegmentGapMs: {TotalInterSegmentGapMs}. CancellationReason: {CancellationReason}.",
+                    TurnId,
+                    CorrelationId,
+                    GenerationId,
+                    SessionId,
+                    _firstSegmentAcceptedMs,
+                    _firstAudioReadyMs,
+                    _firstPlaybackStartedMs,
+                    _acceptedSegments,
+                    _audioSegments,
+                    _playedSegments,
+                    _totalTtsMs,
+                    _totalInterSegmentGapMs,
+                    _cancellationReason);
+            }
+        }
+
+        private static async Task WaitForStreamingBufferSpaceAsync(
+            BufferedWaveProvider bufferedWaveProvider,
+            int incomingBytes,
+            CancellationToken cancellationToken)
+        {
+            while (bufferedWaveProvider.BufferedBytes + incomingBytes > bufferedWaveProvider.BufferLength)
+            {
+                await Task.Delay(BufferSpacePollMs, cancellationToken);
+            }
+        }
     }
 
     private sealed class ActivePlaybackControlState

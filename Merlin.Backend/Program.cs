@@ -16,6 +16,7 @@ using Merlin.Backend.Services.LiveUtterance;
 using Merlin.Backend.Services.InterruptionIntelligence;
 using Merlin.Backend.Services.IntentRouting;
 using Merlin.Backend.Services.SpeechPresence;
+using Merlin.Backend.Services.StreamingResponses;
 using Merlin.Backend.Tools;
 using Merlin.Backend.WebSocket;
 using Microsoft.EntityFrameworkCore;
@@ -38,6 +39,8 @@ builder.Services.Configure<LocalAIOptions>(
     builder.Configuration.GetSection("LocalAI"));
 builder.Services.Configure<LlmOptions>(
     builder.Configuration.GetSection("Llm"));
+builder.Services.Configure<StreamingResponseOptions>(
+    builder.Configuration.GetSection("StreamingResponses"));
 builder.Services.Configure<WebSearchOptions>(
     builder.Configuration.GetSection("WebSearch"));
 builder.Services.PostConfigure<WebSearchOptions>(options =>
@@ -73,6 +76,10 @@ builder.Services.Configure<SpeechPresenceOptions>(
     builder.Configuration.GetSection("SpeechPresence"));
 builder.Services.Configure<VoiceInputOptions>(
     builder.Configuration.GetSection("VoiceInput"));
+builder.Services.Configure<ChatLogOptions>(
+    builder.Configuration.GetSection("ChatLog"));
+builder.Services.Configure<GpuSchedulingOptions>(
+    builder.Configuration.GetSection("GpuScheduling"));
 builder.Services.PostConfigure<LlmOptions>(options =>
 {
     options.Provider = Environment.GetEnvironmentVariable("MERLIN_LLM_PROVIDER") ?? options.Provider;
@@ -87,6 +94,28 @@ builder.Services.PostConfigure<LlmOptions>(options =>
     if (int.TryParse(Environment.GetEnvironmentVariable("DEEPINFRA_REQUEST_TIMEOUT_SECONDS"), out var requestTimeoutSeconds))
     {
         options.DeepInfraRequestTimeoutSeconds = requestTimeoutSeconds;
+    }
+});
+builder.Services.PostConfigure<StreamingResponseOptions>(options =>
+{
+    if (bool.TryParse(Environment.GetEnvironmentVariable("MERLIN_STREAMING_RESPONSES_ENABLED"), out var enabled))
+    {
+        options.Enabled = enabled;
+    }
+
+    if (bool.TryParse(Environment.GetEnvironmentVariable("MERLIN_USE_DEEPINFRA_STREAMING"), out var useDeepInfraStreaming))
+    {
+        options.UseDeepInfraStreaming = useDeepInfraStreaming;
+    }
+
+    if (bool.TryParse(Environment.GetEnvironmentVariable("MERLIN_USE_SEGMENTED_TTS"), out var useSegmentedTts))
+    {
+        options.UseSegmentedTts = useSegmentedTts;
+    }
+
+    if (bool.TryParse(Environment.GetEnvironmentVariable("MERLIN_STREAMING_FALLBACK_TO_FULL_RESPONSE"), out var fallback))
+    {
+        options.FallbackToFullResponse = fallback;
     }
 });
 builder.Services.Configure<VoiceOptions>(
@@ -204,6 +233,8 @@ builder.Services.AddScoped<IUserProfileFactStore, EfUserProfileFactStore>();
 builder.Services.AddScoped<MerlinConceptSeeder>();
 builder.Services.AddScoped<IMemorySearchService, MemorySearchService>();
 builder.Services.AddSingleton<IConceptExtractionService, LocalConceptExtractionService>();
+builder.Services.AddSingleton<IRuntimeTopicSession, RuntimeTopicSession>();
+builder.Services.AddHostedService<RuntimeTopicSessionStartupService>();
 builder.Services.AddScoped<IConversationRuntimeState, ConversationRuntimeState>();
 builder.Services.AddScoped<IAssistantTurnTracker, AssistantTurnTracker>();
 builder.Services.AddScoped<IPromptCompilationLogger, PromptCompilationLogger>();
@@ -251,6 +282,10 @@ builder.Services.AddSingleton<ChatterboxTimingLogService>();
 builder.Services.AddHostedService(provider => provider.GetRequiredService<ChatterboxTimingLogService>());
 builder.Services.AddSingleton<ChatterboxWorkerClient>();
 builder.Services.AddSingleton<ChatterboxTtsProvider>();
+builder.Services.AddSingleton<ITtsTextSanitizer, TtsTextSanitizer>();
+builder.Services.AddSingleton<ISpeakableTextSanitizer, SpeakableTextSanitizer>();
+builder.Services.AddSingleton<IStreamedTextDetokenizer, StreamedTextDetokenizer>();
+builder.Services.AddTransient<ISpeechSegmentQueue, SpeechSegmentQueue>();
 builder.Services.AddSingleton<IVoiceSynthesisService, TtsRouter>();
 builder.Services.AddHostedService<ChatterboxWarmupHostedService>();
 builder.Services.AddSingleton<IBargeInDiagnosticsLogger, BargeInDiagnosticsLogger>();
@@ -323,8 +358,10 @@ builder.Services.AddHostedService(provider => provider.GetRequiredService<WebRtc
 builder.Services.AddHostedService(provider => provider.GetRequiredService<SpeechPresenceDecisionLogService>());
 builder.Services.AddHostedService<BargeInCoordinatorHostedService>();
 builder.Services.AddSingleton<IAssistantSpeechPlaybackService, AssistantSpeechPlaybackService>();
+builder.Services.AddSingleton<AssistantUiStateBroadcaster>();
 builder.Services.AddSingleton<ISpeechPolicyService, SpeechPolicyService>();
 builder.Services.AddSingleton<ILiveAssistantTurnService, LiveAssistantTurnService>();
+builder.Services.AddSingleton<UiControlModeController>();
 builder.Services.AddSingleton<ICorrectionRequestBuilder, CorrectionRequestBuilder>();
 builder.Services.AddSingleton<IAcknowledgementPhraseLibrary, AcknowledgementPhraseLibrary>();
 builder.Services.AddSingleton<IAcknowledgementPolicy, AcknowledgementPolicy>();
@@ -362,6 +399,7 @@ builder.Services.AddSingleton<LocalLlmProvider>();
 builder.Services.AddHostedService<LocalAIWarmupHostedService>();
 builder.Services.AddHttpClient<ILocalAIClient, OllamaLocalAIClient>();
 builder.Services.AddHttpClient<DeepInfraLlmProvider>();
+builder.Services.AddHttpClient<DeepInfraStreamingChatClient>();
 builder.Services.AddSingleton<IWebSearchProvider, FakeWebSearchProvider>();
 builder.Services.AddSingleton<WebSearchService>();
 builder.Services.AddSingleton<ISystemResourceProvider, LocalSystemResourceProvider>();

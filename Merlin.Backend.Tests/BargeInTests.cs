@@ -2,6 +2,7 @@ using Merlin.Backend.Configuration;
 using Merlin.Backend.Models;
 using Merlin.Backend.Services;
 using Merlin.Backend.Services.BargeIn;
+using Merlin.Backend.Services.InterruptionIntelligence;
 using Merlin.Backend.Services.LiveUtterance;
 using Merlin.Backend.Services.SpeechPresence;
 using Microsoft.Extensions.FileProviders;
@@ -773,7 +774,8 @@ public sealed class BargeInCoordinatorTests
             {
                 SaveDebugAudio = true,
                 DebugAudioPath = tempRoot,
-                GatedSttMaxAudioMs = 10000
+                GatedSttMaxAudioMs = 10000,
+                EnableSuppressedCaptureDiagnostics = true
             };
             var writer = new InterruptionCaptureDiagnosticsWriter(
                 new TestOptionsMonitor<BargeInOptions>(options),
@@ -910,7 +912,8 @@ public sealed class BargeInCoordinatorTests
             {
                 SaveDebugAudio = true,
                 DebugAudioPath = tempRoot,
-                GatedSttMaxAudioMs = 10000
+                GatedSttMaxAudioMs = 10000,
+                EnableSuppressedCaptureDiagnostics = true
             };
             var writer = new InterruptionCaptureDiagnosticsWriter(
                 new TestOptionsMonitor<BargeInOptions>(options),
@@ -930,6 +933,43 @@ public sealed class BargeInCoordinatorTests
             Assert.Equal(2, Directory.GetFiles(tempRoot, "*.wav").Length);
             Assert.Equal(2, Directory.GetFiles(tempRoot, "*.json").Length);
             Assert.Equal(2, Directory.GetFiles(tempRoot, "*.frames.jsonl").Length);
+        }
+        finally
+        {
+            if (Directory.Exists(tempRoot))
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task InterruptionCaptureDiagnosticsWriter_SuppressedCaptureDiagnosticsDisabledByDefault_DoesNotWriteFiles()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"merlin-interruption-captures-{Guid.NewGuid():N}");
+        try
+        {
+            var options = new BargeInOptions
+            {
+                SaveDebugAudio = true,
+                DebugAudioPath = tempRoot,
+                GatedSttMaxAudioMs = 10000
+            };
+            var writer = new InterruptionCaptureDiagnosticsWriter(
+                new TestOptionsMonitor<BargeInOptions>(options),
+                new TestHostEnvironment(tempRoot),
+                NullLogger<InterruptionCaptureDiagnosticsWriter>.Instance);
+            var diagnostic = CreateInterruptionCaptureDiagnostic(
+                DateTimeOffset.Parse("2026-06-18T12:00:00Z"),
+                "suppressed_fast_hard_stop_candidate");
+            var frames = new[]
+            {
+                CreateAlternatingAudioFrame(0.15f, DateTimeOffset.UnixEpoch, 0)
+            };
+
+            await writer.SaveAsync(diagnostic, frames, [], CancellationToken.None);
+
+            Assert.False(Directory.Exists(tempRoot));
         }
         finally
         {
@@ -988,7 +1028,8 @@ public sealed class BargeInCoordinatorTests
                 CaptureContinuationAecEnergyThreshold = 0.010,
                 PauseInsteadOfCancelOnSpeech = false,
                 RequireWakeWordForFirstVersion = false,
-                AllowNaturalSoftBargeInWhenAecVerified = true
+                AllowNaturalSoftBargeInWhenAecVerified = true,
+                EnableSuppressedCaptureDiagnostics = true
             },
             "still talking for a while",
             aec: new PassThroughThenSilenceAecService(passThroughFrames: 40),
@@ -2501,6 +2542,43 @@ public sealed class BargeInCoordinatorTests
     }
 
     [Fact]
+    public async Task ProcessMicrophoneFrame_CiOwnedStop_CancelsTurnWithoutLatePlaybackClear()
+    {
+        var liveInterruption = new FakeLiveInterruptionIntegrationService(new LiveInterruptionHandlingOutcome
+        {
+            WasEvaluatedByConversationalInterruption = true,
+            WasHandledByConversationalInterruption = true,
+            AllowLegacyCleanup = false,
+            AllowLegacySemanticRouting = false,
+            ShouldCancelPlayback = true,
+            ShouldCancelCurrentTurn = true,
+            Result = new InterruptionHandlingResult
+            {
+                Type = InterruptionHandlingResultType.Stopped,
+                Reason = "Stop/cancel handled with local stop confirmation."
+            },
+            InterruptionType = ConversationalInterruptionType.StopRequest,
+            Strategy = ConversationalInterruptionHandlingStrategy.StopPlayback,
+            Reason = "Stop/cancel handled with local stop confirmation."
+        });
+        var fixture = CreateFixture(
+            new BargeInOptions { Enabled = true },
+            "Merlin stop",
+            liveUtteranceGate: CreateLiveUtteranceGate(),
+            liveInterruptionIntegrationService: liveInterruption);
+        fixture.LiveTurnService.BeginTurn("conversation-1", "correlation-1");
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        await SendUncorrelatedTriggeredSpeechAsync(fixture.Coordinator, 0.22f);
+        await WaitUntilAsync(() => liveInterruption.CallCount > 0);
+
+        Assert.Equal(1, liveInterruption.CallCount);
+        Assert.Equal(0, fixture.Playback.ClearQueueCount);
+        Assert.True(fixture.LiveTurnService.IsCancelled("correlation-1"));
+        Assert.False(fixture.LiveTurnService.ShouldEmit("correlation-1"));
+    }
+
+    [Fact]
     public async Task ProcessMicrophoneFrame_GateClarificationSuppressesLegacySideCommentResume()
     {
         var fixture = CreateFixture(
@@ -3039,6 +3117,165 @@ public sealed class BargeInCoordinatorTests
     }
 
     [Fact]
+    public async Task ProcessMicrophoneFrame_BackendIdleVoice_AddsCaptureIdAndTimelineLogs()
+    {
+        var logger = new RecordingLogger<BargeInCoordinator>();
+        var gateLogger = new RecordingLogger<LiveUtteranceGate>();
+        var diagnostics = new RecordingBargeInDiagnosticsLogger();
+        var fixture = CreateFixture(
+            new BargeInOptions { Enabled = true },
+            "What is the meaning of life?",
+            liveUtteranceGate: CreateLiveUtteranceGate(gateLogger),
+            logger: logger,
+            diagnosticsLogger: diagnostics);
+        var requests = new List<BackendVoiceRequestCaptured>();
+        fixture.Coordinator.BackendVoiceRequestCaptured += (request, _) =>
+        {
+            requests.Add(request);
+            return Task.CompletedTask;
+        };
+
+        await fixture.Coordinator.StartLiveMonitoringAsync();
+        await SendTriggeredSpeechAsync(fixture.Coordinator);
+        await WaitUntilAsync(() => requests.Count > 0);
+        await WaitUntilAsync(() => logger.Messages.Any(message => message.Contains("voice_capture_timeline_completed", StringComparison.Ordinal)));
+
+        var request = Assert.Single(requests);
+        Assert.False(string.IsNullOrWhiteSpace(request.CaptureId));
+        var captureId = request.CaptureId!;
+        Assert.StartsWith("capture:", captureId, StringComparison.Ordinal);
+        Assert.Equal(captureId, request.Utterance.CaptureId);
+        Assert.Contains(logger.Messages, message => message.Contains("voice_capture_timeline_started", StringComparison.Ordinal)
+            && message.Contains(captureId, StringComparison.Ordinal));
+        Assert.Contains(logger.Messages, message => message.Contains("voice_capture_endpoint_triggered", StringComparison.Ordinal)
+            && message.Contains(captureId, StringComparison.Ordinal));
+        Assert.Contains(logger.Messages, message => message.Contains("voice_capture_stt_started", StringComparison.Ordinal)
+            && message.Contains(captureId, StringComparison.Ordinal));
+        Assert.Contains(logger.Messages, message => message.Contains("voice_capture_stt_completed", StringComparison.Ordinal)
+            && message.Contains(captureId, StringComparison.Ordinal));
+        Assert.Contains(logger.Messages, message => message.Contains("voice_capture_routed", StringComparison.Ordinal)
+            && message.Contains(captureId, StringComparison.Ordinal));
+        Assert.Contains(logger.Messages, message => message.Contains("voice_capture_timeline_completed", StringComparison.Ordinal)
+            && message.Contains(captureId, StringComparison.Ordinal));
+        Assert.Contains(diagnostics.Messages, message => message.Contains("Gated STT started", StringComparison.Ordinal));
+        Assert.Contains(diagnostics.Messages, message => message.Contains("Gated STT result", StringComparison.Ordinal));
+        Assert.Contains(logger.Messages, message => message.Contains("UserUtteranceCaptured", StringComparison.Ordinal)
+            && message.Contains(captureId, StringComparison.Ordinal));
+        Assert.Contains(gateLogger.Messages, message => message.Contains("LiveUtteranceGateEvaluated", StringComparison.Ordinal)
+            && message.Contains(captureId, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_CandidateDiagnosticsDisabledByDefault_HidesBurstCandidateLogs()
+    {
+        var diagnostics = new RecordingBargeInDiagnosticsLogger();
+        var options = SustainedUserSpeechScoreOptions();
+        options.BurstCapturePromotion = new BurstCapturePromotionOptions
+        {
+            Enabled = true,
+            MinBurstMs = 350,
+            MaxWindowMs = 600,
+            MinCandidateFrames = 8,
+            MinVadSpeechFrameRatio = 0.35,
+            AllowUncertainPromotion = true,
+            StrongSelfEchoVetoRatio = 0.6,
+            StrongSelfEchoVetoMinFrames = 5,
+            RequireAssistantPlayback = true
+        };
+        var fixture = CreateFixture(
+            options,
+            vad: new AlwaysSpeechNeverTriggeredVadService(),
+            selfSpeechGate: new ScoreSequenceSelfSpeechGate(0.631),
+            diagnosticsLogger: diagnostics);
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        for (var index = 0; index < 20; index++)
+        {
+            await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
+        }
+
+        Assert.DoesNotContain(diagnostics.Messages, message => message.Contains("Burst capture candidate updated", StringComparison.Ordinal));
+        Assert.DoesNotContain(diagnostics.Messages, message => message.Contains("Burst capture candidate started", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_CandidateDiagnosticsEnabled_EmitsBurstCandidateLogs()
+    {
+        var diagnostics = new RecordingBargeInDiagnosticsLogger();
+        var options = SustainedUserSpeechScoreOptions();
+        options.EnableBargeInCandidateDiagnostics = true;
+        options.BargeInRepeatedDiagnosticThrottleMs = 0;
+        options.BurstCapturePromotion = new BurstCapturePromotionOptions
+        {
+            Enabled = true,
+            MinBurstMs = 350,
+            MaxWindowMs = 600,
+            MinCandidateFrames = 8,
+            MinVadSpeechFrameRatio = 0.35,
+            AllowUncertainPromotion = true,
+            StrongSelfEchoVetoRatio = 0.6,
+            StrongSelfEchoVetoMinFrames = 5,
+            RequireAssistantPlayback = true
+        };
+        var fixture = CreateFixture(
+            options,
+            vad: new AlwaysSpeechNeverTriggeredVadService(),
+            selfSpeechGate: new ScoreSequenceSelfSpeechGate(0.631),
+            diagnosticsLogger: diagnostics);
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        for (var index = 0; index < 20; index++)
+        {
+            await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, index * 10));
+        }
+
+        Assert.Contains(diagnostics.Messages, message => message.Contains("Burst capture candidate started", StringComparison.Ordinal));
+        Assert.Contains(diagnostics.Messages, message => message.Contains("Burst capture candidate updated", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_LegacyDiagnosticsDisabledByDefault_HidesLegacyDuckingLogs()
+    {
+        var diagnostics = new RecordingBargeInDiagnosticsLogger();
+        var fixture = CreateFixture(
+            new BargeInOptions { Enabled = true },
+            vad: new AlwaysTriggeredVadService(),
+            diagnosticsLogger: diagnostics);
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        await fixture.Coordinator.ProcessMicrophoneFrameAsync(CreateAudioFrame(0.2f, 0));
+
+        Assert.DoesNotContain(diagnostics.Messages, message => message.Contains("Legacy active-capture ducking disabled", StringComparison.Ordinal));
+        Assert.DoesNotContain(diagnostics.Messages, message => message.Contains("Comfort duck suppressed by confident self echo", StringComparison.Ordinal));
+        Assert.DoesNotContain(diagnostics.Messages, message => message.Contains("Legacy comfort duck disabled", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("No, what I meant is", true, true)]
+    [InlineData("No, what I meant is open Chrome", false, false)]
+    public async Task ProcessMicrophoneFrame_TimelineLogsIncompleteCorrectionPrefixHeuristic(
+        string transcript,
+        bool expectedIncomplete,
+        bool expectedEndsWithCorrectionPrefix)
+    {
+        var logger = new RecordingLogger<BargeInCoordinator>();
+        var fixture = CreateFixture(
+            new BargeInOptions { Enabled = true },
+            transcript,
+            liveUtteranceGate: CreateLiveUtteranceGate(),
+            logger: logger);
+        fixture.LiveTurnService.BeginTurn("conversation-1", "correlation-1");
+        fixture.Tap.NotifySpeechStarted(CreateContext());
+
+        await SendTriggeredSpeechAsync(fixture.Coordinator);
+        await WaitUntilAsync(() => logger.Messages.Any(message => message.Contains("voice_capture_stt_completed", StringComparison.Ordinal)));
+
+        var sttLog = Assert.Single(logger.Messages.Where(message => message.Contains("voice_capture_stt_completed", StringComparison.Ordinal)));
+        Assert.Contains($"TranscriptLooksIncomplete: {expectedIncomplete}", sttLog, StringComparison.Ordinal);
+        Assert.Contains($"EndsWithCorrectionPrefix: {expectedEndsWithCorrectionPrefix}", sttLog, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ProcessMicrophoneFrame_Clarification_ResumesAndDoesNotCancel()
     {
         var fixture = CreateFixture(new BargeInOptions { Enabled = true }, "merlin what does that mean");
@@ -3298,12 +3535,14 @@ public sealed class BargeInCoordinatorTests
         ISelfSpeechSuppressionGate? selfSpeechGate = null,
         ILiveUtteranceGate? liveUtteranceGate = null,
         ILogger<BargeInCoordinator>? logger = null,
+        IBargeInDiagnosticsLogger? diagnosticsLogger = null,
         IBargeInDebugSnapshotService? debugSnapshots = null,
         ISpeechPresenceDetector? speechPresenceDetector = null,
-        ISpeechPresenceDecisionLogSink? speechPresenceDecisionLogSink = null)
+        ISpeechPresenceDecisionLogSink? speechPresenceDecisionLogSink = null,
+        ILiveInterruptionIntegrationService? liveInterruptionIntegrationService = null)
     {
         options.TriggerPostSpeechWaitMs = 0;
-        var diagnostics = new NoOpBargeInDiagnosticsLogger();
+        var diagnostics = diagnosticsLogger ?? new NoOpBargeInDiagnosticsLogger();
         var tap = new PlaybackReferenceTap(diagnostics, new TestOptionsMonitor<BargeInOptions>(options));
         var stt = new FakeBargeInSttService(transcript);
         var playback = new FakePlaybackService();
@@ -3333,15 +3572,16 @@ public sealed class BargeInCoordinatorTests
             liveUtteranceGate,
             debugSnapshots,
             speechPresenceDetector,
-            speechPresenceDecisionLogSink);
+            speechPresenceDecisionLogSink,
+            liveInterruptionIntegrationService: liveInterruptionIntegrationService);
 
         return new TestFixture(coordinator, tap, stt, playback, liveTurnService, speakerDucking);
     }
 
-    private static LiveUtteranceGate CreateLiveUtteranceGate()
+    private static LiveUtteranceGate CreateLiveUtteranceGate(ILogger<LiveUtteranceGate>? logger = null)
     {
         return new LiveUtteranceGate(
-            NullLogger<LiveUtteranceGate>.Instance,
+            logger ?? NullLogger<LiveUtteranceGate>.Instance,
             Options.Create(new LiveUtteranceGateOptions()));
     }
 
@@ -3942,6 +4182,50 @@ public sealed class BargeInCoordinatorTests
         public void AssistantTurnCancelled(BargeInSpeechContext context, InterruptionClassificationResult result) { }
     }
 
+    private sealed class RecordingBargeInDiagnosticsLogger : IBargeInDiagnosticsLogger
+    {
+        private readonly object _sync = new();
+        private readonly List<string> _messages = [];
+
+        public IReadOnlyList<string> Messages
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _messages.ToArray();
+                }
+            }
+        }
+
+        public void MonitorStarted(BargeInSpeechContext context, AecMode aecMode) { }
+        public void MonitorStopped(BargeInSpeechContext context) { }
+        public void AecInitialized(AecMode mode, string reason) { }
+        public void PlaybackReferenceFrameReceived(string? correlationId, int sampleCount) { }
+        public void MicFrameProcessed(BargeInSpeechContext context, long frameCount) { }
+        public void EchoReducedFrameProcessed(BargeInSpeechContext context, long frameCount, AecMode aecMode) { }
+        public void VadPossibleSpeech(BargeInSpeechContext context, VadFrameResult result, AecMode aecMode) { }
+        public void TriggerBufferCaptured(BargeInSpeechContext context, int frameCount, TimeSpan duration) { }
+        public void GatedSttStarted(BargeInSpeechContext context, TimeSpan duration) => Add("Gated STT started");
+        public void GatedSttResult(BargeInSpeechContext context, BargeInSttResult result) => Add("Gated STT result");
+        public void ClassificationResult(BargeInSpeechContext context, InterruptionClassificationResult result) { }
+        public void StateChanged(BargeInSpeechContext context, BargeInState state, string reason) => Add($"Barge-in state changed. State: {state}. Reason: {reason}");
+        public void ActionSelected(BargeInSpeechContext context, BargeInAction action, string reason) { }
+        public void PlaybackResumed(BargeInSpeechContext context, string reason) { }
+        public void CorrectionRegenerationStarted(BargeInSpeechContext context, string correctionText) { }
+        public void Ignored(BargeInSpeechContext context, string reason) => Add($"Barge-in ignored: {reason}");
+        public void Accepted(BargeInSpeechContext context, InterruptionClassificationResult result) { }
+        public void AssistantTurnCancelled(BargeInSpeechContext context, InterruptionClassificationResult result) { }
+
+        private void Add(string message)
+        {
+            lock (_sync)
+            {
+                _messages.Add(message);
+            }
+        }
+    }
+
     private sealed class NoOpSelfSpeechGateDiagnosticsWriter : ISelfSpeechGateDiagnosticsWriter
     {
         public void Write(SelfSpeechGateDiagnosticEntry entry, BargeInOptions options)
@@ -3958,6 +4242,36 @@ public sealed class BargeInCoordinatorTests
             CancellationToken cancellationToken)
         {
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakeLiveInterruptionIntegrationService : ILiveInterruptionIntegrationService
+    {
+        private readonly LiveInterruptionHandlingOutcome? _outcome;
+
+        public FakeLiveInterruptionIntegrationService(LiveInterruptionHandlingOutcome? outcome)
+        {
+            _outcome = outcome;
+        }
+
+        public int CallCount { get; private set; }
+
+        public YieldedInterruptionUtterance? LastUtterance { get; private set; }
+
+        public Task<LiveInterruptionHandlingOutcome?> TryHandleYieldedInterruptionAsync(
+            YieldedInterruptionUtterance utterance,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            LastUtterance = utterance;
+            return Task.FromResult(_outcome);
+        }
+
+        public Task<InterruptionHandlingResult?> TryHandleLiveInterruptionAsync(
+            LiveInterruptionContext context,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(_outcome?.Result);
         }
     }
 
@@ -4150,7 +4464,19 @@ public sealed class BargeInCoordinatorTests
 
     private sealed class RecordingLogger<T> : ILogger<T>
     {
-        public List<string> Messages { get; } = [];
+        private readonly object _sync = new();
+        private readonly List<string> _messages = [];
+
+        public IReadOnlyList<string> Messages
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _messages.ToArray();
+                }
+            }
+        }
 
         public IDisposable? BeginScope<TState>(TState state)
             where TState : notnull
@@ -4170,7 +4496,10 @@ public sealed class BargeInCoordinatorTests
             Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
-            Messages.Add(formatter(state, exception));
+            lock (_sync)
+            {
+                _messages.Add(formatter(state, exception));
+            }
         }
     }
 

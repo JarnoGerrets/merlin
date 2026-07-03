@@ -3578,3 +3578,134 @@ Tests:
 - audible playback still uses strict gates
 - held turn context still reaches CI
 - idle flow unchanged
+
+---
+
+### Correction Prefix Safety PR 1 - Do Not Route Incomplete Correction Prefixes As Commands
+
+Status: Implemented
+
+Summary:
+- Detects prefix-only correction fragments such as "No, what I meant is."
+- Prevents incomplete correction prefixes from becoming executable replacement commands.
+- Stops malformed replacements like "open what i meant is".
+- Routes incomplete correction prefixes to a safe clarification/hold outcome.
+- Preserves valid corrections with real content.
+- Preserves valid app/open replacements when explicit content exists.
+- Does not change VAD, AEC, endpointing, STT, provisional hold, or Layer 2 recomposition.
+
+Tests:
+- prefix-only correction is incomplete
+- prefix-only correction variants do not route to command router
+- "open what i meant is" regression is blocked
+- valid correction with content still works
+- valid app replacement still works
+- confirmation prompt is not produced for incomplete correction prefix
+
+---
+
+### Voice Capture Timeline Logging PR 1 - End-to-End Capture-To-Routing Trace
+
+Status: Implemented
+
+Summary:
+- Added CaptureId creation for voice capture attempts at the barge-in capture session boundary.
+- Propagated CaptureId through interruption utterances, backend voice requests, yielded interruption utterances, AssistantRequest, AssistantResponse, WebSocket routing, LiveInterruptionIntegrationService, LiveUtteranceGate, and CommandRouter logs.
+- Added structured timeline markers for capture start, endpoint trigger, STT start, STT completion, routing, suppression, and final timeline completion.
+- Timeline logs include acoustic mode, playback context, endpoint reason, audio sent to STT, transcript length, STT latency, gate/route action, replacement text, tool result, and spoken response where available.
+- Added diagnostic-only transcript heuristics for incomplete correction-prefix endings.
+- Added suppression timeline logging for captured-window self-playback and early suppressed diagnostics.
+- Does not change VAD, AEC, STT, endpointing, provisional hold, routing, tools, or TTS behavior.
+
+Tests:
+- idle voice capture receives a CaptureId
+- idle voice CaptureId propagates to the routed backend voice request and utterance
+- timeline start, endpoint, STT start, STT completion, route, and completion markers include CaptureId
+- incomplete correction prefix transcript is marked diagnostically incomplete
+- complete correction transcript is not marked diagnostically incomplete
+
+---
+
+### Barge-In Logging Hygiene PR 1 - Quiet Runtime Logs, Preserve Timeline Diagnostics
+
+Status: Implemented
+
+Summary:
+- Added diagnostic flags for low-level barge-in candidate/frame/legacy/suppressed-capture logging.
+- Kept voice capture timeline logs enabled by default.
+- Reduced runtime log spam from repeated burst candidate, fast hard-stop, comfort duck, and legacy active-capture messages.
+- Preserved high-level STT, user utterance, live gate, CI, command routing, hold, and sustained gate logs.
+- Suppressed fast-hard-stop diagnostic file/log spam by default unless explicitly enabled.
+- No VAD/AEC/STT/endpointing/routing behavior changed.
+
+Tests:
+- candidate diagnostics disabled by default
+- candidate diagnostics enabled emits old details
+- legacy diagnostics disabled by default
+- timeline diagnostics remain visible
+- suppressed capture diagnostics gated
+- high-level STT/user utterance logs remain
+
+---
+
+### Stop Confirmation Playback Generation Fix PR 1
+
+Status: Implemented
+
+Summary:
+- Fixed StopConfirmation playback being skipped after final-answer generation cancellation.
+- Stop/cancel interruptions now flush/cancel the active answer and play a short local stop confirmation on a safe post-stop playback path.
+- StopConfirmation is no longer treated as part of the cancelled final-answer playback generation.
+- Added logs for stop confirmation enqueue/start/completion/skipped.
+- Preserved stale-generation safety for normal final-answer/progress items.
+- No VAD/AEC/STT/endpointing/routing behavior changed.
+
+Tests:
+- stop confirmation is not skipped after generation change
+- stop confirmation playback starts
+- stop confirmation playback completes or is successfully handed off
+- original final answer does not resume
+- stop still cancels current turn
+- normal stale-generation skipping still works
+
+---
+
+### Playback Control Decision Mapping PR 1
+
+Status: Implemented
+
+Summary:
+- Fixed LiveGate `AcceptPlaybackControl` / `StopSpeechOnlyNoConfirmation` being incorrectly mapped to `Unknown` / `AskUserToClarifyInterruption`.
+- Playback-control stop utterances now map directly to CI `StopRequest` / `StopPlayback`.
+- CI now owns the stop path and suppresses legacy fallback routing after handling.
+- Stop confirmation path is now reached for `Stop`, `Merlin stop`, and equivalent control phrases.
+- Added diagnostics for playback-control-to-CI-stop mapping.
+- No VAD/AEC/STT/endpointing behavior changed.
+
+Tests:
+- `Merlin, stop` maps to CI StopRequest
+- `Stop` maps to CI StopRequest
+- AcceptPlaybackControl does not fall through to AskClarification
+- stop confirmation output path is invoked
+- legacy hard-cancel fallback is suppressed after CI handles stop
+- non-control unclear utterances are not treated as stop
+
+---
+
+### StopConfirmation Playback Completion Investigation PR 1
+
+Status: Implemented
+
+Summary:
+- Investigated why StopConfirmation reached playback start but was not heard.
+- Identified the exact failing lifecycle step: CI-owned stop queued StopConfirmation, then BargeIn legacy turn cleanup called ClearQueueAsync again and cancelled the active StopConfirmation before drain/completion.
+- Added StopConfirmation-specific diagnostics for TTS, output open, audio write, drain, cancellation, failure, and completion.
+- Applied the smallest safe fix: CI-owned stop still cancels the active turn, but skips the late legacy playback queue clear when CI already handled playback cleanup.
+- Preserved normal final-answer stale-generation and cancellation behavior.
+- No VAD/AEC/STT/endpointing/routing changes.
+
+Tests:
+- StopConfirmation TTS completes
+- StopConfirmation playback completes
+- late final-answer/legacy cleanup does not kill StopConfirmation
+- normal final-answer cancellation/stale skipping remains safe

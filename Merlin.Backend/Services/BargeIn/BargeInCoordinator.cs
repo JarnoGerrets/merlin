@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Merlin.Backend.Configuration;
 using Merlin.Backend.Models;
@@ -25,6 +26,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     private readonly ILiveAssistantTurnService _liveTurnService;
     private readonly IOptionsMonitor<BargeInOptions> _options;
     private readonly IAssistantSpeechPlaybackService _playbackService;
+    private readonly AssistantUiStateBroadcaster? _assistantUiStateBroadcaster;
     private readonly IInterruptionCaptureDiagnosticsWriter _captureDiagnosticsWriter;
     private readonly IPlaybackReferenceTap _playbackReferenceTap;
     private readonly ILogger<BargeInCoordinator> _logger;
@@ -61,6 +63,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     private bool _playbackYieldedForRollingUserSpeechEvidence;
     private readonly RollingUserSpeechEvidenceTracker _rollingUserSpeechEvidence = new();
     private readonly BurstCaptureCandidateState _burstCaptureCandidate = new();
+    private readonly Dictionary<string, DateTimeOffset> _lastRepeatedDiagnosticAt = new(StringComparer.Ordinal);
 
     public event Func<CorrectionRegenerationRequested, CancellationToken, Task>? CorrectionRegenerationRequested;
 
@@ -92,7 +95,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         ISpeechPresenceDecisionLogSink? speechPresenceDecisionLogSink = null,
         IFloorYieldController? floorYieldController = null,
         ILiveInterruptionIntegrationService? liveInterruptionIntegrationService = null,
-        IActiveSpokenTurnResolver? activeSpokenTurnResolver = null)
+        IActiveSpokenTurnResolver? activeSpokenTurnResolver = null,
+        AssistantUiStateBroadcaster? assistantUiStateBroadcaster = null)
     {
         _playbackReferenceTap = playbackReferenceTap;
         _assistantPlaybackMonitor = assistantPlaybackMonitor;
@@ -106,6 +110,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         _interruptionClassifier = interruptionClassifier;
         _liveTurnService = liveTurnService;
         _playbackService = playbackService;
+        _assistantUiStateBroadcaster = assistantUiStateBroadcaster;
         _captureDiagnosticsWriter = captureDiagnosticsWriter;
         _diagnostics = diagnostics;
         _logger = logger;
@@ -390,7 +395,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                     speechPresence: speechPresence);
                 if (speechGateResult.Decision is not SelfSpeechDecision.Allow)
                 {
-                    _diagnostics.Ignored(context, $"Fast hard-stop candidate suppressed by self-speech gate. Decision: {speechGateResult.Decision}. Reason: {speechGateResult.Reason}");
+                    LogCandidateDiagnostic(options, context, $"Fast hard-stop candidate suppressed by self-speech gate. Decision: {speechGateResult.Decision}. Reason: {speechGateResult.Reason}");
                     if (!_suppressedFastHardStopAttemptSaved)
                     {
                         _suppressedFastHardStopAttemptSaved = true;
@@ -601,6 +606,19 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 context.AssistantTurnId,
                 vad.Confidence);
         }
+
+        await EmitAssistantUiStateImmediateAsync(
+            AssistantUiStateEvent.Create(
+                "listening",
+                IsLiveMonitorContext(context)
+                    ? "backend_idle_voice_capture_started"
+                    : "barge_in_capture_started",
+                context.CorrelationId,
+                context.AssistantTurnId,
+                audiblePlaybackActive: false,
+                interruptionState: "capturing"),
+            nameof(BargeInCoordinator),
+            cancellationToken);
         _diagnostics.StateChanged(
             context,
             BargeInState.SoftPausedForUserSpeech,
@@ -625,6 +643,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             captureSession = captureKind is CaptureKind.FastHardStop
                 ? BargeInCaptureSession.CreateFastHardStop(echoReducedFrame.Timestamp, options)
                 : BargeInCaptureSession.CreateNormal(echoReducedFrame.Timestamp, options, acousticMode);
+            LogVoiceCaptureTimelineStarted(captureSession, context, acousticMode, playbackReference, captureKind);
             ObserveCaptureFrame(context, captureSession, CreateCaptureFrameObservation(
                 rawFrame,
                 echoReducedFrame,
@@ -766,7 +785,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             var holdReason = _speakerDuckingService.IsDucked
                 ? " Existing ducking is held through fast near-end hangover."
                 : "";
-            _diagnostics.Ignored(context, $"Comfort duck suppressed by confident self echo. DuckingOwner: {_duckingOwner ?? "(none)"}. RestoreGeneration: {_duckingRestoreGeneration}. InputReason: {comfortOptions.InputReason}. SelfSpeechDecision: {gateResult.Decision}. SelfSpeechReason: {gateResult.Reason}.{holdReason} ConsecutiveMs: {_fastNearEndSpeechMs}. VadConfidence: {vad.Confidence:N2}. Energy: {vad.Energy:N4}. NoiseFloor: {vad.NoiseFloor:N4}.");
+            LogLegacyDiagnostic(options, context, $"Comfort duck suppressed by confident self echo. DuckingOwner: {_duckingOwner ?? "(none)"}. RestoreGeneration: {_duckingRestoreGeneration}. InputReason: {comfortOptions.InputReason}. SelfSpeechDecision: {gateResult.Decision}. SelfSpeechReason: {gateResult.Reason}.{holdReason} ConsecutiveMs: {_fastNearEndSpeechMs}. VadConfidence: {vad.Confidence:N2}. Energy: {vad.Energy:N4}. NoiseFloor: {vad.NoiseFloor:N4}.");
             ResetFastNearEndDuckingCandidate();
             ScheduleDuckingRestore(context, Math.Max(0, comfortOptions.HangoverMs), cancellationToken);
             return gateResult;
@@ -786,7 +805,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         var latencyMs = _fastNearEndFirstSpeechAt is null
             ? 0
             : Math.Max(0, (int)Math.Round((DateTimeOffset.UtcNow - _fastNearEndFirstSpeechAt.Value).TotalMilliseconds));
-        _diagnostics.Ignored(
+        LogLegacyDiagnostic(
+            options,
             context,
             $"Legacy comfort duck disabled. LegacyOwner: {duckReason}. InputReason: {comfortOptions.InputReason}. SelfSpeechDecision: {gateResult.Decision}. SelfSpeechReason: {gateResult.Reason}. ConsecutiveMs: {_fastNearEndSpeechMs}. MinSpeechMs: {comfortOptions.MinSpeechMs}. VadConfidence: {vad.Confidence:N2}. Energy: {vad.Energy:N4}. NoiseFloor: {vad.NoiseFloor:N4}. WouldDuckLatencyMs: {latencyMs}. CaptureActive: {IsInterruptionCaptureActive()}.");
 
@@ -956,16 +976,19 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         }
 
         _sustainedUserSpeechScoreMs += GetFrameDurationMs(frame, options);
-        _logger.LogInformation(
-            "SustainedUserSpeechScoreGateAccumulated. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}.",
-            candidateType,
-            userSpeechScoreText,
-            threshold,
-            _sustainedUserSpeechScoreMs,
-            requiredDurationMs,
-            assistantAudioActuallyPlaying,
-            gateResult?.Decision.ToString() ?? "Unavailable",
-            gateResult?.Reason ?? "Self-speech gate result unavailable.");
+        if (ShouldEmitRepeatedDiagnostic(options, $"SustainedUserSpeechScoreGateAccumulated:{context.AssistantTurnId}:{candidateType}"))
+        {
+            _logger.LogInformation(
+                "SustainedUserSpeechScoreGateAccumulated. CandidateType: {CandidateType}. UserSpeechScore: {UserSpeechScore}. Threshold: {Threshold:N3}. AccumulatedDurationMs: {AccumulatedDurationMs}. RequiredDurationMs: {RequiredDurationMs}. AssistantWasSpeaking: {AssistantWasSpeaking}. SelfSpeechGateDecision: {SelfSpeechGateDecision}. SelfSpeechGateReason: {SelfSpeechGateReason}.",
+                candidateType,
+                userSpeechScoreText,
+                threshold,
+                _sustainedUserSpeechScoreMs,
+                requiredDurationMs,
+                assistantAudioActuallyPlaying,
+                gateResult?.Decision.ToString() ?? "Unavailable",
+                gateResult?.Reason ?? "Self-speech gate result unavailable.");
+        }
 
         if (_sustainedUserSpeechScoreMs < requiredDurationMs)
         {
@@ -1362,20 +1385,22 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         var snapshot = _burstCaptureCandidate.Add(observation, promotionOptions);
         if (!wasActive)
         {
-            _diagnostics.StateChanged(
+            LogCandidateStateDiagnostic(
+                options,
                 context,
                 BargeInState.SoftPausedForUserSpeech,
                 FormatBurstDiagnostic("Burst capture candidate started", snapshot, "speech-like activity observed"));
         }
         else
         {
-            _diagnostics.Ignored(context, FormatBurstDiagnostic("Burst capture candidate updated", snapshot, "collecting sustained near-end evidence"));
+            LogCandidateDiagnostic(options, context, FormatBurstDiagnostic("Burst capture candidate updated", snapshot, "collecting sustained near-end evidence"));
         }
 
         if (snapshot.StrongSelfEchoFrames >= Math.Max(1, promotionOptions.StrongSelfEchoVetoMinFrames)
             && snapshot.StrongSelfEchoRatio >= Math.Clamp(promotionOptions.StrongSelfEchoVetoRatio, 0.0, 1.0))
         {
-            _diagnostics.Ignored(
+            LogCandidateDiagnostic(
+                options,
                 context,
                 FormatBurstDiagnostic("Burst capture promotion blocked by strong self-echo", snapshot, "strong self-echo dominates candidate burst"));
             _burstCaptureCandidate.Reset();
@@ -1431,7 +1456,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
 
         var snapshot = _burstCaptureCandidate.Snapshot();
         _burstCaptureCandidate.Reset();
-        _diagnostics.Ignored(context, FormatBurstDiagnostic("Burst capture candidate reset", snapshot, reason));
+        LogCandidateDiagnostic(_options.CurrentValue, context, FormatBurstDiagnostic("Burst capture candidate reset", snapshot, reason));
     }
 
     private static bool IsStrongSelfEchoForBurst(
@@ -1787,7 +1812,10 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         }
 
         _diagnostics.StateChanged(context, BargeInState.CapturingInterruption, "Collecting post-trigger echo-reduced speech until end-of-utterance for gated STT.");
+        var timeline = CreateVoiceCaptureTimeline(context, captureSession, captureKind, burstPromotionSummary);
         var capturedUntil = await captureSession.WaitForEndpointAsync(cancellationToken);
+        timeline.CaptureEndedUtc = capturedUntil;
+        LogVoiceCaptureEndpointTriggered(timeline, captureSession);
         var triggeredCapture = _triggerBuffer.CaptureTriggeredWindowWithDiagnostics(
             triggerFrame,
             options,
@@ -1868,6 +1896,13 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 captureKind,
                 sttAudioSource,
                 capturedWindowCheck.Reason);
+            timeline.Suppress(
+                "captured_window_self_playback",
+                capturedWindowCheck.Reason,
+                (int)Math.Round(duration.TotalMilliseconds),
+                captureSession);
+            LogVoiceCaptureSuppressed(timeline);
+            LogVoiceCaptureTimelineCompleted(timeline);
             await ResumePreviousSpeechAsync(context, "captured_window_self_playback", cancellationToken);
             _vadService.Reset();
             return;
@@ -1909,7 +1944,18 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         }
 
         _diagnostics.GatedSttStarted(context, duration);
+        timeline.AudioSentToSttMs = duration.TotalMilliseconds;
+        timeline.SttStartedUtc = DateTimeOffset.UtcNow;
+        LogVoiceCaptureSttStarted(timeline, captured);
+        var sttStopwatch = Stopwatch.StartNew();
         var stt = await _sttService.TranscribeTriggerAsync(captured, options, cancellationToken);
+        sttStopwatch.Stop();
+        timeline.SttCompletedUtc = DateTimeOffset.UtcNow;
+        timeline.SttLatencyMs = sttStopwatch.Elapsed.TotalMilliseconds;
+        timeline.Transcript = stt.Transcript;
+        timeline.TranscriptChars = stt.Transcript.Length;
+        ApplyTranscriptHeuristics(timeline, stt.Transcript);
+        LogVoiceCaptureSttCompleted(timeline, stt, captured);
         _diagnostics.GatedSttResult(context, stt);
         if (IsLiveMonitorContext(context) && !_liveTurnService.TryGetCurrentActiveTurn(out _))
         {
@@ -1921,25 +1967,40 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         _diagnostics.StateChanged(context, BargeInState.ClassifyingInterruption, $"Interruption transcript captured: {stt.Transcript}");
 
         var normalized = InterruptionClassifier.Normalize(stt.Transcript);
-        var utterance = CreateUserUtterance(context, stt.Transcript, vad.Confidence);
+        var utterance = CreateUserUtterance(context, stt.Transcript, vad.Confidence, timeline.CaptureId);
         _diagnostics.StateChanged(
             context,
             BargeInState.ClassifyingInterruption,
             $"UserUtteranceCaptured. activeTurnId={utterance.ActiveTurnId ?? "(none)"} stateWhenCaptured={utterance.StateWhenCaptured} assistantWasSpeaking={utterance.AssistantWasSpeaking} text={utterance.Text}");
         _logger.LogInformation(
-            "UserUtteranceCaptured. Text: {Text}. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. StateWhenCaptured: {StateWhenCaptured}. AssistantWasSpeaking: {AssistantWasSpeaking}. Confidence: {Confidence}.",
+            "UserUtteranceCaptured. CaptureId: {CaptureId}. Text: {Text}. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. StateWhenCaptured: {StateWhenCaptured}. AssistantWasSpeaking: {AssistantWasSpeaking}. Confidence: {Confidence}.",
+            utterance.CaptureId,
             utterance.Text,
             utterance.ActiveTurnId,
             utterance.CorrelationId,
             utterance.StateWhenCaptured,
             utterance.AssistantWasSpeaking,
             utterance.Confidence);
+        await EmitAssistantUiStateCoalescedAsync(
+            AssistantUiStateEvent.Create(
+                "thinking",
+                utterance.AssistantWasSpeaking
+                    ? "interruption_handling_started"
+                    : "backend_idle_voice_request_accepted",
+                utterance.CorrelationId,
+                utterance.ActiveTurnId,
+                interruptionState: utterance.AssistantWasSpeaking ? "handling" : "none"),
+            nameof(BargeInCoordinator),
+            cancellationToken);
         var gateResult = _liveUtteranceGate?.Evaluate(CreateLiveUtteranceGateInput(utterance, vad.Confidence));
         var routeDecision = gateResult is not null && _liveUtteranceGate is not null
             ? _liveUtteranceGate.ToRouteDecision(utterance, gateResult)
             : RouteUtterance(utterance);
+        timeline.MarkRouted(utterance, gateResult, routeDecision);
+        LogVoiceCaptureRouted(timeline, utterance, gateResult, routeDecision);
         _logger.LogInformation(
-            "UserUtteranceRouted. Text: {Text}. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. StateWhenCaptured: {StateWhenCaptured}. Route: {Route}. Confidence: {Confidence}. Action: {Action}. Reason: {Reason}.",
+            "UserUtteranceRouted. CaptureId: {CaptureId}. Text: {Text}. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. StateWhenCaptured: {StateWhenCaptured}. Route: {Route}. Confidence: {Confidence}. Action: {Action}. Reason: {Reason}.",
+            utterance.CaptureId,
             utterance.Text,
             utterance.ActiveTurnId,
             utterance.CorrelationId,
@@ -1959,6 +2020,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             capturedUntil,
             cancellationToken))
         {
+            timeline.ToolResult = "conversational_interruption_handled";
+            LogVoiceCaptureTimelineCompleted(timeline);
             _vadService.Reset();
             return;
         }
@@ -2040,10 +2103,15 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             captureKind,
             burstPromotionSummary,
             cancellationToken);
+        timeline.EndpointReason = captureSession.EndReason;
+        timeline.CaptureWindowMs = Math.Max(0, (capturedUntil - triggerFrame.Timestamp).TotalMilliseconds);
+        timeline.AudioSentToSttMs = duration.TotalMilliseconds;
+        timeline.ToolResult = decision.Accepted ? decision.Action.ToString() : "ignored";
         if (gateResult is not null && IsDecisiveGateDecision(gateResult, utterance))
         {
             _logger.LogInformation(
-                "LiveUtteranceGateDecisionApplied. Text: {Text}. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. StateWhenCaptured: {StateWhenCaptured}. GateDecision: {GateDecision}. Route: {Route}. Action: {Action}. LegacyClassificationType: {LegacyClassificationType}. LegacyAction: {LegacyAction}.",
+                "LiveUtteranceGateDecisionApplied. CaptureId: {CaptureId}. Text: {Text}. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. StateWhenCaptured: {StateWhenCaptured}. GateDecision: {GateDecision}. Route: {Route}. Action: {Action}. LegacyClassificationType: {LegacyClassificationType}. LegacyAction: {LegacyAction}.",
+                utterance.CaptureId,
                 utterance.Text,
                 utterance.ActiveTurnId,
                 utterance.CorrelationId,
@@ -2069,6 +2137,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             }
 
             await ApplyDecisiveGateDecisionAsync(context, utterance, routeDecision, gateResult, cancellationToken);
+            LogVoiceCaptureTimelineCompleted(timeline);
             _vadService.Reset();
             return;
         }
@@ -2076,7 +2145,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         if (gateResult is not null)
         {
             _logger.LogInformation(
-                "GateDecisionAllowedLegacyFallback. Text: {Text}. GateDecision: {GateDecision}. Route: {Route}. Action: {Action}. LegacyClassificationType: {LegacyClassificationType}. LegacyAction: {LegacyAction}.",
+                "GateDecisionAllowedLegacyFallback. CaptureId: {CaptureId}. Text: {Text}. GateDecision: {GateDecision}. Route: {Route}. Action: {Action}. LegacyClassificationType: {LegacyClassificationType}. LegacyAction: {LegacyAction}.",
+                utterance.CaptureId,
                 utterance.Text,
                 gateResult.Decision,
                 routeDecision.Kind,
@@ -2087,6 +2157,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
 
         if (await TryHandleLiveUtteranceRouteAsync(context, utterance, routeDecision, cancellationToken))
         {
+            LogVoiceCaptureTimelineCompleted(timeline);
             _vadService.Reset();
             return;
         }
@@ -2095,6 +2166,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         {
             _diagnostics.Ignored(context, decision.Reason);
             await ResumePreviousSpeechAsync(context, decision.Reason, cancellationToken);
+            LogVoiceCaptureTimelineCompleted(timeline);
             _vadService.Reset();
             return;
         }
@@ -2108,6 +2180,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             }
 
             await ResumePreviousSpeechAsync(context, decision.Reason, cancellationToken);
+            LogVoiceCaptureTimelineCompleted(timeline);
             _vadService.Reset();
             return;
         }
@@ -2128,7 +2201,80 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         {
             var correctionText = classification.CorrectedUserMessage ?? classification.Reason;
             _diagnostics.CorrectionRegenerationStarted(context, correctionText);
-            await RaiseCorrectionRegenerationRequestedAsync(context, correctionText, cancellationToken);
+            await RaiseCorrectionRegenerationRequestedAsync(context, correctionText, timeline.CaptureId, cancellationToken);
+        }
+
+        LogVoiceCaptureTimelineCompleted(timeline);
+    }
+
+    private void LogCandidateDiagnostic(BargeInOptions options, BargeInSpeechContext context, string reason)
+    {
+        if (!options.EnableBargeInCandidateDiagnostics)
+        {
+            return;
+        }
+
+        if (!ShouldEmitRepeatedDiagnostic(options, $"candidate:{context.AssistantTurnId}:{reason}"))
+        {
+            return;
+        }
+
+        _diagnostics.Ignored(context, reason);
+    }
+
+    private void LogCandidateStateDiagnostic(
+        BargeInOptions options,
+        BargeInSpeechContext context,
+        BargeInState state,
+        string reason)
+    {
+        if (!options.EnableBargeInCandidateDiagnostics)
+        {
+            return;
+        }
+
+        if (!ShouldEmitRepeatedDiagnostic(options, $"candidate_state:{context.AssistantTurnId}:{state}:{reason}"))
+        {
+            return;
+        }
+
+        _diagnostics.StateChanged(context, state, reason);
+    }
+
+    private void LogLegacyDiagnostic(BargeInOptions options, BargeInSpeechContext context, string reason)
+    {
+        if (!options.EnableBargeInLegacyDiagnostics)
+        {
+            return;
+        }
+
+        if (!ShouldEmitRepeatedDiagnostic(options, $"legacy:{context.AssistantTurnId}:{reason}"))
+        {
+            return;
+        }
+
+        _diagnostics.Ignored(context, reason);
+    }
+
+    private bool ShouldEmitRepeatedDiagnostic(BargeInOptions options, string key)
+    {
+        var throttleMs = Math.Max(0, options.BargeInRepeatedDiagnosticThrottleMs);
+        if (throttleMs == 0)
+        {
+            return true;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        lock (_syncRoot)
+        {
+            if (_lastRepeatedDiagnosticAt.TryGetValue(key, out var last)
+                && (now - last).TotalMilliseconds < throttleMs)
+            {
+                return false;
+            }
+
+            _lastRepeatedDiagnosticAt[key] = now;
+            return true;
         }
     }
 
@@ -2142,7 +2288,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         string reason,
         CancellationToken cancellationToken)
     {
-        if (!options.SaveDebugAudio)
+        if (!options.SaveDebugAudio || !options.EnableSuppressedCaptureDiagnostics)
         {
             return;
         }
@@ -2180,6 +2326,264 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         }, CancellationToken.None);
     }
 
+    private VoiceCaptureTimeline CreateVoiceCaptureTimeline(
+        BargeInSpeechContext context,
+        BargeInCaptureSession captureSession,
+        CaptureKind captureKind,
+        BurstCapturePromotionSummary? burstPromotionSummary)
+    {
+        var activePlaybackSnapshot = _playbackService.GetActivePlaybackSnapshot();
+        var playbackReferenceSnapshot = _playbackReferenceTap.GetDebugSnapshot();
+        return new VoiceCaptureTimeline
+        {
+            CaptureId = captureSession.CaptureId,
+            TurnId = context.AssistantTurnId,
+            CorrelationId = context.CorrelationId,
+            Source = IsLiveMonitorContext(context) ? "backend_idle_voice" : "barge_in",
+            AcousticCaptureMode = captureSession.Mode.ToString(),
+            SpeechType = context.SpeechType.ToString(),
+            ItemType = context.SpeechType.ToString(),
+            HoldId = activePlaybackSnapshot?.HoldId,
+            AssistantPlaybackContextActive = IsAssistantPlaybackContextActive(activePlaybackSnapshot),
+            AssistantAudioActuallyPlaying = IsAssistantAudioActuallyPlaying(activePlaybackSnapshot),
+            PlaybackReferenceAgeMs = playbackReferenceSnapshot.ReferenceNewestAgeMilliseconds,
+            CaptureStartedUtc = DateTimeOffset.UtcNow,
+            CaptureKind = GetCaptureKindName(captureKind),
+            RequiredEndpointSilenceMs = captureSession.RequiredEndpointSilenceMs,
+            BurstCandidateMs = burstPromotionSummary?.CandidateBurstMsAtPromotion,
+            BurstAllowFrames = burstPromotionSummary?.BurstAllowFrames,
+            BurstUncertainFrames = burstPromotionSummary?.BurstUncertainFrames,
+            BurstSuppressFrames = burstPromotionSummary?.BurstSuppressAsSelfEchoFrames
+        };
+    }
+
+    private void LogVoiceCaptureTimelineStarted(
+        BargeInCaptureSession captureSession,
+        BargeInSpeechContext context,
+        AcousticCaptureMode acousticMode,
+        ReadOnlyMemory<float> playbackReference,
+        CaptureKind captureKind)
+    {
+        if (!_options.CurrentValue.EnableVoiceCaptureTimelineDiagnostics)
+        {
+            return;
+        }
+
+        var activePlaybackSnapshot = _playbackService.GetActivePlaybackSnapshot();
+        var playbackReferenceSnapshot = _playbackReferenceTap.GetDebugSnapshot();
+        var playbackReferenceRms = playbackReference.IsEmpty ? (double?)null : CalculateRms(playbackReference.Span);
+        _logger.LogInformation(
+            "voice_capture_timeline_started CaptureId: {CaptureId}. TurnId: {TurnId}. CorrelationId: {CorrelationId}. Source: {Source}. AcousticCaptureMode: {AcousticCaptureMode}. AssistantPlaybackContextActive: {AssistantPlaybackContextActive}. AssistantAudioActuallyPlaying: {AssistantAudioActuallyPlaying}. SpeechType: {SpeechType}. ItemType: {ItemType}. HoldId: {HoldId}. PlaybackReferenceRms: {PlaybackReferenceRms}. PlaybackReferenceAgeMs: {PlaybackReferenceAgeMs}. CaptureKind: {CaptureKind}. RequiredEndpointSilenceMs: {RequiredEndpointSilenceMs}.",
+            captureSession.CaptureId,
+            context.AssistantTurnId,
+            context.CorrelationId,
+            IsLiveMonitorContext(context) ? "backend_idle_voice" : "barge_in",
+            acousticMode,
+            IsAssistantPlaybackContextActive(activePlaybackSnapshot),
+            IsAssistantAudioActuallyPlaying(activePlaybackSnapshot),
+            context.SpeechType,
+            context.SpeechType,
+            activePlaybackSnapshot?.HoldId,
+            playbackReferenceRms,
+            playbackReferenceSnapshot.ReferenceNewestAgeMilliseconds,
+            GetCaptureKindName(captureKind),
+            captureSession.RequiredEndpointSilenceMs);
+    }
+
+    private void LogVoiceCaptureEndpointTriggered(VoiceCaptureTimeline timeline, BargeInCaptureSession captureSession)
+    {
+        if (!_options.CurrentValue.EnableVoiceCaptureTimelineDiagnostics)
+        {
+            return;
+        }
+
+        var lastFrame = captureSession.GetFrameDiagnostics().LastOrDefault();
+        timeline.EndpointReason = captureSession.EndReason;
+        timeline.EndpointSilenceMs = lastFrame?.EndpointSilenceMs;
+        timeline.RequiredEndpointSilenceMs = lastFrame?.RequiredEndpointSilenceMs ?? captureSession.RequiredEndpointSilenceMs;
+        timeline.CaptureWindowMs = captureSession.CaptureStartedToLastFrameMs;
+        timeline.PostRawSpeechTailMs = lastFrame?.EndpointSilenceMs;
+        timeline.PlaybackReferenceRms = lastFrame?.PlaybackReferenceRms;
+        timeline.PlaybackReferenceAgeMs = lastFrame?.PlaybackReferenceAgeMs;
+        _logger.LogInformation(
+            "voice_capture_endpoint_triggered CaptureId: {CaptureId}. EndpointReason: {EndpointReason}. EndpointSilenceMs: {EndpointSilenceMs}. RequiredEndpointSilenceMs: {RequiredEndpointSilenceMs}. AudioMsSoFar: {AudioMsSoFar}. LastSpeechFrameRelativeMs: {LastSpeechFrameRelativeMs}. RawSpeechActive: {RawSpeechActive}. AecSpeechActive: {AecSpeechActive}. VadSaysSpeech: {VadSaysSpeech}. CaptureIsSpeechFrame: {CaptureIsSpeechFrame}.",
+            timeline.CaptureId,
+            timeline.EndpointReason,
+            timeline.EndpointSilenceMs,
+            timeline.RequiredEndpointSilenceMs,
+            timeline.CaptureWindowMs,
+            captureSession.LastSpeechFrameRelativeMs,
+            lastFrame?.RawSpeechActive,
+            lastFrame?.AecSpeechActive,
+            lastFrame?.VadSaysSpeech,
+            lastFrame?.CaptureIsSpeechFrame);
+    }
+
+    private void LogVoiceCaptureSttStarted(VoiceCaptureTimeline timeline, IReadOnlyList<BargeInAudioFrame> captured)
+    {
+        if (!_options.CurrentValue.EnableVoiceCaptureTimelineDiagnostics)
+        {
+            return;
+        }
+
+        _logger.LogInformation(
+            "voice_capture_stt_started CaptureId: {CaptureId}. AudioSentToSttMs: {AudioSentToSttMs}. Samples: {Samples}. Model: {Model}. Device: {Device}.",
+            timeline.CaptureId,
+            timeline.AudioSentToSttMs,
+            captured.Sum(frame => frame.Samples.Length),
+            "configured_barge_in_stt",
+            "configured");
+    }
+
+    private void LogVoiceCaptureSttCompleted(
+        VoiceCaptureTimeline timeline,
+        BargeInSttResult stt,
+        IReadOnlyList<BargeInAudioFrame> captured)
+    {
+        if (!_options.CurrentValue.EnableVoiceCaptureTimelineDiagnostics)
+        {
+            return;
+        }
+
+        _logger.LogInformation(
+            "voice_capture_stt_completed CaptureId: {CaptureId}. AudioSentToSttMs: {AudioSentToSttMs}. Samples: {Samples}. Model: {Model}. Device: {Device}. LatencyMs: {LatencyMs}. Transcript: {Transcript}. TranscriptChars: {TranscriptChars}. TranscriptLooksIncomplete: {TranscriptLooksIncomplete}. EndsWithCorrectionPrefix: {EndsWithCorrectionPrefix}.",
+            timeline.CaptureId,
+            timeline.AudioSentToSttMs,
+            captured.Sum(frame => frame.Samples.Length),
+            "configured_barge_in_stt",
+            "configured",
+            timeline.SttLatencyMs,
+            stt.Transcript,
+            stt.Transcript.Length,
+            timeline.TranscriptLooksIncomplete,
+            timeline.EndsWithCorrectionPrefix);
+    }
+
+    private void LogVoiceCaptureRouted(
+        VoiceCaptureTimeline timeline,
+        UserUtterance utterance,
+        LiveUtteranceGateResult? gateResult,
+        UtteranceRouteDecision routeDecision)
+    {
+        if (!_options.CurrentValue.EnableVoiceCaptureTimelineDiagnostics)
+        {
+            return;
+        }
+
+        _logger.LogInformation(
+            "voice_capture_routed CaptureId: {CaptureId}. Transcript: {Transcript}. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. StateWhenCaptured: {StateWhenCaptured}. AssistantWasSpeaking: {AssistantWasSpeaking}. LiveGateDecision: {LiveGateDecision}. Route: {Route}. RouteAction: {RouteAction}. ReplacementText: {ReplacementText}.",
+            timeline.CaptureId,
+            utterance.Text,
+            utterance.ActiveTurnId,
+            utterance.CorrelationId,
+            utterance.StateWhenCaptured,
+            utterance.AssistantWasSpeaking,
+            gateResult?.Decision.ToString(),
+            routeDecision.Kind,
+            routeDecision.Action,
+            routeDecision.ReplacementText);
+    }
+
+    private void LogVoiceCaptureSuppressed(VoiceCaptureTimeline timeline)
+    {
+        if (!_options.CurrentValue.EnableVoiceCaptureTimelineDiagnostics)
+        {
+            return;
+        }
+
+        _logger.LogInformation(
+            "voice_capture_suppressed CaptureId: {CaptureId}. CaptureKind: {CaptureKind}. SuppressionReason: {SuppressionReason}. EndpointReason: {EndpointReason}. AudioSentToSttMs: {AudioSentToSttMs}.",
+            timeline.CaptureId,
+            timeline.CaptureKind,
+            timeline.SuppressionReason,
+            timeline.EndpointReason,
+            timeline.AudioSentToSttMs);
+    }
+
+    private void LogVoiceCaptureTimelineCompleted(VoiceCaptureTimeline timeline)
+    {
+        if (!_options.CurrentValue.EnableVoiceCaptureTimelineDiagnostics)
+        {
+            return;
+        }
+
+        timeline.RoutedUtc ??= DateTimeOffset.UtcNow;
+        if (timeline.CaptureStartedUtc is not null)
+        {
+            timeline.TotalCaptureToRouteMs = Math.Max(0, (timeline.RoutedUtc.Value - timeline.CaptureStartedUtc.Value).TotalMilliseconds);
+        }
+
+        _logger.LogInformation(
+            "voice_capture_timeline_completed CaptureId: {CaptureId}. TurnId: {TurnId}. CorrelationId: {CorrelationId}. Source: {Source}. AcousticCaptureMode: {AcousticCaptureMode}. SpeechType: {SpeechType}. ItemType: {ItemType}. HoldId: {HoldId}. AssistantPlaybackContextActive: {AssistantPlaybackContextActive}. AssistantAudioActuallyPlaying: {AssistantAudioActuallyPlaying}. PlaybackReferenceRms: {PlaybackReferenceRms}. PlaybackReferenceAgeMs: {PlaybackReferenceAgeMs}. CaptureStartedUtc: {CaptureStartedUtc}. CaptureEndedUtc: {CaptureEndedUtc}. SttStartedUtc: {SttStartedUtc}. SttCompletedUtc: {SttCompletedUtc}. RoutedUtc: {RoutedUtc}. CaptureKind: {CaptureKind}. EndpointReason: {EndpointReason}. SuppressionReason: {SuppressionReason}. AudioSentToSttMs: {AudioSentToSttMs}. EndpointSilenceMs: {EndpointSilenceMs}. RequiredEndpointSilenceMs: {RequiredEndpointSilenceMs}. SttLatencyMs: {SttLatencyMs}. TotalCaptureToRouteMs: {TotalCaptureToRouteMs}. Transcript: {Transcript}. TranscriptChars: {TranscriptChars}. TranscriptLooksIncomplete: {TranscriptLooksIncomplete}. EndsWithCorrectionPrefix: {EndsWithCorrectionPrefix}. LiveGateDecision: {LiveGateDecision}. LiveGateRoute: {LiveGateRoute}. RouteAction: {RouteAction}. ReplacementText: {ReplacementText}. CommandRouterNormalizedText: {CommandRouterNormalizedText}. Intent: {Intent}. ToolName: {ToolName}. ToolResult: {ToolResult}. SpokenResponse: {SpokenResponse}.",
+            timeline.CaptureId,
+            timeline.TurnId,
+            timeline.CorrelationId,
+            timeline.Source,
+            timeline.AcousticCaptureMode,
+            timeline.SpeechType,
+            timeline.ItemType,
+            timeline.HoldId,
+            timeline.AssistantPlaybackContextActive,
+            timeline.AssistantAudioActuallyPlaying,
+            timeline.PlaybackReferenceRms,
+            timeline.PlaybackReferenceAgeMs,
+            timeline.CaptureStartedUtc,
+            timeline.CaptureEndedUtc,
+            timeline.SttStartedUtc,
+            timeline.SttCompletedUtc,
+            timeline.RoutedUtc,
+            timeline.CaptureKind,
+            timeline.EndpointReason,
+            timeline.SuppressionReason,
+            timeline.AudioSentToSttMs,
+            timeline.EndpointSilenceMs,
+            timeline.RequiredEndpointSilenceMs,
+            timeline.SttLatencyMs,
+            timeline.TotalCaptureToRouteMs,
+            timeline.Transcript,
+            timeline.TranscriptChars,
+            timeline.TranscriptLooksIncomplete,
+            timeline.EndsWithCorrectionPrefix,
+            timeline.LiveGateDecision,
+            timeline.LiveGateRoute,
+            timeline.RouteAction,
+            timeline.ReplacementText,
+            timeline.CommandRouterNormalizedText,
+            timeline.Intent,
+            timeline.ToolName,
+            timeline.ToolResult,
+            timeline.SpokenResponse);
+    }
+
+    private static void ApplyTranscriptHeuristics(VoiceCaptureTimeline timeline, string transcript)
+    {
+        var normalized = InterruptionClassifier.Normalize(transcript);
+        var endsWithCorrectionPrefix = IsIncompleteCorrectionPrefixTranscript(normalized);
+        timeline.TranscriptLooksIncomplete = endsWithCorrectionPrefix
+            || normalized is "yeah but" or "but" or "sorry i meant" or "i meant" or "i mean";
+        timeline.EndsWithCorrectionPrefix = endsWithCorrectionPrefix;
+    }
+
+    private static bool IsIncompleteCorrectionPrefixTranscript(string normalized)
+    {
+        var prefixes = new[]
+        {
+            "no what i meant is",
+            "what i meant is",
+            "i meant",
+            "i mean",
+            "no i meant",
+            "no i mean",
+            "actually i meant",
+            "wait i meant",
+            "sorry i meant",
+            "no what i mean is",
+            "what i mean is"
+        };
+
+        return prefixes.Any(prefix => string.Equals(normalized, prefix, StringComparison.Ordinal));
+    }
+
     private Task SaveSuppressedInterruptionDiagnosticsAsync(
         BargeInSpeechContext context,
         BargeInAudioFrame triggerFrame,
@@ -2190,6 +2594,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         string reason,
         CancellationToken cancellationToken)
     {
+        var captureId = $"capture:{Guid.NewGuid():N}"[..40];
         var requestedPreRollMs = Math.Max(0, options.TriggerPreRollMs);
         var postMs = Math.Clamp(
             Math.Max(options.VadEndSilenceMs, options.FastHardStopPostSpeechPaddingMs),
@@ -2211,8 +2616,34 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         }
 
         var duration = CalculateDuration(captured);
+        var activePlaybackSnapshot = _playbackService.GetActivePlaybackSnapshot();
+        var suppressedTimeline = new VoiceCaptureTimeline
+        {
+            CaptureId = captureId,
+            TurnId = context.AssistantTurnId,
+            CorrelationId = context.CorrelationId,
+            Source = IsLiveMonitorContext(context) ? "backend_idle_voice" : "barge_in",
+            AcousticCaptureMode = SelectAcousticCaptureModeForFrame(_playbackReferenceTap.GetLatestReferenceFrame(triggerFrame.Samples.Length), options).ToString(),
+            SpeechType = context.SpeechType.ToString(),
+            ItemType = context.SpeechType.ToString(),
+            HoldId = activePlaybackSnapshot?.HoldId,
+            AssistantPlaybackContextActive = IsAssistantPlaybackContextActive(activePlaybackSnapshot),
+            AssistantAudioActuallyPlaying = IsAssistantAudioActuallyPlaying(activePlaybackSnapshot),
+            CaptureStartedUtc = captured[0].Timestamp,
+            CaptureEndedUtc = captured[^1].Timestamp,
+            CaptureKind = captureKind,
+            EndpointReason = "suppressed_before_stt",
+            SuppressionReason = reason,
+            AudioSentToSttMs = duration.TotalMilliseconds,
+            Transcript = string.Empty,
+            TranscriptChars = 0,
+            ToolResult = "suppressed"
+        };
+        LogVoiceCaptureSuppressed(suppressedTimeline);
+        LogVoiceCaptureTimelineCompleted(suppressedTimeline);
         var diagnostic = new InterruptionCaptureDiagnostic
         {
+            CaptureId = captureId,
             TimestampUtc = DateTimeOffset.UtcNow,
             CaptureKind = captureKind,
             AssistantTurnId = context.AssistantTurnId,
@@ -2303,6 +2734,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     {
         var diagnostic = new InterruptionCaptureDiagnostic
         {
+            CaptureId = captureSession.CaptureId,
             TimestampUtc = DateTimeOffset.UtcNow,
             CaptureKind = GetCaptureKindName(captureKind),
             AssistantTurnId = context.AssistantTurnId,
@@ -2395,6 +2827,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     private async Task RaiseCorrectionRegenerationRequestedAsync(
         BargeInSpeechContext context,
         string correctionText,
+        string? captureId,
         CancellationToken cancellationToken)
     {
         var correlationId = string.IsNullOrWhiteSpace(context.CorrelationId)
@@ -2409,6 +2842,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
 
         var request = new CorrectionRegenerationRequested
         {
+            CaptureId = captureId,
             OriginalCorrelationId = correlationId,
             CorrectionText = correctionText,
             SpeechContext = context
@@ -2460,6 +2894,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             : options.BackendIdleVoiceInteractionSource.Trim();
         var request = new BackendVoiceRequestCaptured
         {
+            CaptureId = utterance.CaptureId,
             CorrelationId = correlationId,
             Text = text,
             InteractionSource = source,
@@ -2468,7 +2903,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         };
 
         _logger.LogInformation(
-            "BackendIdleVoiceRequestAccepted. Text: {Text}. CorrelationId: {CorrelationId}. Source: {Source}.",
+            "BackendIdleVoiceRequestAccepted. CaptureId: {CaptureId}. Text: {Text}. CorrelationId: {CorrelationId}. Source: {Source}.",
+            utterance.CaptureId,
             text,
             correlationId,
             source);
@@ -2520,11 +2956,11 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 "live_ducking");
             if (gateResult.Decision is not SelfSpeechDecision.Allow)
             {
-                _diagnostics.Ignored(context, $"Legacy active-capture ducking disabled. Gate did not allow active capture frame. Decision: {gateResult.Decision}. Reason: {gateResult.Reason}.");
+                LogLegacyDiagnostic(options, context, $"Legacy active-capture ducking disabled. Gate did not allow active capture frame. Decision: {gateResult.Decision}. Reason: {gateResult.Reason}.");
                 return;
             }
 
-            _diagnostics.Ignored(context, $"Legacy active-capture ducking disabled. Gate allowed active capture frame. Decision: {gateResult.Decision}. Reason: {gateResult.Reason}.");
+            LogLegacyDiagnostic(options, context, $"Legacy active-capture ducking disabled. Gate allowed active capture frame. Decision: {gateResult.Decision}. Reason: {gateResult.Reason}.");
             return;
         }
     }
@@ -2948,7 +3384,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     private UserUtterance CreateUserUtterance(
         BargeInSpeechContext context,
         string transcript,
-        double confidence)
+        double confidence,
+        string? captureId)
     {
         LiveAssistantTurnState state = _assistantPlaybackMonitor.IsPlaybackActive
             ? LiveAssistantTurnState.Speaking
@@ -2974,6 +3411,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         var originalAssistantWasSpeaking = playbackActive || state is LiveAssistantTurnState.Speaking;
         var provisionalUtterance = new UserUtterance
         {
+            CaptureId = captureId,
             Text = transcript.Trim(),
             TimestampUtc = DateTimeOffset.UtcNow,
             ActiveTurnId = activeTurnId,
@@ -3008,6 +3446,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
 
         return new UserUtterance
         {
+            CaptureId = captureId,
             Text = transcript.Trim(),
             TimestampUtc = DateTimeOffset.UtcNow,
             ActiveTurnId = activeTurnId,
@@ -3092,11 +3531,13 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             // This hook only shadows conversational meaning of the yielded utterance.
             var yieldedUtterance = new YieldedInterruptionUtterance
             {
+                CaptureId = utterance.CaptureId,
                 Transcript = utterance.Text,
                 YieldedByLayer1 = true,
                 YieldReason = routeDecision.Reason,
                 CaptureKind = captureKind.ToString(),
                 RouteKind = routeDecision.Kind.ToString(),
+                RouteAction = routeDecision.Action,
                 CorrelationId = correlationId,
                 ActiveTurnId = activeTurnId,
                 OriginalObservedTurnId = originalObservedTurnId,
@@ -3122,7 +3563,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             if (outcome is not null)
             {
                 _logger.LogInformation(
-                    "conversational_interruption_live_hook_result TurnId: {TurnId}. CorrelationId: {CorrelationId}. WasEvaluated: {WasEvaluated}. WasHandled: {WasHandled}. AllowLegacyCleanup: {AllowLegacyCleanup}. AllowLegacySemanticRouting: {AllowLegacySemanticRouting}. ShouldCancelPlayback: {ShouldCancelPlayback}. ShouldCancelCurrentTurn: {ShouldCancelCurrentTurn}. ShouldRouteReplacementRequest: {ShouldRouteReplacementRequest}. ResultType: {ResultType}. DecisionType: {DecisionType}. Strategy: {Strategy}. Reason: {Reason}.",
+                    "conversational_interruption_live_hook_result CaptureId: {CaptureId}. TurnId: {TurnId}. CorrelationId: {CorrelationId}. WasEvaluated: {WasEvaluated}. WasHandled: {WasHandled}. AllowLegacyCleanup: {AllowLegacyCleanup}. AllowLegacySemanticRouting: {AllowLegacySemanticRouting}. ShouldCancelPlayback: {ShouldCancelPlayback}. ShouldCancelCurrentTurn: {ShouldCancelCurrentTurn}. ShouldRouteReplacementRequest: {ShouldRouteReplacementRequest}. ResultType: {ResultType}. DecisionType: {DecisionType}. Strategy: {Strategy}. Reason: {Reason}.",
+                    utterance.CaptureId,
                     yieldedUtterance.ActiveTurnId,
                     yieldedUtterance.CorrelationId,
                     outcome.WasEvaluatedByConversationalInterruption,
@@ -3140,7 +3582,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 if (outcome.ShouldRouteReplacementRequest && !string.IsNullOrWhiteSpace(outcome.RewrittenRequest))
                 {
                     await CancelByUtteranceAsync(utterance, LiveAssistantTurnCancelReason.UserCorrection, outcome.RewrittenRequest, cancellationToken);
-                    await RaiseCorrectionRegenerationRequestedAsync(context, outcome.RewrittenRequest, cancellationToken);
+                    await RaiseCorrectionRegenerationRequestedAsync(context, outcome.RewrittenRequest, utterance.CaptureId, cancellationToken);
                     _logger.LogInformation(
                         "conversational_interruption_replacement_routing_requested TurnId: {TurnId}. CorrelationId: {CorrelationId}. AllowLegacySemanticRouting: {AllowLegacySemanticRouting}.",
                         yieldedUtterance.ActiveTurnId,
@@ -3151,7 +3593,12 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
 
                 if (outcome.ShouldCancelCurrentTurn)
                 {
-                    await CancelByUtteranceAsync(utterance, LiveAssistantTurnCancelReason.UserHardStop, null, cancellationToken);
+                    await CancelByUtteranceAsync(
+                        utterance,
+                        LiveAssistantTurnCancelReason.UserHardStop,
+                        null,
+                        cancellationToken,
+                        clearPlaybackQueue: outcome.AllowLegacyCleanup);
                     return false;
                 }
 
@@ -3302,7 +3749,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 await CancelByUtteranceAsync(utterance, LiveAssistantTurnCancelReason.UserCorrection, routeDecision.ReplacementText, cancellationToken);
                 if (!string.IsNullOrWhiteSpace(routeDecision.ReplacementText))
                 {
-                    await RaiseCorrectionRegenerationRequestedAsync(context, routeDecision.ReplacementText, cancellationToken);
+                    await RaiseCorrectionRegenerationRequestedAsync(context, routeDecision.ReplacementText, utterance.CaptureId, cancellationToken);
                 }
 
                 await RaiseLiveUserUtteranceRoutedAsync(utterance, routeDecision, cancellationToken);
@@ -3424,6 +3871,11 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             return Decision(UtteranceRouteKind.PauseAndClarify, 0.9, "Pause/stop phrase.", action);
         }
 
+        if (IsIncompleteCorrectionPrefix(normalized))
+        {
+            return Decision(UtteranceRouteKind.BackgroundOrNoOp, 0.83, "Incomplete correction prefix; hold for more speech.", "HoldForMoreSpeech");
+        }
+
         if (TryExtractReplacement(normalized, utterance.Text, out var replacement))
         {
             return Decision(UtteranceRouteKind.ReplaceActiveTurn, 0.9, "Correction/replacement phrase.", "CancelPendingCommandAndStartReplacement", replacement);
@@ -3510,7 +3962,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 await CancelByUtteranceAsync(utterance, LiveAssistantTurnCancelReason.UserCorrection, routeDecision.ReplacementText, cancellationToken);
                 if (!string.IsNullOrWhiteSpace(routeDecision.ReplacementText))
                 {
-                    await RaiseCorrectionRegenerationRequestedAsync(context, routeDecision.ReplacementText, cancellationToken);
+                    await RaiseCorrectionRegenerationRequestedAsync(context, routeDecision.ReplacementText, utterance.CaptureId, cancellationToken);
                 }
 
                 await RaiseLiveUserUtteranceRoutedAsync(utterance, routeDecision, cancellationToken);
@@ -3532,20 +3984,26 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         UserUtterance utterance,
         LiveAssistantTurnCancelReason reason,
         string? correctionText,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool clearPlaybackQueue = true)
     {
         if (string.IsNullOrWhiteSpace(utterance.CorrelationId))
         {
             return;
         }
 
-        await _playbackService.ClearQueueAsync(cancellationToken);
+        if (clearPlaybackQueue)
+        {
+            await _playbackService.ClearQueueAsync(cancellationToken);
+        }
+
         await _liveTurnService.CancelTurnAsync(utterance.CorrelationId, reason, correctionText, cancellationToken);
         _logger.LogInformation(
-            reason is LiveAssistantTurnCancelReason.UserCorrection ? "ActiveTurnSuperseded. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. CorrectionText: {CorrectionText}." : "ActiveTurnCancelled. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. CorrectionText: {CorrectionText}.",
+            reason is LiveAssistantTurnCancelReason.UserCorrection ? "ActiveTurnSuperseded. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. CorrectionText: {CorrectionText}. ClearPlaybackQueue: {ClearPlaybackQueue}." : "ActiveTurnCancelled. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. CorrectionText: {CorrectionText}. ClearPlaybackQueue: {ClearPlaybackQueue}.",
             utterance.ActiveTurnId,
             utterance.CorrelationId,
-            correctionText);
+            correctionText,
+            clearPlaybackQueue);
     }
 
     private static UtteranceRouteDecision Decision(
@@ -3578,6 +4036,11 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     private static bool TryExtractReplacement(string normalized, string originalText, out string replacement)
     {
         replacement = string.Empty;
+        if (IsIncompleteCorrectionPrefix(normalized))
+        {
+            return false;
+        }
+
         var cues = new[]
         {
             "sorry i meant ",
@@ -3623,6 +4086,24 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         }
 
         return false;
+    }
+
+    private static bool IsIncompleteCorrectionPrefix(string normalized)
+    {
+        var prefixes = new[]
+        {
+            "what i meant was",
+            "what i meant is",
+            "what i meant",
+            "what i mean is",
+            "what i mean",
+            "i meant",
+            "i mean"
+        };
+        var intros = new[] { string.Empty, "no ", "actually ", "wait ", "sorry " };
+
+        return intros.Any(intro => prefixes.Any(prefix =>
+            string.Equals(normalized, $"{intro}{prefix}".Trim(), StringComparison.Ordinal)));
     }
 
     private static bool StartsWithAny(string value, params string[] prefixes)
@@ -4176,6 +4657,83 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         };
     }
 
+    private sealed class VoiceCaptureTimeline
+    {
+        public required string CaptureId { get; init; }
+        public string? TurnId { get; set; }
+        public string? CorrelationId { get; set; }
+        public string? Source { get; set; }
+        public string? AcousticCaptureMode { get; set; }
+        public string? SpeechType { get; set; }
+        public string? ItemType { get; set; }
+        public string? HoldId { get; set; }
+        public bool AssistantPlaybackContextActive { get; set; }
+        public bool AssistantAudioActuallyPlaying { get; set; }
+        public double? PlaybackReferenceRms { get; set; }
+        public double? PlaybackReferenceAgeMs { get; set; }
+        public DateTimeOffset? CaptureStartedUtc { get; set; }
+        public DateTimeOffset? CaptureEndedUtc { get; set; }
+        public DateTimeOffset? SttStartedUtc { get; set; }
+        public DateTimeOffset? SttCompletedUtc { get; set; }
+        public DateTimeOffset? RoutedUtc { get; set; }
+        public double? CaptureWindowMs { get; set; }
+        public double? AudioSentToSttMs { get; set; }
+        public double? PostRawSpeechTailMs { get; set; }
+        public double? EndpointSilenceMs { get; set; }
+        public double? RequiredEndpointSilenceMs { get; set; }
+        public double? SttLatencyMs { get; set; }
+        public double? TotalCaptureToRouteMs { get; set; }
+        public string? CaptureKind { get; set; }
+        public string? EndpointReason { get; set; }
+        public string? SuppressionReason { get; set; }
+        public double? BurstCandidateMs { get; set; }
+        public int? BurstAllowFrames { get; set; }
+        public int? BurstUncertainFrames { get; set; }
+        public int? BurstSuppressFrames { get; set; }
+        public string? Transcript { get; set; }
+        public int? TranscriptChars { get; set; }
+        public bool TranscriptLooksIncomplete { get; set; }
+        public bool EndsWithCorrectionPrefix { get; set; }
+        public string? LiveGateDecision { get; set; }
+        public string? LiveGateRoute { get; set; }
+        public string? RouteAction { get; set; }
+        public string? ReplacementText { get; set; }
+        public string? CommandRouterNormalizedText { get; set; }
+        public string? Intent { get; set; }
+        public string? ToolName { get; set; }
+        public string? ToolResult { get; set; }
+        public string? SpokenResponse { get; set; }
+
+        public void MarkRouted(
+            UserUtterance utterance,
+            LiveUtteranceGateResult? gateResult,
+            UtteranceRouteDecision routeDecision)
+        {
+            TurnId = utterance.ActiveTurnId ?? TurnId;
+            CorrelationId = utterance.CorrelationId ?? CorrelationId;
+            RoutedUtc = DateTimeOffset.UtcNow;
+            LiveGateDecision = gateResult?.Decision.ToString();
+            LiveGateRoute = routeDecision.Kind.ToString();
+            RouteAction = routeDecision.Action;
+            ReplacementText = routeDecision.ReplacementText;
+            CommandRouterNormalizedText = routeDecision.Kind is UtteranceRouteKind.Unknown
+                ? utterance.Text
+                : null;
+        }
+
+        public void Suppress(
+            string suppressionReason,
+            string detail,
+            int audioMs,
+            BargeInCaptureSession captureSession)
+        {
+            SuppressionReason = $"{suppressionReason}: {detail}";
+            EndpointReason = captureSession.EndReason;
+            AudioSentToSttMs = audioMs;
+            ToolResult = "suppressed";
+        }
+    }
+
     private sealed class BargeInCaptureSession
     {
         private readonly object _sessionSync = new();
@@ -4205,6 +4763,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             int endSilenceMs,
             AcousticCaptureMode mode)
         {
+            CaptureId = CreateCaptureId();
             _triggerTimestamp = triggerTimestamp;
             _lastSpeechAt = triggerTimestamp;
             _lastFrameAt = triggerTimestamp;
@@ -4217,6 +4776,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 _endpoint.TrySetResult(triggerTimestamp);
             }
         }
+
+        public string CaptureId { get; }
 
         public static BargeInCaptureSession CreateNormal(
             DateTimeOffset triggerTimestamp,
@@ -4286,6 +4847,17 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 lock (_sessionSync)
                 {
                     return ToRelativeMs(_lastSpeechAt);
+                }
+            }
+        }
+
+        public double CaptureStartedToLastFrameMs
+        {
+            get
+            {
+                lock (_sessionSync)
+                {
+                    return Math.Max(0, (_lastFrameAt - _triggerTimestamp).TotalMilliseconds);
                 }
             }
         }
@@ -4517,6 +5089,11 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             }
 
             return _maxCaptureUntil;
+        }
+
+        private static string CreateCaptureId()
+        {
+            return $"capture:{Guid.NewGuid():N}"[..40];
         }
 
         public IReadOnlyList<InterruptionCaptureFrameDiagnostic> GetFrameDiagnostics()
@@ -4823,5 +5400,23 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         _playbackReferenceTap.SpeechStarted -= OnSpeechStarted;
         _playbackReferenceTap.SpeechStopped -= OnSpeechStopped;
         await _aec.DisposeAsync();
+    }
+
+    private Task EmitAssistantUiStateImmediateAsync(
+        AssistantUiStateEvent uiState,
+        string source,
+        CancellationToken cancellationToken)
+    {
+        return _assistantUiStateBroadcaster?.EmitImmediateAsync(uiState, source, cancellationToken)
+            ?? Task.CompletedTask;
+    }
+
+    private Task EmitAssistantUiStateCoalescedAsync(
+        AssistantUiStateEvent uiState,
+        string source,
+        CancellationToken cancellationToken)
+    {
+        return _assistantUiStateBroadcaster?.RequestCoalescedStateAsync(uiState, source, cancellationToken)
+            ?? Task.CompletedTask;
     }
 }

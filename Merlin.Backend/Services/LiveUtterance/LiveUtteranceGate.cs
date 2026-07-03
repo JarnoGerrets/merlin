@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using Merlin.Backend.Models;
+using Merlin.Backend.Services;
 using Merlin.Backend.Services.BargeIn;
 using Microsoft.Extensions.Options;
 
@@ -15,7 +16,8 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
     private static readonly string[] ContinuationPhrases = ["continue", "go on", "resume", "keep going", "carry on"];
     private static readonly string[] StatusPhrases = ["what are you doing", "what are you working on", "did you hear me", "are you still there"];
     private static readonly string[] ReplacementPrefixes = ["sorry i meant ", "i meant ", "i mean ", "actually ", "no open ", "no ", "not ", "instead "];
-    private static readonly string[] CorrectionContentPrefixes = ["what i meant was ", "what i meant is ", "what i meant ", "i meant was ", "i meant is ", "i meant ", "i mean "];
+    private static readonly string[] CorrectionContentPrefixes = ["what i meant was ", "what i meant is ", "what i meant ", "what i mean is ", "what i mean ", "i meant was ", "i meant is ", "i meant ", "i mean "];
+    private static readonly string[] CorrectionPrefixIntros = ["", "no ", "actually ", "wait ", "sorry "];
     private static readonly string[] IncompletePhrases = ["yeah but", "but", "no no wait", "sorry i meant", "i meant", "i mean", "can you open", "open the", "but that means"];
     private static readonly string[] ExplicitProfileRequestPrefixes = ["i prefer ", "from now on ", "remember that "];
     private static readonly HashSet<string> QuestionStarters = new(StringComparer.Ordinal)
@@ -207,6 +209,112 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
             }
         }
 
+        if (TryExtractCorrectionPrefixContent(analysisText, out var matchedCorrectionPrefix, out var correctionPrefixContent))
+        {
+            if (string.IsNullOrWhiteSpace(correctionPrefixContent))
+            {
+                var holdMs = paused ? _options.PausedClarificationHoldWindowMs : _options.ActiveFlowHoldWindowMs;
+                LogIncompleteCorrectionPrefix(input.Utterance.CaptureId, input.Utterance.Text, normalized, matchedCorrectionPrefix, correctionPrefixContent);
+                return Result(
+                    LiveUtteranceGateDecisionKind.HoldForMoreSpeech,
+                    0.83,
+                    "Matched incomplete correction prefix; holding for more speech.",
+                    normalized,
+                    stripped,
+                    sourceContext,
+                    positiveSignals: ["correction_prefix"],
+                    negativeSignals: ["incomplete_correction_prefix"],
+                    holdWindow: TimeSpan.FromMilliseconds(holdMs),
+                    clarificationPrompt: "Sorry, what did you mean?");
+            }
+
+            if (TryExtractReplacement(correctionPrefixContent, openUrlFlow, out var correctionPrefixReplacement))
+            {
+                LogReplacementTextExtracted(input.Utterance.CaptureId, input.Utterance.Text, normalized, matchedCorrectionPrefix, correctionPrefixContent, correctionPrefixReplacement);
+                return Result(
+                    LiveUtteranceGateDecisionKind.AcceptReplacement,
+                    0.91,
+                    "Matched correction prefix with explicit replacement command.",
+                    normalized,
+                    stripped,
+                    sourceContext,
+                    positiveSignals: ["correction_prefix", "replacement_phrase"],
+                    replacementText: correctionPrefixReplacement);
+            }
+
+            if (openUrlFlow && IsSingleUsefulTarget(correctionPrefixContent))
+            {
+                var openReplacement = $"open {correctionPrefixContent}";
+                LogReplacementTextExtracted(input.Utterance.CaptureId, input.Utterance.Text, normalized, matchedCorrectionPrefix, correctionPrefixContent, openReplacement);
+                return Result(
+                    LiveUtteranceGateDecisionKind.AcceptReplacement,
+                    0.86,
+                    "Single target accepted as replacement after correction prefix during active OpenUrl flow.",
+                    normalized,
+                    stripped,
+                    sourceContext,
+                    positiveSignals: ["correction_prefix", "single_open_url_target", "active_open_url_context"],
+                    replacementText: openReplacement);
+            }
+
+            var correctionPrefixAnalysis = AnalyzeGeneralRequest(correctionPrefixContent);
+            if (correctionPrefixAnalysis.IsCoherent || LooksLikeLikelyIntent(correctionPrefixContent))
+            {
+                LogReplacementTextExtracted(input.Utterance.CaptureId, input.Utterance.Text, normalized, matchedCorrectionPrefix, correctionPrefixContent, correctionPrefixContent);
+                return Result(
+                    LiveUtteranceGateDecisionKind.AcceptCorrection,
+                    correctionPrefixAnalysis.IsCoherent ? 0.88 : 0.78,
+                    correctionPrefixAnalysis.IsCoherent
+                        ? "Matched correction prefix with coherent corrected request."
+                        : "Matched correction prefix with likely corrected request.",
+                    normalized,
+                    stripped,
+                    sourceContext,
+                    positiveSignals: AddSignal(correctionPrefixAnalysis.PositiveSignals, "correction_prefix"),
+                    negativeSignals: correctionPrefixAnalysis.NegativeSignals,
+                    shouldCallDeepInfra: true,
+                    shouldRouteToCommandRouter: _options.RouteClearIdleRequestsToCommandRouter,
+                    replacementText: correctionPrefixContent);
+            }
+
+            var ambiguousHoldMs = paused ? _options.PausedClarificationHoldWindowMs : activeFlow || speaking ? _options.ActiveFlowHoldWindowMs : _options.IdleHoldWindowMs;
+            _logger.LogInformation(
+                "replacement_text_rejected_as_incomplete. CaptureId: {CaptureId}. OriginalText: {OriginalText}. NormalizedText: {NormalizedText}. MatchedPrefix: {MatchedPrefix}. ExtractedReplacementText: {ExtractedReplacementText}. Reason: {Reason}. Decision: {Decision}. RouteAction: {RouteAction}. WouldHaveRoutedToCommandRouter: {WouldHaveRoutedToCommandRouter}.",
+                input.Utterance.CaptureId,
+                input.Utterance.Text,
+                normalized,
+                matchedCorrectionPrefix,
+                correctionPrefixContent,
+                "Correction prefix content was not meaningful enough to route.",
+                LiveUtteranceGateDecisionKind.HoldForMoreSpeech,
+                "HoldForMoreSpeech",
+                false);
+            return Result(
+                LiveUtteranceGateDecisionKind.HoldForMoreSpeech,
+                0.72,
+                "Correction prefix content appears incomplete; holding for more speech.",
+                normalized,
+                stripped,
+                sourceContext,
+                positiveSignals: ["correction_prefix"],
+                negativeSignals: ["incomplete_correction_content"],
+                holdWindow: TimeSpan.FromMilliseconds(ambiguousHoldMs),
+                clarificationPrompt: "Sorry, what did you mean?");
+        }
+
+        if (UiControlModeCommandMatcher.TryMatch(normalized, out _) || UiControlModeCommandMatcher.TryMatch(analysisText, out _))
+        {
+            return Result(
+                LiveUtteranceGateDecisionKind.AcceptNewRequest,
+                input.IsIdleListening ? 0.94 : 0.88,
+                "Matched deterministic UI control mode command.",
+                normalized,
+                stripped,
+                sourceContext,
+                positiveSignals: ["ui_control_mode_command"],
+                shouldRouteToCommandRouter: true);
+        }
+
         if (TryMatchEmbeddedPhrase(normalized, CancellationPhrases, out var cancellationPhrase))
         {
             LogEmbeddedControlPhraseMatched(normalized, cancellationPhrase);
@@ -247,6 +355,19 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
         if (MatchesAny(normalized, StatusPhrases) || MatchesAny(analysisText, StatusPhrases))
         {
             return Result(LiveUtteranceGateDecisionKind.AcceptStatusQuestion, 0.82, "Matched status question.", normalized, stripped, sourceContext, positiveSignals: ["status_question"]);
+        }
+
+        if (ChatLogCommandMatcher.TryMatch(normalized, out _) || ChatLogCommandMatcher.TryMatch(analysisText, out _))
+        {
+            return Result(
+                LiveUtteranceGateDecisionKind.AcceptNewRequest,
+                input.IsIdleListening ? 0.93 : 0.86,
+                "Matched deterministic chat panel command.",
+                normalized,
+                stripped,
+                sourceContext,
+                positiveSignals: ["ui_panel_command", "chat_panel"],
+                shouldRouteToCommandRouter: true);
         }
 
         if (TryExtractReplacement(normalized, openUrlFlow, out var replacement) || TryExtractReplacement(analysisText, openUrlFlow, out replacement))
@@ -435,6 +556,12 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
     private static bool TryExtractReplacement(string normalized, bool openUrlFlow, out string replacement)
     {
         replacement = string.Empty;
+        if (TryExtractCorrectionPrefixContent(normalized, out _, out var correctionContent)
+            && string.IsNullOrWhiteSpace(correctionContent))
+        {
+            return false;
+        }
+
         foreach (var prefix in ReplacementPrefixes)
         {
             if (!normalized.StartsWith(prefix, StringComparison.Ordinal))
@@ -466,6 +593,34 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
                 ? candidate
                 : $"open {candidate}";
             return !string.IsNullOrWhiteSpace(candidate);
+        }
+
+        return false;
+    }
+
+    private static bool TryExtractCorrectionPrefixContent(string normalized, out string matchedPrefix, out string content)
+    {
+        matchedPrefix = string.Empty;
+        content = string.Empty;
+        foreach (var intro in CorrectionPrefixIntros)
+        {
+            foreach (var prefix in CorrectionContentPrefixes.OrderByDescending(static prefix => prefix.Length))
+            {
+                var fullPrefix = $"{intro}{prefix}";
+                var exactPrefix = fullPrefix.Trim();
+                if (string.Equals(normalized, exactPrefix, StringComparison.Ordinal))
+                {
+                    matchedPrefix = exactPrefix;
+                    return true;
+                }
+
+                if (normalized.StartsWith(fullPrefix, StringComparison.Ordinal))
+                {
+                    matchedPrefix = fullPrefix.Trim();
+                    content = normalized[fullPrefix.Length..].Trim();
+                    return true;
+                }
+            }
         }
 
         return false;
@@ -828,6 +983,59 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
             phrase);
     }
 
+    private void LogIncompleteCorrectionPrefix(
+        string? captureId,
+        string originalText,
+        string normalized,
+        string matchedPrefix,
+        string? extractedReplacementText)
+    {
+        _logger.LogInformation(
+            "correction_prefix_incomplete_detected. CaptureId: {CaptureId}. OriginalText: {OriginalText}. NormalizedText: {NormalizedText}. MatchedPrefix: {MatchedPrefix}. ExtractedReplacementText: {ExtractedReplacementText}. Reason: {Reason}. Decision: {Decision}. RouteAction: {RouteAction}. WouldHaveRoutedToCommandRouter: {WouldHaveRoutedToCommandRouter}.",
+            captureId,
+            originalText,
+            normalized,
+            matchedPrefix,
+            extractedReplacementText,
+            "Prefix-only correction fragment must not become an executable replacement command.",
+            LiveUtteranceGateDecisionKind.HoldForMoreSpeech,
+            "HoldForMoreSpeech",
+            false);
+        _logger.LogInformation(
+            "correction_prefix_replacement_suppressed. CaptureId: {CaptureId}. OriginalText: {OriginalText}. NormalizedText: {NormalizedText}. MatchedPrefix: {MatchedPrefix}. ExtractedReplacementText: {ExtractedReplacementText}. Reason: {Reason}. Decision: {Decision}. RouteAction: {RouteAction}. WouldHaveRoutedToCommandRouter: {WouldHaveRoutedToCommandRouter}.",
+            captureId,
+            originalText,
+            normalized,
+            matchedPrefix,
+            extractedReplacementText,
+            "Incomplete correction prefix suppressed before replacement extraction.",
+            LiveUtteranceGateDecisionKind.HoldForMoreSpeech,
+            "HoldForMoreSpeech",
+            false);
+    }
+
+    private void LogReplacementTextExtracted(
+        string? captureId,
+        string originalText,
+        string normalized,
+        string matchedPrefix,
+        string extractedReplacementText,
+        string replacementText)
+    {
+        _logger.LogInformation(
+            "replacement_text_extracted. CaptureId: {CaptureId}. OriginalText: {OriginalText}. NormalizedText: {NormalizedText}. MatchedPrefix: {MatchedPrefix}. ExtractedReplacementText: {ExtractedReplacementText}. ReplacementText: {ReplacementText}. Reason: {Reason}. Decision: {Decision}. RouteAction: {RouteAction}. WouldHaveRoutedToCommandRouter: {WouldHaveRoutedToCommandRouter}.",
+            captureId,
+            originalText,
+            normalized,
+            matchedPrefix,
+            extractedReplacementText,
+            replacementText,
+            "Correction prefix had meaningful content.",
+            LiveUtteranceGateDecisionKind.AcceptCorrection,
+            "CancelPendingCommandAndStartReplacement",
+            false);
+    }
+
     private static bool ContainsAny(string? value, params string[] needles)
     {
         return !string.IsNullOrWhiteSpace(value)
@@ -896,7 +1104,8 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
     private void LogDecision(LiveUtteranceGateInput input, LiveUtteranceGateResult result)
     {
         _logger.LogInformation(
-            "LiveUtteranceGateEvaluated. Text: {Text}. NormalizedText: {NormalizedText}. StrippedText: {StrippedText}. Source: {Source}. SourceContext: {SourceContext}. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. StateWhenCaptured: {StateWhenCaptured}. AssistantWasSpeaking: {AssistantWasSpeaking}. PositiveSignals: {PositiveSignals}. NegativeSignals: {NegativeSignals}. Decision: {Decision}. Confidence: {Confidence}. Reason: {Reason}. ShouldCallDeepInfra: {ShouldCallDeepInfra}. ShouldRouteToCommandRouter: {ShouldRouteToCommandRouter}. HoldWindowMs: {HoldWindowMs}. ClarificationPrompt: {ClarificationPrompt}.",
+            "LiveUtteranceGateEvaluated. CaptureId: {CaptureId}. Text: {Text}. NormalizedText: {NormalizedText}. StrippedText: {StrippedText}. Source: {Source}. SourceContext: {SourceContext}. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. StateWhenCaptured: {StateWhenCaptured}. AssistantWasSpeaking: {AssistantWasSpeaking}. PositiveSignals: {PositiveSignals}. NegativeSignals: {NegativeSignals}. Decision: {Decision}. Confidence: {Confidence}. Reason: {Reason}. ShouldCallDeepInfra: {ShouldCallDeepInfra}. ShouldRouteToCommandRouter: {ShouldRouteToCommandRouter}. HoldWindowMs: {HoldWindowMs}. ClarificationPrompt: {ClarificationPrompt}.",
+            input.Utterance.CaptureId,
             input.Utterance.Text,
             result.NormalizedText,
             string.Equals(result.StrippedText, result.NormalizedText, StringComparison.Ordinal) ? null : result.StrippedText,

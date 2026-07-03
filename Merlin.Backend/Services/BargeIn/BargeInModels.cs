@@ -585,6 +585,8 @@ public sealed record SelfSpeechGateDiagnosticEntry
 
 public sealed record CorrectionRegenerationRequested
 {
+    public string? CaptureId { get; init; }
+
     public required string OriginalCorrelationId { get; init; }
 
     public required string CorrectionText { get; init; }
@@ -594,6 +596,8 @@ public sealed record CorrectionRegenerationRequested
 
 public sealed record BackendVoiceRequestCaptured
 {
+    public string? CaptureId { get; init; }
+
     public required string CorrelationId { get; init; }
 
     public required string Text { get; init; }
@@ -619,6 +623,8 @@ public enum UtteranceRouteKind
 
 public sealed record UserUtterance
 {
+    public string? CaptureId { get; init; }
+
     public required string Text { get; init; }
 
     public required DateTimeOffset TimestampUtc { get; init; }
@@ -708,6 +714,8 @@ public sealed record InterruptionClassificationResult
 
 public sealed record InterruptionCaptureDiagnostic
 {
+    public string? CaptureId { get; init; }
+
     public required DateTimeOffset TimestampUtc { get; init; }
 
     public required string CaptureKind { get; init; }

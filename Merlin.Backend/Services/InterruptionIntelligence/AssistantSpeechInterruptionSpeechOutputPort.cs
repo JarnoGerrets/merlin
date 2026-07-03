@@ -35,6 +35,17 @@ public sealed class AssistantSpeechInterruptionSpeechOutputPort : IInterruptionS
             text.Length);
 
         var itemType = ContentKindToPlaybackItemType(contentKind);
+        if (itemType is SpeechPlaybackItemType.StopConfirmation)
+        {
+            _logger.LogInformation(
+                "stop_confirmation_speech_enqueue_requested TurnId: {TurnId}. CorrelationId: {CorrelationId}. ContentKind: {ContentKind}. ItemType: {ItemType}. TextLength: {TextLength}.",
+                turnId,
+                correlationId,
+                contentKind,
+                itemType,
+                text.Length);
+        }
+
         await _speechPlaybackService.EnqueueAsync(
             text,
             string.IsNullOrWhiteSpace(correlationId) ? turnId : correlationId,

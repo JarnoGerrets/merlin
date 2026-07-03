@@ -127,7 +127,7 @@ public sealed class BrainLikeMemoryLayerTests
     public async Task PromptCompiler_RendersCompactCleanCurrentTopic()
     {
         await using var fixture = await MemoryFixture.CreateAsync();
-        var state = await fixture.CurrentConversation.GetOrCreateCurrentStateAsync();
+        var state = await fixture.CurrentConversation.ApplyUserMessageAsync("what is the meaning of life?");
         const string messySummary =
             "User discussed general conversation: and when you ' re talking . Assistant response touched on User discussed general conversation: It seems like your message might be incomplete. Could you please clarify or provide more context about what you're asking? User discussed User discussed general conversation: that is the meaning of life .";
         await fixture.ConversationStore.UpdateTopicSummaryAsync(state.ActiveTopicId!, messySummary);
@@ -151,7 +151,7 @@ public sealed class BrainLikeMemoryLayerTests
     public async Task PromptCompiler_CleansObservedRepeatedLabelTopic_InBlocksAndRenderedPrompt()
     {
         await using var fixture = await MemoryFixture.CreateAsync();
-        var state = await fixture.CurrentConversation.GetOrCreateCurrentStateAsync();
+        var state = await fixture.CurrentConversation.ApplyUserMessageAsync("what is the meaning of life?");
         const string messySummary =
             "general conversation: general conversation: that is the meaning of life. general conversation: Since this is a deeply personal and philosophical topic, many people find meaning in relationships.";
         await fixture.ConversationStore.UpdateTopicSummaryAsync(state.ActiveTopicId!, messySummary);
@@ -176,9 +176,65 @@ public sealed class BrainLikeMemoryLayerTests
     }
 
     [Fact]
+    public async Task CurrentConversationMemory_DoesNotRestoreStaleActiveTopicAfterRuntimeRestart()
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+        var conversation = await fixture.ConversationStore.GetOrCreateActiveConversationAsync();
+        await fixture.ConversationStore.StartTopicAsync(conversation.Id, "General conversation about what is the meaning of life.");
+
+        fixture.RestartRuntimeTopicSession();
+        var state = await fixture.CurrentConversation.GetOrCreateCurrentStateAsync();
+
+        Assert.Null(state.ActiveTopicId);
+        Assert.Null(state.ActiveTopicTitle);
+        Assert.Null(state.RecentSummary);
+        Assert.False(state.ActiveTopicTouchedInCurrentProcess);
+    }
+
+    [Fact]
+    public async Task CurrentConversationMemory_CurrentUserMessageCreatesFreshRuntimeTopicAfterRestart()
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+        var conversation = await fixture.ConversationStore.GetOrCreateActiveConversationAsync();
+        await fixture.ConversationStore.StartTopicAsync(conversation.Id, "General conversation about what is the meaning of life.");
+
+        fixture.RestartRuntimeTopicSession();
+        var state = await fixture.CurrentConversation.ApplyUserMessageAsync("this is a test family car .");
+
+        Assert.NotNull(state.ActiveTopicId);
+        Assert.True(state.ActiveTopicTouchedInCurrentProcess);
+        Assert.DoesNotContain("meaning of life", state.RecentSummary ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("family", state.RecentSummary ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PromptCompiler_OmitsStaleCurrentTopicAfterRuntimeRestart()
+    {
+        await using var fixture = await MemoryFixture.CreateAsync();
+        var conversation = await fixture.ConversationStore.GetOrCreateActiveConversationAsync();
+        await fixture.ConversationStore.StartTopicAsync(conversation.Id, "General conversation about what is the meaning of life.");
+
+        fixture.RestartRuntimeTopicSession();
+        var result = await fixture.PromptCompiler.CompileAsync(new PromptCompileRequest
+        {
+            CurrentUserMessage = "this is a test family car .",
+            PromptType = "normal_conversation",
+            RetrievedMemories = []
+        });
+
+        Assert.DoesNotContain("CURRENT TOPIC:", result.CompiledPrompt);
+        Assert.DoesNotContain("meaning of life", result.CompiledPrompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CURRENT USER MESSAGE:", result.CompiledPrompt);
+        Assert.Contains("this is a test family car .", result.CompiledPrompt);
+    }
+
+    [Fact]
     public async Task CurrentConversationMemory_IgnoresLowValueSttFragmentAndClarificationBoilerplate()
     {
         await using var fixture = await MemoryFixture.CreateAsync();
+        var conversation = await fixture.ConversationStore.GetOrCreateActiveConversationAsync();
+        var seededTopic = await fixture.ConversationStore.StartTopicAsync(conversation.Id, "General conversation");
+        fixture.RuntimeTopicSession.MarkTopicTouched(seededTopic.Id);
         var state = await fixture.CurrentConversation.GetOrCreateCurrentStateAsync();
 
         await fixture.CurrentConversation.ApplyUserMessageAsync("and when you're talking");
@@ -864,11 +920,14 @@ public sealed class BrainLikeMemoryLayerTests
             var extractor = new LocalConceptExtractionService();
             var cueDetector = new FollowUpCueDetector();
             var boundaryDetector = new TopicBoundaryDetector(cueDetector);
+            RuntimeTopicSession = new RuntimeTopicSession(NullLogger<RuntimeTopicSession>.Instance);
             CurrentConversation = new CurrentConversationMemoryService(
                 ConversationStore,
                 extractor,
                 boundaryDetector,
-                new ActiveConceptMerger());
+                new ActiveConceptMerger(),
+                RuntimeTopicSession,
+                NullLogger<CurrentConversationMemoryService>.Instance);
             MemoryWriter = new MemoryWriter(
                 MemoryStore,
                 ConceptStore,
@@ -893,6 +952,8 @@ public sealed class BrainLikeMemoryLayerTests
                 PromptStore,
                 ConceptStore,
                 new TokenBudgetService(new SimpleTokenEstimator()),
+                RuntimeTopicSession,
+                NullLogger<PromptCompiler>.Instance,
                 ProfileStore);
             Orchestrator = new MemoryOrchestrator(
                 CurrentConversation,
@@ -919,13 +980,35 @@ public sealed class BrainLikeMemoryLayerTests
         public EfPromptCompilationStore PromptStore { get; }
         public EfUserProfileFactStore ProfileStore { get; }
         public UserProfileFactService ProfileService { get; }
-        public CurrentConversationMemoryService CurrentConversation { get; }
+        public RuntimeTopicSession RuntimeTopicSession { get; private set; }
+        public CurrentConversationMemoryService CurrentConversation { get; private set; }
         public MemoryWriter MemoryWriter { get; }
         public TopicClosingService TopicClosing { get; }
         public AssociativeRetriever Retriever { get; }
-        public PromptCompiler PromptCompiler { get; }
+        public PromptCompiler PromptCompiler { get; private set; }
         public MemoryOrchestrator Orchestrator { get; }
         public MemoryDebugService DebugService { get; }
+
+        public void RestartRuntimeTopicSession()
+        {
+            RuntimeTopicSession = new RuntimeTopicSession(NullLogger<RuntimeTopicSession>.Instance);
+            var extractor = new LocalConceptExtractionService();
+            CurrentConversation = new CurrentConversationMemoryService(
+                ConversationStore,
+                extractor,
+                new TopicBoundaryDetector(new FollowUpCueDetector()),
+                new ActiveConceptMerger(),
+                RuntimeTopicSession,
+                NullLogger<CurrentConversationMemoryService>.Instance);
+            PromptCompiler = new PromptCompiler(
+                CurrentConversation,
+                PromptStore,
+                ConceptStore,
+                new TokenBudgetService(new SimpleTokenEstimator()),
+                RuntimeTopicSession,
+                NullLogger<PromptCompiler>.Instance,
+                ProfileStore);
+        }
 
         public static async Task<MemoryFixture> CreateAsync()
         {

@@ -69,12 +69,16 @@ public sealed class PromptCompiler
     private readonly PromptRenderer _promptRenderer;
     private readonly TokenBudgetService _tokenBudget;
     private readonly IUserProfileFactStore? _profileFactStore;
+    private readonly IRuntimeTopicSession _runtimeTopicSession;
+    private readonly ILogger<PromptCompiler> _logger;
 
     public PromptCompiler(
         CurrentConversationMemoryService currentConversation,
         IPromptCompilationStore promptStore,
         IConceptStore conceptStore,
         TokenBudgetService tokenBudget,
+        IRuntimeTopicSession runtimeTopicSession,
+        ILogger<PromptCompiler> logger,
         IUserProfileFactStore? profileFactStore = null,
         PromptRenderer? promptRenderer = null)
     {
@@ -84,6 +88,8 @@ public sealed class PromptCompiler
         _promptRenderer = promptRenderer ?? new PromptRenderer();
         _tokenBudget = tokenBudget;
         _profileFactStore = profileFactStore;
+        _runtimeTopicSession = runtimeTopicSession;
+        _logger = logger;
     }
 
     public async Task<PromptCompileResult> CompileAsync(
@@ -199,11 +205,12 @@ public sealed class PromptCompiler
         var includedProfileFactIds = AppendProfileFactBlocks(blocks, profileFacts);
         var renderSummaries = new List<MemoryBlockRenderSummary>();
 
+        var currentTopic = GetRenderableCurrentTopic(request, state);
         AddBlockIfNotEmpty(
             blocks,
             PromptBlockTypes.SessionMemory,
             "CURRENT TOPIC:",
-            TopicSummarySanitizer.SanitizeForSession(state.RecentSummary, state.ActiveTopicTitle),
+            currentTopic,
             400,
             priority: 70);
         renderSummaries.Add(AddMemoryBlock(blocks, PromptBlockTypes.RelevantLongTermMemory, "RELEVANT LONG-TERM MEMORY:", memories.Where(memory => memory.MemoryType != "episode" && !memory.MemoryType.Contains("preference", StringComparison.OrdinalIgnoreCase)), 600, MaxRelevantLongTermMemories));
@@ -233,6 +240,64 @@ public sealed class PromptCompiler
             orderedBlocks,
             renderSummaries.SelectMany(summary => summary.RenderedMemoryIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
             includedProfileFactIds);
+    }
+
+    private string? GetRenderableCurrentTopic(PromptCompileRequest request, CurrentConversationState state)
+    {
+        if (string.IsNullOrWhiteSpace(state.ActiveTopicId))
+        {
+            _logger.LogDebug(
+                "current_topic_omitted. TopicId: {TopicId}. TopicTitle: {TopicTitle}. TopicUpdatedAt: {TopicUpdatedAt}. BackendStartedAt: {BackendStartedAt}. Reason: {Reason}. ConversationId: {ConversationId}. CorrelationId: {CorrelationId}.",
+                state.ActiveTopicId,
+                state.ActiveTopicTitle,
+                state.ActiveTopicUpdatedAt,
+                _runtimeTopicSession.BackendStartedAtUtc,
+                "no_active_runtime_topic",
+                request.ConversationId ?? state.ConversationId,
+                request.TurnId);
+            return null;
+        }
+
+        if (!state.ActiveTopicTouchedInCurrentProcess ||
+            !_runtimeTopicSession.IsTopicTouchedInCurrentProcess(state.ActiveTopicId))
+        {
+            _logger.LogInformation(
+                "current_topic_omitted. TopicId: {TopicId}. TopicTitle: {TopicTitle}. TopicUpdatedAt: {TopicUpdatedAt}. BackendStartedAt: {BackendStartedAt}. Reason: {Reason}. ConversationId: {ConversationId}. CorrelationId: {CorrelationId}.",
+                state.ActiveTopicId,
+                state.ActiveTopicTitle,
+                state.ActiveTopicUpdatedAt,
+                _runtimeTopicSession.BackendStartedAtUtc,
+                "topic_not_touched_in_current_process",
+                request.ConversationId ?? state.ConversationId,
+                request.TurnId);
+            return null;
+        }
+
+        var content = TopicSummarySanitizer.SanitizeForSession(state.RecentSummary, state.ActiveTopicTitle);
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            _logger.LogDebug(
+                "current_topic_omitted. TopicId: {TopicId}. TopicTitle: {TopicTitle}. TopicUpdatedAt: {TopicUpdatedAt}. BackendStartedAt: {BackendStartedAt}. Reason: {Reason}. ConversationId: {ConversationId}. CorrelationId: {CorrelationId}.",
+                state.ActiveTopicId,
+                state.ActiveTopicTitle,
+                state.ActiveTopicUpdatedAt,
+                _runtimeTopicSession.BackendStartedAtUtc,
+                "empty_current_topic_content",
+                request.ConversationId ?? state.ConversationId,
+                request.TurnId);
+            return null;
+        }
+
+        _logger.LogInformation(
+            "current_topic_compiled. TopicId: {TopicId}. TopicTitle: {TopicTitle}. TopicUpdatedAt: {TopicUpdatedAt}. BackendStartedAt: {BackendStartedAt}. Reason: {Reason}. ConversationId: {ConversationId}. CorrelationId: {CorrelationId}.",
+            state.ActiveTopicId,
+            state.ActiveTopicTitle,
+            state.ActiveTopicUpdatedAt,
+            _runtimeTopicSession.BackendStartedAtUtc,
+            "topic_touched_in_current_process",
+            request.ConversationId ?? state.ConversationId,
+            request.TurnId);
+        return content;
     }
 
     private IReadOnlyList<string> AppendProfileFactBlocks(

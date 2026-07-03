@@ -95,7 +95,8 @@ public sealed class LiveInterruptionIntegrationService : ILiveInterruptionIntegr
         if (!utterance.YieldedByLayer1)
         {
             _logger.LogInformation(
-                "conversational_interruption_not_yielded_skipped TurnId: {TurnId}. CorrelationId: {CorrelationId}. Layer1Decision: {Layer1Decision}.",
+                "conversational_interruption_not_yielded_skipped CaptureId: {CaptureId}. TurnId: {TurnId}. CorrelationId: {CorrelationId}. Layer1Decision: {Layer1Decision}.",
+                utterance.CaptureId,
                 utterance.ActiveTurnId,
                 utterance.CorrelationId,
                 utterance.Layer1Decision);
@@ -110,7 +111,8 @@ public sealed class LiveInterruptionIntegrationService : ILiveInterruptionIntegr
         var candidate = _candidateFactory.CreateFromYieldedInterruption(utterance);
         LogSpokenAnswerCheckpointDiagnostics(utterance);
         _logger.LogInformation(
-            "conversational_interruption_yielded_utterance_observed TurnId: {TurnId}. CorrelationId: {CorrelationId}. yieldedObservedTurnId: {YieldedObservedTurnId}. resolvedActiveTurnId: {ResolvedActiveTurnId}. turnBindingSource: {TurnBindingSource}. activePlaybackCorrelationId: {ActivePlaybackCorrelationId}. activePlaybackSpeechType: {ActivePlaybackSpeechType}. provisionalAudioHoldId: {ProvisionalAudioHoldId}. wasHeldByProvisionalAudioHold: {WasHeldByProvisionalAudioHold}. recentlyYieldedSnapshotFound: {RecentlyYieldedSnapshotFound}. recentlyYieldedSnapshotAgeMs: {RecentlyYieldedSnapshotAgeMs}. assistantWasSpeakingOriginal: {AssistantWasSpeakingOriginal}. assistantWasSpeakingResolved: {AssistantWasSpeakingResolved}. TranscriptLength: {TranscriptLength}. YieldReason: {YieldReason}. CaptureKind: {CaptureKind}. RouteKind: {RouteKind}. Layer1Confidence: {Layer1Confidence}. Layer1Decision: {Layer1Decision}. ShadowMode: {ShadowMode}.",
+            "conversational_interruption_yielded_utterance_observed CaptureId: {CaptureId}. TurnId: {TurnId}. CorrelationId: {CorrelationId}. yieldedObservedTurnId: {YieldedObservedTurnId}. resolvedActiveTurnId: {ResolvedActiveTurnId}. turnBindingSource: {TurnBindingSource}. activePlaybackCorrelationId: {ActivePlaybackCorrelationId}. activePlaybackSpeechType: {ActivePlaybackSpeechType}. provisionalAudioHoldId: {ProvisionalAudioHoldId}. wasHeldByProvisionalAudioHold: {WasHeldByProvisionalAudioHold}. recentlyYieldedSnapshotFound: {RecentlyYieldedSnapshotFound}. recentlyYieldedSnapshotAgeMs: {RecentlyYieldedSnapshotAgeMs}. assistantWasSpeakingOriginal: {AssistantWasSpeakingOriginal}. assistantWasSpeakingResolved: {AssistantWasSpeakingResolved}. TranscriptLength: {TranscriptLength}. YieldReason: {YieldReason}. CaptureKind: {CaptureKind}. RouteKind: {RouteKind}. RouteAction: {RouteAction}. Layer1Confidence: {Layer1Confidence}. Layer1Decision: {Layer1Decision}. ShadowMode: {ShadowMode}.",
+            utterance.CaptureId,
             candidate.ActiveTurnId,
             candidate.CorrelationId,
             utterance.OriginalObservedTurnId,
@@ -128,6 +130,7 @@ public sealed class LiveInterruptionIntegrationService : ILiveInterruptionIntegr
             utterance.YieldReason,
             utterance.CaptureKind,
             utterance.RouteKind,
+            utterance.RouteAction,
             utterance.Layer1Confidence,
             utterance.Layer1Decision,
             _options.EnableLiveShadowMode);
@@ -136,7 +139,8 @@ public sealed class LiveInterruptionIntegrationService : ILiveInterruptionIntegr
         {
             var shadowDecision = _classifier.Classify(candidate);
             _logger.LogInformation(
-                "conversational_interruption_yielded_utterance_shadow_classified TurnId: {TurnId}. CorrelationId: {CorrelationId}. DecisionType: {DecisionType}. Strategy: {Strategy}. ResultType: {ResultType}. SideEffectsSuppressed: {SideEffectsSuppressed}.",
+                "conversational_interruption_yielded_utterance_shadow_classified CaptureId: {CaptureId}. TurnId: {TurnId}. CorrelationId: {CorrelationId}. DecisionType: {DecisionType}. Strategy: {Strategy}. ResultType: {ResultType}. SideEffectsSuppressed: {SideEffectsSuppressed}.",
+                utterance.CaptureId,
                 candidate.ActiveTurnId,
                 candidate.CorrelationId,
                 shadowDecision.Type,
@@ -167,7 +171,8 @@ public sealed class LiveInterruptionIntegrationService : ILiveInterruptionIntegr
             return DeferToOldPath(candidate, new ConversationalInterruptionDecision(), "Live minimal behavior is disabled.");
         }
 
-        var decision = _classifier.Classify(candidate);
+        var decision = TryMapPlaybackControlStopToDecision(utterance, candidate)
+            ?? _classifier.Classify(candidate);
         return decision.Strategy switch
         {
             ConversationalInterruptionHandlingStrategy.IgnoreAndContinue =>
@@ -193,7 +198,8 @@ public sealed class LiveInterruptionIntegrationService : ILiveInterruptionIntegr
     {
         const string reason = "No active or recently-yielded final-answer speech context; treat as normal request.";
         _logger.LogInformation(
-            "conversational_interruption_skipped_idle_request ObservedTurnId: {ObservedTurnId}. ResolvedTurnId: {ResolvedTurnId}. AssistantWasSpeakingOriginal: {AssistantWasSpeakingOriginal}. AssistantWasSpeakingResolved: {AssistantWasSpeakingResolved}. RecentlyYieldedSnapshotFound: {RecentlyYieldedSnapshotFound}. RecentlyYieldedSnapshotAgeMs: {RecentlyYieldedSnapshotAgeMs}. TurnBindingSource: {TurnBindingSource}. TranscriptLength: {TranscriptLength}. Reason: {Reason}.",
+            "conversational_interruption_skipped_idle_request CaptureId: {CaptureId}. ObservedTurnId: {ObservedTurnId}. ResolvedTurnId: {ResolvedTurnId}. AssistantWasSpeakingOriginal: {AssistantWasSpeakingOriginal}. AssistantWasSpeakingResolved: {AssistantWasSpeakingResolved}. RecentlyYieldedSnapshotFound: {RecentlyYieldedSnapshotFound}. RecentlyYieldedSnapshotAgeMs: {RecentlyYieldedSnapshotAgeMs}. TurnBindingSource: {TurnBindingSource}. TranscriptLength: {TranscriptLength}. Reason: {Reason}.",
+            utterance.CaptureId,
             utterance.OriginalObservedTurnId,
             utterance.ActiveTurnId,
             utterance.AssistantWasSpeakingOriginal,
@@ -219,6 +225,58 @@ public sealed class LiveInterruptionIntegrationService : ILiveInterruptionIntegr
     {
         return utterance.AssistantWasSpeakingResolved == true
             || utterance.RecentlyYieldedSnapshotFound;
+    }
+
+    private ConversationalInterruptionDecision? TryMapPlaybackControlStopToDecision(
+        YieldedInterruptionUtterance utterance,
+        ConversationalInterruptionCandidate candidate)
+    {
+        if (!IsPlaybackControlStop(utterance))
+        {
+            return null;
+        }
+
+        var decision = new ConversationalInterruptionDecision
+        {
+            Type = ConversationalInterruptionType.StopRequest,
+            Strategy = ConversationalInterruptionHandlingStrategy.StopPlayback,
+            Confidence = Math.Clamp(utterance.Layer1Confidence ?? 0.94, 0.0, 1.0),
+            PausePlayback = true,
+            CancelOriginalTurn = true,
+            ResumeRawPlayback = false,
+            DiscardCurrentPartialSentence = true,
+            RequiresBridgeFeedback = false,
+            RequiresDeepInfraClarification = false,
+            RequiresContinuationRecomposition = false,
+            ClarificationMaxTokens = _options.ClarificationMaxTokens,
+            ContinuationMaxTokens = _options.ContinuationMaxTokens,
+            Reason = "Layer 1 playback-control stop route mapped to conversational stop request."
+        };
+
+        _logger.LogInformation(
+            "playback_control_stop_mapped_to_ci_stop CaptureId: {CaptureId}. TurnId: {TurnId}. CorrelationId: {CorrelationId}. Transcript: {Transcript}. LiveGateDecision: {LiveGateDecision}. RouteAction: {RouteAction}. DecisionType: {DecisionType}. Strategy: {Strategy}. AssistantWasSpeakingOriginal: {AssistantWasSpeakingOriginal}. AssistantWasSpeakingResolved: {AssistantWasSpeakingResolved}. TurnBindingSource: {TurnBindingSource}. RecentlyYieldedSnapshotFound: {RecentlyYieldedSnapshotFound}. HoldId: {HoldId}. StopConfirmationExpected: {StopConfirmationExpected}.",
+            utterance.CaptureId,
+            candidate.ActiveTurnId,
+            candidate.CorrelationId,
+            utterance.Transcript,
+            utterance.Layer1Decision,
+            utterance.RouteAction,
+            decision.Type,
+            decision.Strategy,
+            utterance.AssistantWasSpeakingOriginal,
+            utterance.AssistantWasSpeakingResolved,
+            utterance.TurnBindingSource,
+            utterance.RecentlyYieldedSnapshotFound,
+            utterance.ProvisionalAudioHoldId,
+            true);
+
+        return decision;
+    }
+
+    private static bool IsPlaybackControlStop(YieldedInterruptionUtterance utterance)
+    {
+        return string.Equals(utterance.Layer1Decision, "AcceptPlaybackControl", StringComparison.Ordinal)
+            && string.Equals(utterance.RouteAction, "StopSpeechOnlyNoConfirmation", StringComparison.Ordinal);
     }
 
     private async Task<LiveInterruptionHandlingOutcome> HandleContinueAsync(

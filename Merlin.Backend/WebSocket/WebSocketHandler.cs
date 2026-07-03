@@ -28,8 +28,10 @@ public sealed class WebSocketHandler
     private readonly ILogger<WebSocketHandler> _logger;
     private readonly IRuntimeStateService _runtimeStateService;
     private readonly IOptionsMonitor<VoiceInputOptions> _voiceInputOptions;
+    private readonly IOptionsMonitor<ChatLogOptions> _chatLogOptions;
     private readonly VoiceStreamSessionService _voiceStreamSessionService;
     private readonly ISpeechPresenceDecisionLogSink? _speechPresenceDecisionLogSink;
+    private readonly AssistantUiStateBroadcaster? _assistantUiStateBroadcaster;
     private readonly ConcurrentDictionary<string, AssistantRequest> _recentRequestsByCorrelationId = new(StringComparer.OrdinalIgnoreCase);
 
     public WebSocketHandler(
@@ -45,8 +47,10 @@ public sealed class WebSocketHandler
         ILiveUtteranceGate? liveUtteranceGate = null,
         IBargeInDebugSnapshotService? bargeInDebugSnapshots = null,
         IOptionsMonitor<VoiceInputOptions>? voiceInputOptions = null,
+        IOptionsMonitor<ChatLogOptions>? chatLogOptions = null,
         ISpeechPresenceDecisionLogSink? speechPresenceDecisionLogSink = null,
-        ILiveSpokenAnswerTrackingService? spokenAnswerTracking = null)
+        ILiveSpokenAnswerTrackingService? spokenAnswerTracking = null,
+        AssistantUiStateBroadcaster? assistantUiStateBroadcaster = null)
     {
         _commandRouter = commandRouter;
         _bargeInCoordinator = bargeInCoordinator;
@@ -59,9 +63,11 @@ public sealed class WebSocketHandler
         _logger = logger;
         _runtimeStateService = runtimeStateService;
         _voiceInputOptions = voiceInputOptions ?? new StaticOptionsMonitor<VoiceInputOptions>(new VoiceInputOptions());
+        _chatLogOptions = chatLogOptions ?? new StaticOptionsMonitor<ChatLogOptions>(new ChatLogOptions());
         _voiceStreamSessionService = voiceStreamSessionService;
         _bargeInDebugSnapshots = bargeInDebugSnapshots;
         _speechPresenceDecisionLogSink = speechPresenceDecisionLogSink;
+        _assistantUiStateBroadcaster = assistantUiStateBroadcaster;
     }
 
     public async Task HandleAsync(HttpContext context)
@@ -81,6 +87,7 @@ public sealed class WebSocketHandler
         Func<BackendVoiceRequestCaptured, CancellationToken, Task>? backendVoiceHandler = null;
         Func<LiveUserUtteranceRouted, CancellationToken, Task>? liveUtteranceHandler = null;
         Func<BargeInDebugSnapshot, CancellationToken, Task>? bargeInDebugHandler = null;
+        Func<AssistantUiStateEvent, string, CancellationToken, Task>? assistantUiStateHandler = null;
         _runtimeStateService.IncrementActiveWebSocketConnections();
         _logger.LogInformation(
             "WebSocket connection opened. ActiveConnections: {ActiveConnections}",
@@ -125,6 +132,17 @@ public sealed class WebSocketHandler
                 _bargeInDebugSnapshots.SnapshotAvailable += bargeInDebugHandler;
             }
 
+            if (_assistantUiStateBroadcaster is not null)
+            {
+                assistantUiStateHandler = (uiState, source, token) => SendAssistantUiStateAsync(
+                    webSocket,
+                    sendGate,
+                    uiState,
+                    source,
+                    token);
+                _assistantUiStateBroadcaster.StateChanged += assistantUiStateHandler;
+            }
+
             await ReceiveLoopAsync(
                 webSocket,
                 sendGate,
@@ -156,6 +174,11 @@ public sealed class WebSocketHandler
             if (_bargeInDebugSnapshots is not null && bargeInDebugHandler is not null)
             {
                 _bargeInDebugSnapshots.SnapshotAvailable -= bargeInDebugHandler;
+            }
+
+            if (_assistantUiStateBroadcaster is not null && assistantUiStateHandler is not null)
+            {
+                _assistantUiStateBroadcaster.StateChanged -= assistantUiStateHandler;
             }
 
             devVisualFlowCancellation?.Cancel();
@@ -304,6 +327,15 @@ public sealed class WebSocketHandler
                             phase = "started"
                         }, JsonSerializerOptions),
                         cancellationToken);
+                    await EmitAssistantUiStateImmediateAsync(
+                        AssistantUiStateEvent.Create(
+                            "listening",
+                            "voice_stream_capture_started",
+                            correlationId,
+                            correlationId,
+                            interruptionState: "capturing"),
+                        nameof(WebSocketHandler),
+                        cancellationToken);
                     return true;
 
                 case "voice_stream_chunk":
@@ -328,7 +360,8 @@ public sealed class WebSocketHandler
                         {
                             type = "voice_transcript",
                             correlationId,
-                            text = transcript
+                            text = transcript,
+                            timestampUtc = DateTimeOffset.UtcNow
                         }, JsonSerializerOptions),
                         cancellationToken);
 
@@ -540,6 +573,7 @@ public sealed class WebSocketHandler
             {
                 Message = request.Text,
                 CorrelationId = request.CorrelationId,
+                CaptureId = request.CaptureId,
                 InteractionSource = request.InteractionSource,
                 ClientMode = "orb",
                 ReceivedAtUtc = request.Utterance.TimestampUtc
@@ -556,7 +590,8 @@ public sealed class WebSocketHandler
         CancellationToken cancellationToken)
     {
         _logger.LogInformation(
-            "Live utterance route dispatched. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. StateWhenCaptured: {StateWhenCaptured}. Route: {Route}. Action: {Action}.",
+            "Live utterance route dispatched. CaptureId: {CaptureId}. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. StateWhenCaptured: {StateWhenCaptured}. Route: {Route}. Action: {Action}.",
+            routed.Utterance.CaptureId,
             routed.Utterance.ActiveTurnId,
             routed.Utterance.CorrelationId,
             routed.Utterance.StateWhenCaptured,
@@ -569,8 +604,20 @@ public sealed class WebSocketHandler
             || routed.Decision.Action is "HoldForMoreSpeech")
         {
             await SendVisualStateAsync(webSocket, sendGate, "listening", cancellationToken);
+            await EmitAssistantUiStateImmediateAsync(
+                AssistantUiStateEvent.Create(
+                    "listening",
+                    "live_utterance_route_listening",
+                    routed.Utterance.CorrelationId,
+                    routed.Utterance.ActiveTurnId,
+                    overlayState: "none",
+                    audiblePlaybackActive: false,
+                    interruptionState: "capturing"),
+                nameof(WebSocketHandler),
+                cancellationToken);
             _logger.LogInformation(
-                "VisualStateSetToPausedForUserSpeech. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. Action: {Action}.",
+                "VisualStateSetToPausedForUserSpeech. CaptureId: {CaptureId}. ActiveTurnId: {ActiveTurnId}. CorrelationId: {CorrelationId}. Action: {Action}.",
+                routed.Utterance.CaptureId,
                 routed.Utterance.ActiveTurnId,
                 routed.Utterance.CorrelationId,
                 routed.Decision.Action);
@@ -584,6 +631,7 @@ public sealed class WebSocketHandler
                 Message = BuildPendingStopQuestion(routed.Utterance),
                 SpokenText = BuildPendingStopQuestion(routed.Utterance),
                 CorrelationId = responseCorrelationId,
+                CaptureId = routed.Utterance.CaptureId,
                 Intent = "live_utterance_pause",
                 ResponseType = "confirmation"
             },
@@ -593,6 +641,7 @@ public sealed class WebSocketHandler
                 Message = "I heard that follow-up, but queueing active-flow requests is not implemented yet.",
                 SpokenText = "I heard that follow-up, but queueing active-flow requests is not implemented yet.",
                 CorrelationId = responseCorrelationId,
+                CaptureId = routed.Utterance.CaptureId,
                 ErrorCode = "NOT_IMPLEMENTED_QUEUE",
                 Intent = "live_utterance_queue_after",
                 ResponseType = "limitation"
@@ -603,6 +652,7 @@ public sealed class WebSocketHandler
                 Message = $"I heard you while I was {FormatState(routed.Utterance.StateWhenCaptured)}.",
                 SpokenText = $"I heard you while I was {FormatState(routed.Utterance.StateWhenCaptured)}.",
                 CorrelationId = responseCorrelationId,
+                CaptureId = routed.Utterance.CaptureId,
                 Intent = "live_utterance_status",
                 ResponseType = "assistant"
             },
@@ -622,6 +672,7 @@ public sealed class WebSocketHandler
             {
                 Message = routed.Utterance.Text,
                 CorrelationId = responseCorrelationId,
+                CaptureId = routed.Utterance.CaptureId,
                 InteractionSource = "voice_correction",
                 ClientMode = "voice"
             },
@@ -692,8 +743,58 @@ public sealed class WebSocketHandler
         }
 
         await SendResponseAsync(webSocket, sendGate, response, cancellationToken);
+        await SendUiPanelEventIfNeededAsync(webSocket, sendGate, response, cancellationToken);
+        var responseUiState = BuildResponseUiState(response);
+        if (responseUiState is not null)
+        {
+            await EmitAssistantUiStateImmediateAsync(
+                responseUiState,
+                nameof(WebSocketHandler),
+                cancellationToken);
+        }
+
         StartDevVisualFlowIfNeeded(webSocket, sendGate, response, setDevVisualFlowCancellation, cancellationToken);
         await QueueSpeechIfNeededAsync(webSocket, sendGate, request, response, cancellationToken);
+    }
+
+    private Task SendUiPanelEventIfNeededAsync(
+        System.Net.WebSockets.WebSocket webSocket,
+        SemaphoreSlim sendGate,
+        AssistantResponse response,
+        CancellationToken cancellationToken)
+    {
+        var eventName = response.Intent switch
+        {
+            "ui_panel_show" => "UI_PANEL_SHOW",
+            "ui_panel_hide" => "UI_PANEL_HIDE",
+            "ui_control_mode_start" => "UI_CONTROL_MODE_STARTED",
+            "ui_control_mode_stop" => "UI_CONTROL_MODE_STOPPED",
+            _ => null
+        };
+        if (eventName is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        var isPanelEvent = response.Intent is "ui_panel_show" or "ui_panel_hide";
+        if (isPanelEvent && !_chatLogOptions.CurrentValue.Enabled)
+        {
+            return Task.CompletedTask;
+        }
+
+        return SendJsonAsync(
+            webSocket,
+            sendGate,
+            JsonSerializer.Serialize(new
+            {
+                type = eventName,
+                @event = eventName,
+                panelId = isPanelEvent
+                    ? "chatlog"
+                    : null,
+                correlationId = response.CorrelationId
+            }, JsonSerializerOptions),
+            cancellationToken);
     }
 
     private async Task QueueSpeechIfNeededAsync(
@@ -717,9 +818,37 @@ public sealed class WebSocketHandler
                 request?.SpeakResponse);
         }
 
+        if (response.SegmentedSpeechStarted)
+        {
+            if (ShouldAppendAssistantChatLog(request, response, speechDecision))
+            {
+                await SendChatLogAppendAsync(
+                    webSocket,
+                    sendGate,
+                    "assistant",
+                    speechDecision.SpeechTextOverride ?? ResponseSpeechText(response),
+                    "segmented_tts",
+                    response.CorrelationId,
+                    cancellationToken);
+            }
+
+            _logger.LogInformation(
+                "Skipping full-response speech enqueue because segmented streaming speech already started. CorrelationId: {CorrelationId}.",
+                response.CorrelationId);
+            return;
+        }
+
         if (speechDecision.ShouldSpeak && speechDecision.ShouldQueue)
         {
             var speechText = speechDecision.SpeechTextOverride ?? ResponseSpeechText(response);
+            await SendChatLogAppendAsync(
+                webSocket,
+                sendGate,
+                "assistant",
+                speechText,
+                "tts",
+                response.CorrelationId,
+                cancellationToken);
             if (!string.IsNullOrWhiteSpace(response.CorrelationId))
             {
                 if (ShouldTrackMainAnswerSpeech(request, response))
@@ -755,6 +884,54 @@ public sealed class WebSocketHandler
             response.ToolName,
             speechDecision.ShouldSpeak,
             speechDecision.ShouldQueue);
+    }
+
+    internal static bool ShouldAppendAssistantChatLog(
+        AssistantRequest? request,
+        AssistantResponse response,
+        SpeechPolicyDecision speechDecision)
+    {
+        if (string.IsNullOrWhiteSpace(response.CorrelationId))
+        {
+            return false;
+        }
+
+        if (!speechDecision.ShouldSpeak)
+        {
+            return false;
+        }
+
+        return IsVoiceRequest(request ?? new AssistantRequest());
+    }
+
+    private Task SendChatLogAppendAsync(
+        System.Net.WebSockets.WebSocket webSocket,
+        SemaphoreSlim sendGate,
+        string role,
+        string text,
+        string source,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        if (!_chatLogOptions.CurrentValue.Enabled || string.IsNullOrWhiteSpace(text))
+        {
+            return Task.CompletedTask;
+        }
+
+        return SendJsonAsync(
+            webSocket,
+            sendGate,
+            JsonSerializer.Serialize(new
+            {
+                @event = "UI_CHATLOG_APPEND",
+                panelId = "chatlog",
+                role,
+                text = text.Trim(),
+                timestampUtc = DateTimeOffset.UtcNow,
+                source,
+                correlationId
+            }, JsonSerializerOptions),
+            cancellationToken);
     }
 
     private void StartDevVisualFlowIfNeeded(
@@ -813,6 +990,55 @@ public sealed class WebSocketHandler
 
         return string.Equals(response.Intent, "general_conversation", StringComparison.OrdinalIgnoreCase)
             || string.Equals(response.ResponseType, "assistant", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static AssistantUiStateEvent? BuildResponseUiState(AssistantResponse response)
+    {
+        if (IsConfirmationResponse(response))
+        {
+            return AssistantUiStateEvent.Create(
+                "thinking",
+                "confirmation_required",
+                response.CorrelationId,
+                response.CorrelationId,
+                overlayState: "confirmation");
+        }
+
+        if (IsErrorResponse(response))
+        {
+            return AssistantUiStateEvent.Create(
+                "idle",
+                "error_response_generated",
+                response.CorrelationId,
+                response.CorrelationId,
+                overlayState: "error");
+        }
+
+        return null;
+    }
+
+    private static bool IsConfirmationResponse(AssistantResponse response)
+    {
+        return string.Equals(response.ResponseType, "confirmation", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(response.ErrorCode, "CONFIRMATION_REQUIRED", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsErrorResponse(AssistantResponse response)
+    {
+        if (response.Success)
+        {
+            return false;
+        }
+
+        if (string.Equals(response.ResponseType, "cancelled", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(response.ResponseType, "ignored", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return !string.IsNullOrWhiteSpace(response.ErrorCode)
+            || string.Equals(response.ResponseType, "error", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(response.ResponseType, "limitation", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task PlayDevVisualFlowAsync(
@@ -985,6 +1211,7 @@ public sealed class WebSocketHandler
             {
                 Message = request.Message,
                 CorrelationId = request.CorrelationId,
+                CaptureId = request.CaptureId,
                 SpeakResponse = request.SpeakResponse,
                 InteractionSource = request.InteractionSource,
                 ClientMode = request.ClientMode,
@@ -1011,10 +1238,21 @@ public sealed class WebSocketHandler
             return gateResponse;
         }
 
+        await EmitAssistantUiStateCoalescedAsync(
+            AssistantUiStateEvent.Create(
+                "thinking",
+                "request_accepted",
+                correlationId,
+                correlationId,
+                overlayState: "none"),
+            nameof(WebSocketHandler),
+            cancellationToken);
+
         _recentRequestsByCorrelationId[correlationId] = new AssistantRequest
         {
             Message = request.Message,
             CorrelationId = correlationId,
+            CaptureId = request.CaptureId,
             SpeakResponse = request.SpeakResponse,
             InteractionSource = request.InteractionSource,
             ClientMode = request.ClientMode,
@@ -1033,6 +1271,7 @@ public sealed class WebSocketHandler
                 {
                     Message = request.Message,
                     CorrelationId = correlationId,
+                    CaptureId = request.CaptureId,
                     SpeakResponse = request.SpeakResponse,
                     InteractionSource = request.InteractionSource,
                     ClientMode = request.ClientMode,
@@ -1233,13 +1472,51 @@ public sealed class WebSocketHandler
         await SendJsonAsync(webSocket, sendGate, json, cancellationToken);
     }
 
-    private static async Task SendVisualEventAsync(
+    private async Task SendVisualEventAsync(
         System.Net.WebSockets.WebSocket webSocket,
         SemaphoreSlim sendGate,
         AssistantVisualEvent visualEvent,
         CancellationToken cancellationToken)
     {
+        if (visualEvent.AssistantUiState is not null)
+        {
+            await EmitAssistantUiStateImmediateAsync(
+                visualEvent.AssistantUiState,
+                visualEvent.AssistantUiStateSource ?? nameof(WebSocketHandler),
+                cancellationToken);
+            return;
+        }
+
         var json = JsonSerializer.Serialize(visualEvent, JsonSerializerOptions);
+        await SendJsonAsync(webSocket, sendGate, json, cancellationToken);
+    }
+
+    private Task EmitAssistantUiStateImmediateAsync(
+        AssistantUiStateEvent uiState,
+        string source,
+        CancellationToken cancellationToken)
+    {
+        return _assistantUiStateBroadcaster?.EmitImmediateAsync(uiState, source, cancellationToken)
+            ?? Task.CompletedTask;
+    }
+
+    private Task EmitAssistantUiStateCoalescedAsync(
+        AssistantUiStateEvent uiState,
+        string source,
+        CancellationToken cancellationToken)
+    {
+        return _assistantUiStateBroadcaster?.RequestCoalescedStateAsync(uiState, source, cancellationToken)
+            ?? Task.CompletedTask;
+    }
+
+    private async Task SendAssistantUiStateAsync(
+        System.Net.WebSockets.WebSocket webSocket,
+        SemaphoreSlim sendGate,
+        AssistantUiStateEvent uiState,
+        string source,
+        CancellationToken cancellationToken)
+    {
+        var json = JsonSerializer.Serialize(uiState, JsonSerializerOptions);
         await SendJsonAsync(webSocket, sendGate, json, cancellationToken);
     }
 
@@ -1249,7 +1526,7 @@ public sealed class WebSocketHandler
         string json,
         CancellationToken cancellationToken)
     {
-        if (webSocket.State != WebSocketState.Open)
+        if (webSocket.State != WebSocketState.Open || cancellationToken.IsCancellationRequested)
         {
             return;
         }

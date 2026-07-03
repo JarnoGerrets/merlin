@@ -25,6 +25,17 @@ public sealed class PiperVoiceService : IVoiceSynthesisService
         string text,
         Func<VoiceSynthesisStreamMetadata, CancellationToken, Task> onMetadataAsync,
         Func<ReadOnlyMemory<byte>, CancellationToken, Task> onAudioAsync,
+        CancellationToken cancellationToken) =>
+        await StreamSynthesizeChunksAsync(
+            text,
+            onMetadataAsync,
+            (chunk, token) => onAudioAsync(chunk.Audio, token),
+            cancellationToken);
+
+    public async Task StreamSynthesizeChunksAsync(
+        string text,
+        Func<VoiceSynthesisStreamMetadata, CancellationToken, Task> onMetadataAsync,
+        Func<VoiceSynthesisAudioChunk, CancellationToken, Task> onAudioChunkAsync,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -120,7 +131,12 @@ public sealed class PiperVoiceService : IVoiceSynthesisService
 
             totalBytes += read;
             var writeStopwatch = Stopwatch.StartNew();
-            await onAudioAsync(buffer.AsMemory(0, read), cancellationToken);
+            await onAudioChunkAsync(
+                new VoiceSynthesisAudioChunk
+                {
+                    Audio = buffer.AsMemory(0, read)
+                },
+                cancellationToken);
             writeStopwatch.Stop();
 
             if (totalBytes == read)
@@ -144,7 +160,12 @@ public sealed class PiperVoiceService : IVoiceSynthesisService
         if (silenceBytes.Length > 0)
         {
             var writeStopwatch = Stopwatch.StartNew();
-            await onAudioAsync(silenceBytes, cancellationToken);
+            await onAudioChunkAsync(
+                new VoiceSynthesisAudioChunk
+                {
+                    Audio = silenceBytes
+                },
+                cancellationToken);
             writeStopwatch.Stop();
             totalBytes += silenceBytes.Length;
 

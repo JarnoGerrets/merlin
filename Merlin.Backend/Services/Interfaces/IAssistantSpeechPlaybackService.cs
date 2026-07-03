@@ -1,4 +1,5 @@
 using Merlin.Backend.Models;
+using Merlin.Backend.Services.StreamingResponses;
 
 namespace Merlin.Backend.Services;
 
@@ -45,5 +46,33 @@ public interface IAssistantSpeechPlaybackService
         string reason,
         CancellationToken cancellationToken = default) => Task.CompletedTask;
 
+    Task<IStreamingFinalAnswerPlaybackSession> BeginStreamingFinalAnswerAsync(
+        string turnId,
+        string? correlationId,
+        Func<AssistantVisualEvent, CancellationToken, Task> sendEventAsync,
+        string? originalUserQuestion = null,
+        CancellationToken cancellationToken = default) =>
+        Task.FromException<IStreamingFinalAnswerPlaybackSession>(
+            new NotSupportedException("Streaming final-answer playback is not supported."));
+
     ActiveSpeechPlaybackSnapshot? GetActivePlaybackSnapshot() => null;
+}
+
+public interface IStreamingFinalAnswerPlaybackSession : IAsyncDisposable
+{
+    string SessionId { get; }
+
+    string TurnId { get; }
+
+    string CorrelationId { get; }
+
+    long GenerationId { get; }
+
+    Task EnqueueTextSegmentAsync(
+        StreamingFinalAnswerTextSegment segment,
+        CancellationToken cancellationToken = default);
+
+    Task CompleteInputAsync(CancellationToken cancellationToken = default);
+
+    Task CancelAsync(string reason, CancellationToken cancellationToken = default);
 }

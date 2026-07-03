@@ -225,6 +225,18 @@ public sealed class BargeInOptions
     public bool SaveDebugAudio { get; set; } = false;
 
     public string DebugAudioPath { get; set; } = "Logs/InterruptionCaptures";
+
+    public bool EnableBargeInFrameDiagnostics { get; set; } = false;
+
+    public bool EnableBargeInCandidateDiagnostics { get; set; } = false;
+
+    public bool EnableBargeInLegacyDiagnostics { get; set; } = false;
+
+    public bool EnableSuppressedCaptureDiagnostics { get; set; } = false;
+
+    public bool EnableVoiceCaptureTimelineDiagnostics { get; set; } = true;
+
+    public int BargeInRepeatedDiagnosticThrottleMs { get; set; } = 500;
 }
 
 public sealed class FastNearEndDuckingOptions

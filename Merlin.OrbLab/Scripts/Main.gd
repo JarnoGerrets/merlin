@@ -16,6 +16,19 @@ const TYPEWRITER_CHARS_PER_SECOND := 104.0
 const TYPEWRITER_PUNCTUATION_DELAY := 0.030
 const TYPEWRITER_PARAGRAPH_DELAY := 0.060
 const MAX_NOTIFICATIONS := 5
+const CHATLOG_DEFAULT_WIDTH := 420.0
+const CHATLOG_DEFAULT_HEIGHT := 720.0
+const CHATLOG_MIN_WIDTH := 280.0
+const CHATLOG_MIN_HEIGHT := 220.0
+const CHATLOG_MAX_WIDTH := 900.0
+const CHATLOG_MAX_HEIGHT := 1100.0
+const CHATLOG_INITIAL_LEFT := 24.0
+const CHATLOG_INITIAL_TOP := 76.0
+const CHATLOG_MAX_MESSAGES := 500
+const CHATLOG_BOTTOM_SCROLL_THRESHOLD := 36
+const GESTURE_CURSOR_SIZE := 34.0
+const GESTURE_CURSOR_CANVAS_LAYER := 128
+const GESTURE_POINTER_PRIMARY := 1
 const VOICE_TRANSCRIBE_URL := "http://localhost:5000/api/voice/transcribe?extension=.wav"
 const VOICE_SYNTHESIS_STREAM_HOST := "localhost"
 const VOICE_SYNTHESIS_STREAM_PORT := 5000
@@ -97,6 +110,8 @@ const BARGE_IN_DEBUG_OVERLAY_SCRIPT := preload("res://Scripts/BargeInDebugOverla
 
 var _pending_requests := {}
 var _merlin_state: int = MerlinState.IDLE
+var _last_assistant_ui_state_sequence := -1
+var _canonical_ui_state_active := false
 var _focus_request_id := 0
 var _record_effect: AudioEffectRecord
 var _capture_effect: AudioEffectCapture
@@ -119,6 +134,25 @@ var _visual_overlay_hold_until_usec := 0
 var _visual_overlay_hold_until_speech_end := false
 var _visual_overlay_waiting_for_confirmation := false
 var _application_choice_panel: PanelContainer
+var _chatlog_panel: PanelContainer
+var _chatlog_drag_handle: Control
+var _chatlog_message_scroll: ScrollContainer
+var _chatlog_message_list: VBoxContainer
+var _chatlog_messages: Array[Dictionary] = []
+var _chatlog_dragging := false
+var _chatlog_resizing := false
+var _chatlog_drag_offset := Vector2.ZERO
+var _chatlog_resize_start_mouse := Vector2.ZERO
+var _chatlog_resize_start_size := Vector2.ZERO
+var _chatlog_z_index := 200
+var _ui_control_mode_active := false
+var _gesture_cursor_layer: CanvasLayer
+var _gesture_cursor: PanelContainer
+var _gesture_pointer_positions := {}
+var _gesture_pointer_pinched := {}
+var _gesture_grabs := {}
+var _gesture_hover_surface_id := ""
+var _gesture_ignore_logged := false
 var _voice_turn_started_usec := 0
 var _voice_stream_active := false
 var _voice_stream_correlation_id := ""
@@ -183,9 +217,12 @@ func _ready() -> void:
 	reconnect_button.pressed.connect(_on_reconnect_pressed)
 	show_debug_check_box.toggled.connect(_on_show_debug_check_box_toggled)
 	message_input.text_submitted.connect(_on_message_submitted)
+	_setup_chatlog_panel()
+	_setup_gesture_cursor()
 
 	web_socket_client.connection_state_changed.connect(_profiled_connection_state_changed)
 	web_socket_client.visual_state_received.connect(_profiled_visual_state_received)
+	web_socket_client.assistant_ui_state_received.connect(_profiled_assistant_ui_state_received)
 	web_socket_client.response_received.connect(_profiled_response_received)
 	web_socket_client.voice_transcript_received.connect(_profiled_voice_transcript_received)
 	web_socket_client.visual_event_received.connect(_profiled_visual_event_received)
@@ -199,6 +236,11 @@ func _ready() -> void:
 	_update_pending_state()
 	web_socket_client.connect_to_backend()
 	_focus_message_input()
+
+
+func _input(event: InputEvent) -> void:
+	if _handle_synthetic_gesture_input(event):
+		get_viewport().set_input_as_handled()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -272,7 +314,8 @@ func _send_backend_message(message: String, show_user_message: bool) -> void:
 
 	_clear_transient_visual_overlay()
 	_update_pending_state()
-	_set_merlin_state(MerlinState.THINKING)
+	if _legacy_state_changes_enabled():
+		_set_merlin_state(MerlinState.THINKING)
 	_clear_error()
 
 	var interaction_source := "text" if show_user_message else "voice"
@@ -296,6 +339,103 @@ func _send_application_choice(display_name: String) -> void:
 		return
 	_hide_application_choice_panel()
 	_send_backend_message(choice, true)
+
+
+func _setup_chatlog_panel() -> void:
+	if is_instance_valid(_chatlog_panel):
+		return
+
+	var panel := PanelContainer.new()
+	_chatlog_panel = panel
+	panel.name = "ChatFloatingPanel"
+	panel.visible = false
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.custom_minimum_size = Vector2(CHATLOG_MIN_WIDTH, CHATLOG_MIN_HEIGHT)
+	panel.position = Vector2(CHATLOG_INITIAL_LEFT, CHATLOG_INITIAL_TOP)
+	panel.size = Vector2(CHATLOG_DEFAULT_WIDTH, CHATLOG_DEFAULT_HEIGHT)
+	panel.z_index = _chatlog_z_index
+	panel.add_theme_stylebox_override("panel", _chatlog_panel_style())
+	add_child(panel)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 0)
+	margin.add_theme_constant_override("margin_top", 0)
+	margin.add_theme_constant_override("margin_right", 0)
+	margin.add_theme_constant_override("margin_bottom", 0)
+	panel.add_child(margin)
+
+	var layout := VBoxContainer.new()
+	layout.add_theme_constant_override("separation", 0)
+	margin.add_child(layout)
+
+	var header := HBoxContainer.new()
+	_chatlog_drag_handle = header
+	header.name = "DragHeader"
+	header.custom_minimum_size = Vector2(0, 38)
+	header.mouse_filter = Control.MOUSE_FILTER_STOP
+	header.add_theme_constant_override("separation", 8)
+	header.gui_input.connect(_on_chatlog_header_gui_input)
+	layout.add_child(header)
+
+	var title_margin := MarginContainer.new()
+	title_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_margin.add_theme_constant_override("margin_left", 12)
+	title_margin.add_theme_constant_override("margin_top", 7)
+	title_margin.add_theme_constant_override("margin_bottom", 7)
+	header.add_child(title_margin)
+
+	var title := Label.new()
+	title.text = "Chat"
+	title.add_theme_color_override("font_color", COLOR_WHITE)
+	title.add_theme_font_size_override("font_size", 15)
+	title_margin.add_child(title)
+
+	var close_button := Button.new()
+	close_button.text = "X"
+	close_button.tooltip_text = "Close chat"
+	close_button.custom_minimum_size = Vector2(34, 30)
+	close_button.focus_mode = Control.FOCUS_NONE
+	close_button.pressed.connect(_hide_chatlog_panel)
+	_style_button(close_button)
+	header.add_child(close_button)
+
+	var body_margin := MarginContainer.new()
+	body_margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body_margin.add_theme_constant_override("margin_left", 10)
+	body_margin.add_theme_constant_override("margin_top", 8)
+	body_margin.add_theme_constant_override("margin_right", 10)
+	body_margin.add_theme_constant_override("margin_bottom", 8)
+	layout.add_child(body_margin)
+
+	_chatlog_message_scroll = ScrollContainer.new()
+	_chatlog_message_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_chatlog_message_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_chatlog_message_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	body_margin.add_child(_chatlog_message_scroll)
+
+	_chatlog_message_list = VBoxContainer.new()
+	_chatlog_message_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_chatlog_message_list.add_theme_constant_override("separation", 8)
+	_chatlog_message_scroll.add_child(_chatlog_message_list)
+
+	var resize_handle := Control.new()
+	resize_handle.name = "ResizeHandle"
+	resize_handle.custom_minimum_size = Vector2(22, 18)
+	resize_handle.mouse_filter = Control.MOUSE_FILTER_STOP
+	resize_handle.gui_input.connect(_on_chatlog_resize_gui_input)
+	layout.add_child(resize_handle)
+
+	var resize_label := Label.new()
+	resize_label.text = "///"
+	resize_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	resize_label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	resize_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	resize_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	resize_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	resize_label.add_theme_color_override("font_color", COLOR_MUTED)
+	resize_label.add_theme_font_size_override("font_size", 11)
+	resize_handle.add_child(resize_label)
+	resize_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 
 func _setup_voice_mode() -> void:
@@ -1524,6 +1664,10 @@ func _profiled_visual_state_received(state: Dictionary) -> void:
 	_profile_signal_handler("_on_visual_state_received", Callable(self, "_on_visual_state_received"), [state])
 
 
+func _profiled_assistant_ui_state_received(state: Dictionary) -> void:
+	_profile_signal_handler("_on_assistant_ui_state_received", Callable(self, "_on_assistant_ui_state_received"), [state])
+
+
 func _profiled_response_received(response: Dictionary) -> void:
 	_profile_signal_handler("_on_response_received", Callable(self, "_on_response_received"), [response])
 
@@ -1601,6 +1745,52 @@ func _on_visual_state_received(state: Dictionary) -> void:
 		core_orb.update_visual_state(state)
 
 
+func _on_assistant_ui_state_received(state: Dictionary) -> void:
+	var sequence := int(state.get("sequence", -1))
+	if sequence <= _last_assistant_ui_state_sequence:
+		return
+
+	_last_assistant_ui_state_sequence = sequence
+	_canonical_ui_state_active = true
+
+	_apply_assistant_ui_overlay_state(String(state.get("overlayState", "none")))
+
+	var base_state := String(state.get("baseState", "")).to_lower()
+	var mapped_state := _merlin_state_from_assistant_ui_base_state(base_state)
+	if mapped_state == -1:
+		print("assistant_ui_state ignored unknown baseState=%s sequence=%s" % [base_state, sequence])
+		return
+
+	_set_merlin_state(mapped_state)
+
+
+func _merlin_state_from_assistant_ui_base_state(base_state: String) -> int:
+	match base_state:
+		"idle":
+			return MerlinState.IDLE
+		"listening":
+			return MerlinState.LISTENING
+		"thinking":
+			return MerlinState.THINKING
+		"speaking":
+			return MerlinState.SPEAKING
+		_:
+			return -1
+
+
+func _apply_assistant_ui_overlay_state(overlay_state: String) -> void:
+	match overlay_state.to_lower():
+		"none", "":
+			if _visual_overlay_kind == "confirmation" or _visual_overlay_kind == "error":
+				_release_visual_overlay(_visual_overlay_kind)
+		"confirmation":
+			_start_visual_overlay("confirmation", 0.0, false, true)
+		"error":
+			_start_visual_overlay("error", 0.0, true)
+		_:
+			print("assistant_ui_state ignored unknown overlayState=%s" % overlay_state)
+
+
 func _on_barge_in_debug_snapshot_received(snapshot: Dictionary) -> void:
 	if not is_instance_valid(_barge_in_debug_overlay):
 		_setup_barge_in_debug_overlay()
@@ -1666,6 +1856,7 @@ func _on_voice_transcript_received(transcript: Dictionary) -> void:
 		_pending_requests[correlation_id] = text
 
 	_add_notification("Heard: %s" % text, "system")
+	_append_chatlog_message("user", text, "stt", str(transcript.get("timestampUtc", "")))
 	_show_question_acknowledgement(text)
 
 
@@ -1680,9 +1871,43 @@ func _on_malformed_response(raw_message: String, detail: String) -> void:
 	_focus_message_input()
 
 
+func _handle_chatlog_visual_event(event_name: String, event: Dictionary) -> bool:
+	var panel_id := str(event.get("panelId", ""))
+	match event_name:
+		"UI_PANEL_SHOW":
+			if panel_id == "chatlog":
+				_show_chatlog_panel()
+				return true
+		"UI_PANEL_HIDE":
+			if panel_id == "chatlog":
+				_hide_chatlog_panel()
+				return true
+		"UI_CHATLOG_APPEND":
+			if panel_id == "chatlog":
+				_append_chatlog_message(
+					str(event.get("role", "")),
+					str(event.get("text", "")),
+					str(event.get("source", "")),
+					str(event.get("timestampUtc", "")))
+				return true
+		"UI_CHATLOG_CLEAR":
+			if panel_id == "chatlog":
+				_chatlog_messages.clear()
+				if is_instance_valid(_chatlog_message_list):
+					for child in _chatlog_message_list.get_children():
+						_chatlog_message_list.remove_child(child)
+						child.queue_free()
+				return true
+	return false
+
+
 func _on_visual_event_received(event: Dictionary) -> void:
 	var event_name := str(event.get("event", "")).to_upper()
 	var event_started_usec := Time.get_ticks_usec()
+	if _handle_ui_control_visual_event(event_name):
+		return
+	if _handle_chatlog_visual_event(event_name, event):
+		return
 	match event_name:
 		"SPEAKING_START":
 			_speaking_startup_profile_started_usec = event_started_usec
@@ -1693,7 +1918,8 @@ func _on_visual_event_received(event: Dictionary) -> void:
 			_speech_turn_active = true
 			_set_voice_phase("backend_playback_started")
 			var state_started_usec := Time.get_ticks_usec()
-			_set_merlin_state(MerlinState.SPEAKING)
+			if _legacy_state_changes_enabled():
+				_set_merlin_state(MerlinState.SPEAKING)
 			var state_ms := float(Time.get_ticks_usec() - state_started_usec) / 1000.0
 			var total_event_ms := float(Time.get_ticks_usec() - event_started_usec) / 1000.0
 			print("Speaking startup event: SPEAKING_START received. StateTransitionMs: %.3f. EventHandlingMs: %.3f. TotalVoiceTurnMs: %.1f" % [
@@ -1714,7 +1940,7 @@ func _on_visual_event_received(event: Dictionary) -> void:
 					first_energy_ms,
 					energy
 				])
-			if _merlin_state != MerlinState.SPEAKING:
+			if _legacy_state_changes_enabled() and _merlin_state != MerlinState.SPEAKING:
 				_speech_turn_active = true
 				var late_state_started_usec := Time.get_ticks_usec()
 				_set_merlin_state(MerlinState.SPEAKING)
@@ -1736,7 +1962,8 @@ func _on_visual_event_received(event: Dictionary) -> void:
 				_release_visual_overlay(_visual_overlay_kind)
 			_set_voice_phase("backend_playback_complete")
 			print("Voice timing: backend playback complete. TotalVoiceTurnMs: %.1f" % _voice_elapsed_ms())
-			_settle_orb_after_response()
+			if _legacy_state_changes_enabled():
+				_settle_orb_after_response()
 		"SPEAKING_CANCELLED":
 			var speaking_cancel_ms := 0.0
 			if _speaking_startup_profile_started_usec > 0:
@@ -1749,7 +1976,8 @@ func _on_visual_event_received(event: Dictionary) -> void:
 			if _visual_overlay_hold_until_speech_end:
 				_release_visual_overlay(_visual_overlay_kind)
 			_set_voice_phase("backend_playback_cancelled")
-			_settle_orb_after_response()
+			if _legacy_state_changes_enabled():
+				_settle_orb_after_response()
 
 
 func _on_socket_closed(code: int, reason: String) -> void:
@@ -2198,7 +2426,8 @@ func _stream_speech_text(spoken_text: String, stream_path: String = VOICE_SYNTHE
 
 		if first_audio_submitted_logged and not first_audible_logged and voice_playback.get_playback_position() > 0.0:
 			first_audible_logged = true
-			_set_merlin_state(MerlinState.SPEAKING)
+			if _legacy_state_changes_enabled():
+				_set_merlin_state(MerlinState.SPEAKING)
 			print("Voice timing: playback first audio started. SinceLlmMs: %.1f. RequestMs: %.1f. TotalVoiceTurnMs: %.1f" % [_elapsed_ms_since(_llm_response_received_usec), _elapsed_ms_since(started_usec), _voice_elapsed_ms()])
 			print("Voice timing: first audible playback position advanced. PositionMs: %.1f. SinceLlmMs: %.1f. RequestMs: %.1f" % [voice_playback.get_playback_position() * 1000.0, _elapsed_ms_since(_llm_response_received_usec), _elapsed_ms_since(started_usec)])
 
@@ -2222,7 +2451,8 @@ func _stream_speech_text(spoken_text: String, stream_path: String = VOICE_SYNTHE
 
 		if first_audio_submitted_logged and not first_audible_logged and voice_playback.get_playback_position() > 0.0:
 			first_audible_logged = true
-			_set_merlin_state(MerlinState.SPEAKING)
+			if _legacy_state_changes_enabled():
+				_set_merlin_state(MerlinState.SPEAKING)
 			print("Voice timing: playback first audio started. SinceLlmMs: %.1f. RequestMs: %.1f. TotalVoiceTurnMs: %.1f" % [_elapsed_ms_since(_llm_response_received_usec), _elapsed_ms_since(started_usec), _voice_elapsed_ms()])
 			print("Voice timing: first audible playback position advanced. PositionMs: %.1f. SinceLlmMs: %.1f. RequestMs: %.1f" % [voice_playback.get_playback_position() * 1000.0, _elapsed_ms_since(_llm_response_received_usec), _elapsed_ms_since(started_usec)])
 
@@ -2502,13 +2732,16 @@ func _prepare_orb_for_response(response: Dictionary, success: bool, response_typ
 		return
 
 	if success and _is_tool_execution_response(response):
-		_set_merlin_state(MerlinState.EXECUTING_TOOL)
+		if _legacy_state_changes_enabled():
+			_set_merlin_state(MerlinState.EXECUTING_TOOL)
 		await get_tree().create_timer(0.36).timeout
 
 
 func _settle_orb_after_response() -> void:
 	if _visual_overlay_hold_until_speech_end:
 		_release_visual_overlay(_visual_overlay_kind)
+	if not _legacy_state_changes_enabled():
+		return
 	if _pending_requests.is_empty():
 		_set_merlin_state(MerlinState.IDLE)
 		_set_voice_phase("idle")
@@ -2702,6 +2935,366 @@ func _hide_application_choice_panel() -> void:
 	tween.tween_callback(panel.queue_free)
 
 
+func _setup_gesture_cursor() -> void:
+	if is_instance_valid(_gesture_cursor):
+		return
+
+	if not is_instance_valid(_gesture_cursor_layer):
+		_gesture_cursor_layer = CanvasLayer.new()
+		_gesture_cursor_layer.name = "GestureCursorLayer"
+		_gesture_cursor_layer.layer = GESTURE_CURSOR_CANVAS_LAYER
+		add_child(_gesture_cursor_layer)
+
+	var cursor := PanelContainer.new()
+	_gesture_cursor = cursor
+	cursor.name = "GestureCursor"
+	cursor.visible = false
+	cursor.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cursor.custom_minimum_size = Vector2(GESTURE_CURSOR_SIZE, GESTURE_CURSOR_SIZE)
+	cursor.size = Vector2(GESTURE_CURSOR_SIZE, GESTURE_CURSOR_SIZE)
+	cursor.z_index = 4096
+	cursor.z_as_relative = false
+	cursor.add_theme_stylebox_override("panel", _gesture_cursor_style(false))
+	_gesture_cursor_layer.add_child(cursor)
+	_set_gesture_cursor_position(get_viewport_rect().size * 0.5)
+
+
+func _handle_ui_control_visual_event(event_name: String) -> bool:
+	match event_name:
+		"UI_CONTROL_MODE_STARTED":
+			_set_ui_control_mode_active(true)
+			return true
+		"UI_CONTROL_MODE_STOPPED":
+			_set_ui_control_mode_active(false)
+			return true
+	return false
+
+
+func _set_ui_control_mode_active(active: bool) -> void:
+	if _ui_control_mode_active == active:
+		return
+	_ui_control_mode_active = active
+	_gesture_ignore_logged = false
+	if active:
+		if not is_instance_valid(_gesture_cursor):
+			_setup_gesture_cursor()
+		_gesture_cursor.visible = true
+		if not _gesture_pointer_positions.has(GESTURE_POINTER_PRIMARY):
+			_gesture_pointer_positions[GESTURE_POINTER_PRIMARY] = get_viewport_rect().size * 0.5
+		_set_gesture_cursor_position(_gesture_pointer_positions[GESTURE_POINTER_PRIMARY])
+		_update_gesture_hover(GESTURE_POINTER_PRIMARY)
+	else:
+		_release_all_gesture_grabs()
+		_gesture_hover_surface_id = ""
+		_gesture_pointer_pinched.clear()
+		if is_instance_valid(_gesture_cursor):
+			_gesture_cursor.visible = false
+			_gesture_cursor.add_theme_stylebox_override("panel", _gesture_cursor_style(false))
+		_apply_chatlog_gesture_state()
+
+
+func _handle_synthetic_gesture_input(event: InputEvent) -> bool:
+	var is_synthetic_event := false
+	if event is InputEventMouseMotion:
+		is_synthetic_event = event.alt_pressed
+	elif event is InputEventMouseButton:
+		is_synthetic_event = event.alt_pressed and event.button_index == MOUSE_BUTTON_LEFT
+
+	if not is_synthetic_event:
+		return false
+	if not _ui_control_mode_active:
+		if not _gesture_ignore_logged:
+			print("GestureEventIgnoredBecauseUiControlModeOff")
+			_gesture_ignore_logged = true
+		return false
+
+	if event is InputEventMouseMotion:
+		_gesture_pointer_move(GESTURE_POINTER_PRIMARY, event.position)
+		return true
+	if event is InputEventMouseButton:
+		if event.pressed:
+			_gesture_pinch_start(GESTURE_POINTER_PRIMARY)
+		else:
+			_gesture_pinch_end(GESTURE_POINTER_PRIMARY)
+		return true
+	return false
+
+
+func _gesture_pointer_move(pointer_id: int, position: Vector2) -> void:
+	if not _ui_control_mode_active:
+		print("GestureEventIgnoredBecauseUiControlModeOff")
+		return
+
+	_gesture_pointer_positions[pointer_id] = position
+	if pointer_id == GESTURE_POINTER_PRIMARY:
+		_set_gesture_cursor_position(position)
+	if _gesture_grabs.has(pointer_id):
+		_move_gesture_grab(pointer_id, position)
+	else:
+		_update_gesture_hover(pointer_id)
+
+
+func _gesture_pinch_start(pointer_id: int) -> void:
+	if not _ui_control_mode_active:
+		print("GestureEventIgnoredBecauseUiControlModeOff")
+		return
+	if not _gesture_pointer_positions.has(pointer_id):
+		return
+
+	_gesture_pointer_pinched[pointer_id] = true
+	if _gesture_hover_surface_id == "chatlog" and is_instance_valid(_chatlog_panel):
+		_chatlog_z_index += 1
+		_chatlog_panel.z_index = _chatlog_z_index
+		_gesture_grabs[pointer_id] = {
+			"surface_id": "chatlog",
+			"start_position": _gesture_pointer_positions[pointer_id],
+			"panel_start_position": _chatlog_panel.position
+		}
+	_apply_chatlog_gesture_state()
+	if is_instance_valid(_gesture_cursor):
+		_gesture_cursor.add_theme_stylebox_override("panel", _gesture_cursor_style(true))
+
+
+func _gesture_pinch_end(pointer_id: int) -> void:
+	_gesture_pointer_pinched.erase(pointer_id)
+	if _gesture_grabs.has(pointer_id):
+		_gesture_grabs.erase(pointer_id)
+	_update_gesture_hover(pointer_id)
+	if is_instance_valid(_gesture_cursor):
+		_gesture_cursor.add_theme_stylebox_override("panel", _gesture_cursor_style(false))
+	_apply_chatlog_gesture_state()
+
+
+func _move_gesture_grab(pointer_id: int, position: Vector2) -> void:
+	var grab: Dictionary = _gesture_grabs.get(pointer_id, {})
+	if str(grab.get("surface_id", "")) != "chatlog" or not is_instance_valid(_chatlog_panel):
+		return
+
+	var start_position: Vector2 = grab.get("start_position", position)
+	var panel_start_position: Vector2 = grab.get("panel_start_position", _chatlog_panel.position)
+	var delta := position - start_position
+	_chatlog_panel.position = panel_start_position + delta
+	_clamp_chatlog_panel_to_viewport()
+
+
+func _update_gesture_hover(pointer_id: int) -> void:
+	if not _ui_control_mode_active or _gesture_grabs.has(pointer_id):
+		return
+
+	var hovered_surface := ""
+	if _gesture_pointer_positions.has(pointer_id) and _is_gesture_over_chatlog_header(_gesture_pointer_positions[pointer_id]):
+		hovered_surface = "chatlog"
+	if _gesture_hover_surface_id != hovered_surface:
+		_gesture_hover_surface_id = hovered_surface
+		_apply_chatlog_gesture_state()
+
+
+func _is_gesture_over_chatlog_header(position: Vector2) -> bool:
+	if not is_instance_valid(_chatlog_panel) or not _chatlog_panel.visible:
+		return false
+	if not is_instance_valid(_chatlog_drag_handle):
+		return false
+	var header_rect := Rect2(_chatlog_drag_handle.global_position, _chatlog_drag_handle.size)
+	return header_rect.has_point(position)
+
+
+func _set_gesture_cursor_position(position: Vector2) -> void:
+	if not is_instance_valid(_gesture_cursor):
+		return
+	_gesture_cursor.position = position - Vector2(GESTURE_CURSOR_SIZE, GESTURE_CURSOR_SIZE) * 0.5
+
+
+func _release_all_gesture_grabs() -> void:
+	_gesture_grabs.clear()
+	_chatlog_dragging = false
+	_chatlog_resizing = false
+
+
+func _chatlog_is_gesture_grabbed() -> bool:
+	for grab in _gesture_grabs.values():
+		if grab is Dictionary and str(grab.get("surface_id", "")) == "chatlog":
+			return true
+	return false
+
+
+func _apply_chatlog_gesture_state() -> void:
+	if is_instance_valid(_chatlog_panel):
+		_chatlog_panel.add_theme_stylebox_override(
+			"panel",
+			_chatlog_panel_style(_gesture_hover_surface_id == "chatlog", _chatlog_is_gesture_grabbed()))
+
+
+func _show_chatlog_panel() -> void:
+	if not is_instance_valid(_chatlog_panel):
+		_setup_chatlog_panel()
+	_chatlog_z_index += 1
+	_chatlog_panel.z_index = _chatlog_z_index
+	_clamp_chatlog_panel_to_viewport()
+	_chatlog_panel.visible = true
+	_chatlog_panel.grab_focus()
+
+
+func _hide_chatlog_panel() -> void:
+	if is_instance_valid(_chatlog_panel):
+		_chatlog_panel.visible = false
+	_chatlog_dragging = false
+	_chatlog_resizing = false
+	_release_all_gesture_grabs()
+	_gesture_hover_surface_id = ""
+	_apply_chatlog_gesture_state()
+
+
+func _on_chatlog_header_gui_input(event: InputEvent) -> void:
+	if not is_instance_valid(_chatlog_panel):
+		return
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			_chatlog_z_index += 1
+			_chatlog_panel.z_index = _chatlog_z_index
+			_chatlog_dragging = true
+			_chatlog_drag_offset = _chatlog_panel.get_global_mouse_position() - _chatlog_panel.position
+			_chatlog_panel.accept_event()
+		else:
+			_chatlog_dragging = false
+			_chatlog_panel.accept_event()
+	elif event is InputEventMouseMotion and _chatlog_dragging:
+		_chatlog_panel.position = _chatlog_panel.get_global_mouse_position() - _chatlog_drag_offset
+		_clamp_chatlog_panel_to_viewport()
+		_chatlog_panel.accept_event()
+
+
+func _on_chatlog_resize_gui_input(event: InputEvent) -> void:
+	if not is_instance_valid(_chatlog_panel):
+		return
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed:
+			_chatlog_z_index += 1
+			_chatlog_panel.z_index = _chatlog_z_index
+			_chatlog_resizing = true
+			_chatlog_resize_start_mouse = _chatlog_panel.get_global_mouse_position()
+			_chatlog_resize_start_size = _chatlog_panel.size
+			_chatlog_panel.accept_event()
+		else:
+			_chatlog_resizing = false
+			_chatlog_panel.accept_event()
+	elif event is InputEventMouseMotion and _chatlog_resizing:
+		var delta := _chatlog_panel.get_global_mouse_position() - _chatlog_resize_start_mouse
+		var target_size := _chatlog_resize_start_size + delta
+		_chatlog_panel.size = Vector2(
+			clampf(target_size.x, CHATLOG_MIN_WIDTH, CHATLOG_MAX_WIDTH),
+			clampf(target_size.y, CHATLOG_MIN_HEIGHT, CHATLOG_MAX_HEIGHT)
+		)
+		_clamp_chatlog_panel_to_viewport()
+		_chatlog_panel.accept_event()
+
+
+func _clamp_chatlog_panel_to_viewport() -> void:
+	if not is_instance_valid(_chatlog_panel):
+		return
+	var viewport_size := get_viewport_rect().size
+	var max_position := Vector2(
+		maxf(0.0, viewport_size.x - 80.0),
+		maxf(0.0, viewport_size.y - 60.0)
+	)
+	_chatlog_panel.position = Vector2(
+		clampf(_chatlog_panel.position.x, 0.0, max_position.x),
+		clampf(_chatlog_panel.position.y, 0.0, max_position.y)
+	)
+
+
+func _append_chatlog_message(role: String, text: String, source: String = "", timestamp_utc: String = "") -> void:
+	var clean_text := text.strip_edges()
+	if clean_text.is_empty():
+		return
+
+	var entry := {
+		"role": role,
+		"text": clean_text,
+		"source": source,
+		"timestampUtc": timestamp_utc,
+	}
+	_chatlog_messages.append(entry)
+	while _chatlog_messages.size() > CHATLOG_MAX_MESSAGES:
+		_chatlog_messages.pop_front()
+		if is_instance_valid(_chatlog_message_list) and _chatlog_message_list.get_child_count() > 0:
+			var oldest := _chatlog_message_list.get_child(0)
+			_chatlog_message_list.remove_child(oldest)
+			oldest.queue_free()
+
+	if not is_instance_valid(_chatlog_message_list):
+		return
+
+	var should_scroll := _chatlog_should_auto_scroll()
+	_chatlog_message_list.add_child(_create_chatlog_entry(entry))
+	if should_scroll:
+		call_deferred("_scroll_chatlog_to_bottom")
+
+
+func _create_chatlog_entry(entry: Dictionary) -> Control:
+	var role := str(entry.get("role", "assistant")).to_lower()
+	var text := str(entry.get("text", ""))
+	var author := "User" if role == "user" else "Merlin"
+	var color := COLOR_WHITE if role == "user" else COLOR_CYAN
+	var timestamp := _format_chatlog_timestamp(str(entry.get("timestampUtc", "")))
+
+	var container := VBoxContainer.new()
+	container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	container.focus_mode = Control.FOCUS_NONE
+	container.add_theme_constant_override("separation", 4)
+
+	var heading := Label.new()
+	heading.text = "[%s] %s" % [timestamp, author] if not timestamp.is_empty() else author
+	heading.add_theme_color_override("font_color", color)
+	heading.add_theme_font_size_override("font_size", 12)
+	container.add_child(heading)
+
+	var body := _create_selectable_text(text, COLOR_WHITE, 13)
+	container.add_child(body)
+	return container
+
+
+func _format_chatlog_timestamp(timestamp_utc: String) -> String:
+	if timestamp_utc.is_empty():
+		var now := Time.get_datetime_dict_from_system()
+		return "%02d:%02d" % [int(now.get("hour", 0)), int(now.get("minute", 0))]
+	var parsed := Time.get_datetime_dict_from_datetime_string(timestamp_utc, false)
+	if parsed.is_empty():
+		return ""
+	return "%02d:%02d" % [int(parsed.get("hour", 0)), int(parsed.get("minute", 0))]
+
+
+func _chatlog_should_auto_scroll() -> bool:
+	if not is_instance_valid(_chatlog_message_scroll):
+		return false
+	var bar := _chatlog_message_scroll.get_v_scroll_bar()
+	return bar.max_value - _chatlog_message_scroll.scroll_vertical <= CHATLOG_BOTTOM_SCROLL_THRESHOLD
+
+
+func _scroll_chatlog_to_bottom() -> void:
+	if is_instance_valid(_chatlog_message_scroll):
+		_chatlog_message_scroll.scroll_vertical = int(_chatlog_message_scroll.get_v_scroll_bar().max_value)
+
+
+func _chatlog_panel_style(gesture_hovered: bool = false, gesture_grabbed: bool = false) -> StyleBoxFlat:
+	var border := COLOR_AMBER if gesture_grabbed else Color(COLOR_CYAN.r, COLOR_CYAN.g, COLOR_CYAN.b, 0.92 if gesture_hovered else 0.72)
+	var shadow := COLOR_AMBER if gesture_grabbed else COLOR_CYAN
+	var style := _panel_style(Color(0.002, 0.015, 0.046, 0.92), border, 1.0 if not gesture_hovered else 1.5, 8)
+	style.shadow_color = Color(shadow.r, shadow.g, shadow.b, 0.38 if gesture_hovered or gesture_grabbed else 0.22)
+	style.shadow_size = 22 if gesture_hovered or gesture_grabbed else 16
+	style.shadow_offset = Vector2(0, 0)
+	return style
+
+
+func _gesture_cursor_style(pinched: bool) -> StyleBoxFlat:
+	var fill := Color(1.0, 0.68, 0.28, 0.34) if pinched else Color(0.24, 0.72, 1.0, 0.26)
+	var border := COLOR_AMBER if pinched else COLOR_CYAN
+	var style := _panel_style(fill, border, 2.0, int(GESTURE_CURSOR_SIZE * 0.5))
+	style.shadow_color = Color(border.r, border.g, border.b, 0.72)
+	style.shadow_size = 18
+	style.shadow_offset = Vector2(0, 0)
+	return style
+
+
 func _create_application_choice_row(display_name: String, source: String) -> Button:
 	var button := Button.new()
 	button.focus_mode = Control.FOCUS_ALL
@@ -2789,7 +3382,8 @@ func _typewriter_reveal(label: RichTextLabel, author: String, message: String) -
 	var last_ticks_usec := Time.get_ticks_usec()
 	var index := 0
 	var frames_since_scroll := 0
-	_set_merlin_state(MerlinState.SPEAKING)
+	if _legacy_state_changes_enabled():
+		_set_merlin_state(MerlinState.SPEAKING)
 
 	while index < message.length():
 		var now_ticks_usec := Time.get_ticks_usec()
@@ -2857,7 +3451,7 @@ func _update_pending_state() -> void:
 	var has_pending_requests := not _pending_requests.is_empty()
 	thinking_label.visible = has_pending_requests
 	_update_send_button()
-	if has_pending_requests and _merlin_state != MerlinState.LISTENING and _merlin_state != MerlinState.SPEAKING:
+	if _legacy_state_changes_enabled() and has_pending_requests and _merlin_state != MerlinState.LISTENING and _merlin_state != MerlinState.SPEAKING:
 		_set_merlin_state(MerlinState.THINKING)
 		return
 	if not has_pending_requests and web_socket_client.is_backend_connected():
@@ -2865,6 +3459,9 @@ func _update_pending_state() -> void:
 
 
 func _update_orb_from_response(response: Dictionary, success: bool, response_type: String) -> void:
+	if not _legacy_state_changes_enabled():
+		return
+
 	if response_type == "error" or not success and response_type != "limitation" and response_type != "safety":
 		_set_merlin_state(MerlinState.ERROR)
 		return
@@ -2906,6 +3503,10 @@ func _clear_transient_visual_overlay() -> void:
 	_visual_overlay_hold_until_speech_end = false
 	_visual_overlay_waiting_for_confirmation = false
 	_apply_visual_overlay()
+
+
+func _legacy_state_changes_enabled() -> bool:
+	return not _canonical_ui_state_active
 
 
 func _update_visual_overlay(delta: float) -> void:

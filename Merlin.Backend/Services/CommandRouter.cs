@@ -25,6 +25,7 @@ public sealed class CommandRouter
     private readonly SpeechCommandNormalizer _speechCommandNormalizer;
     private readonly ToolRegistry _toolRegistry;
     private readonly ILiveAssistantTurnService? _liveTurnService;
+    private readonly UiControlModeController? _uiControlModeController;
 
     public CommandRouter(
         IIntentParser intentParser,
@@ -41,7 +42,8 @@ public sealed class CommandRouter
         ILiveAssistantTurnService? liveTurnService = null,
         IFeedbackContextFactory? feedbackContextFactory = null,
         IResponsiveFeedbackOrchestrator? responsiveFeedbackOrchestrator = null,
-        IOptions<ResponsiveFeedbackOptions>? responsiveFeedbackOptions = null)
+        IOptions<ResponsiveFeedbackOptions>? responsiveFeedbackOptions = null,
+        UiControlModeController? uiControlModeController = null)
     {
         _acknowledgementPolicy = acknowledgementPolicy;
         _acknowledgementSpeechService = acknowledgementSpeechService;
@@ -58,6 +60,7 @@ public sealed class CommandRouter
         _speechCommandNormalizer = speechCommandNormalizer ?? new SpeechCommandNormalizer();
         _toolRegistry = toolRegistry;
         _liveTurnService = liveTurnService;
+        _uiControlModeController = uiControlModeController;
     }
 
     public async Task<AssistantResponse> RouteAsync(string message, CancellationToken cancellationToken = default)
@@ -71,6 +74,7 @@ public sealed class CommandRouter
     {
         var receivedAtUtc = request.ReceivedAtUtc ?? DateTimeOffset.UtcNow;
         var correlationId = GetOrCreateCorrelationId(request.CorrelationId);
+        var captureId = request.CaptureId;
         var requestId = correlationId;
         var rawMessage = request.Message;
         var shouldNormalizeSpeech = ShouldNormalizeSpeech(request);
@@ -82,17 +86,29 @@ public sealed class CommandRouter
         if (shouldNormalizeSpeech && !string.Equals(rawMessage, message, StringComparison.Ordinal))
         {
             _logger.LogInformation(
-                "Speech command normalized. CorrelationId: {CorrelationId}. Raw: {RawCommand}. Normalized: {NormalizedCommand}",
+                "Speech command normalized. CaptureId: {CaptureId}. CorrelationId: {CorrelationId}. Raw: {RawCommand}. Normalized: {NormalizedCommand}",
+                captureId,
                 correlationId,
                 rawMessage,
                 message);
         }
 
         _logger.LogInformation(
-            "Command received. CorrelationId: {CorrelationId}. RequestCount: {RequestCount}. Command: {Command}",
+            "Command received. CaptureId: {CaptureId}. CorrelationId: {CorrelationId}. RequestCount: {RequestCount}. Command: {Command}",
+            captureId,
             correlationId,
             _runtimeStateService.TotalRequestsProcessed,
             message);
+        if (!string.IsNullOrWhiteSpace(captureId))
+        {
+            _logger.LogInformation(
+                "CommandRouterVoiceInputReceived. CaptureId: {CaptureId}. RawText: {RawText}. NormalizedText: {NormalizedText}. CorrelationId: {CorrelationId}. Source: {Source}.",
+                captureId,
+                rawMessage,
+                message,
+                correlationId,
+                request.InteractionSource);
+        }
 
         SetTurnState(correlationId, LiveAssistantTurnState.Interpreting);
         var feedbackContext = _feedbackContextFactory?.CreateInitial(
@@ -113,10 +129,84 @@ public sealed class CommandRouter
                 Success = false,
                 Message = "I couldn't understand that request.",
                 CorrelationId = correlationId,
+                CaptureId = captureId,
                 ErrorCode = "UNKNOWN_INPUT",
                 Intent = "unknown_input",
                 OriginalMessage = message,
                 ResponseType = "error"
+            }, cancellationToken);
+        }
+
+        if (ChatLogCommandMatcher.TryMatch(message, out var chatLogAction))
+        {
+            var chatLogIntentResult = ChatLogCommandMatcher.ToIntentParseResult(
+                chatLogAction,
+                rawMessage,
+                message);
+            _runtimeStateService.RecordIntentParserUsed(nameof(ChatLogCommandMatcher), chatLogIntentResult.Intent);
+            _logger.LogInformation(
+                "Chat panel UI command matched. CorrelationId: {CorrelationId}. Action: {Action}. Command: {Command}",
+                correlationId,
+                chatLogAction,
+                message);
+
+            return await PolishAsync(new AssistantResponse
+            {
+                Success = true,
+                Message = chatLogAction == ChatLogCommandAction.Show
+                    ? "Opening chat."
+                    : "Closing chat.",
+                SpokenText = chatLogAction == ChatLogCommandAction.Show
+                    ? "Opening chat."
+                    : "Closing chat.",
+                CorrelationId = correlationId,
+                CaptureId = captureId,
+                ToolName = "Chat Panel",
+                Intent = chatLogIntentResult.Intent,
+                IntentConfidence = chatLogIntentResult.Confidence,
+                OriginalMessage = chatLogIntentResult.OriginalMessage,
+                ParserUsed = chatLogIntentResult.ParserUsed,
+                CapabilityId = chatLogIntentResult.CapabilityId,
+                CapabilityName = chatLogIntentResult.CapabilityName,
+                ResponseType = "system"
+            }, cancellationToken);
+        }
+
+        if (UiControlModeCommandMatcher.TryMatch(message, out var uiControlAction))
+        {
+            var uiControlIntentResult = UiControlModeCommandMatcher.ToIntentParseResult(uiControlAction, rawMessage);
+            _runtimeStateService.RecordIntentParserUsed(nameof(UiControlModeCommandMatcher), uiControlIntentResult.Intent);
+
+            if (uiControlAction == UiControlModeCommandAction.Start)
+            {
+                _logger.LogInformation("UiControlModeStartCommandDetected CorrelationId: {CorrelationId}. Command: {Command}", correlationId, message);
+                _uiControlModeController?.Start();
+            }
+            else
+            {
+                _logger.LogInformation("UiControlModeStopCommandDetected CorrelationId: {CorrelationId}. Command: {Command}", correlationId, message);
+                _uiControlModeController?.Stop();
+            }
+
+            return await PolishAsync(new AssistantResponse
+            {
+                Success = true,
+                Message = uiControlAction == UiControlModeCommandAction.Start
+                    ? "UI control mode started."
+                    : "UI control mode stopped.",
+                SpokenText = uiControlAction == UiControlModeCommandAction.Start
+                    ? "UI control mode started."
+                    : "UI control mode stopped.",
+                CorrelationId = correlationId,
+                CaptureId = captureId,
+                ToolName = "UI Control Mode",
+                Intent = uiControlIntentResult.Intent,
+                IntentConfidence = uiControlIntentResult.Confidence,
+                OriginalMessage = uiControlIntentResult.OriginalMessage,
+                ParserUsed = uiControlIntentResult.ParserUsed,
+                CapabilityId = uiControlIntentResult.CapabilityId,
+                CapabilityName = uiControlIntentResult.CapabilityName,
+                ResponseType = "system"
             }, cancellationToken);
         }
 
@@ -152,6 +242,7 @@ public sealed class CommandRouter
                 Success = false,
                 Message = responseMessage,
                 CorrelationId = correlationId,
+                CaptureId = captureId,
                 ErrorCode = errorCode,
                 ToolName = "General Conversation",
                 Intent = intentResult.Intent,
@@ -180,6 +271,7 @@ public sealed class CommandRouter
                 Success = false,
                 Message = "Unknown command.",
                 CorrelationId = correlationId,
+                CaptureId = captureId,
                 ErrorCode = "UNKNOWN_COMMAND",
                 Intent = intentResult.Intent,
                 IntentConfidence = intentResult.Confidence,
@@ -192,7 +284,8 @@ public sealed class CommandRouter
         }
 
         _logger.LogInformation(
-            "Matched tool. CorrelationId: {CorrelationId}. Intent: {Intent}. ToolName: {ToolName}. Command: {Command}",
+            "Matched tool. CaptureId: {CaptureId}. CorrelationId: {CorrelationId}. Intent: {Intent}. ToolName: {ToolName}. Command: {Command}",
+            captureId,
             correlationId,
             intentResult.Intent,
             tool.Name,
@@ -270,13 +363,37 @@ public sealed class CommandRouter
             }
 
             SetTurnState(correlationId, LiveAssistantTurnState.ExecutingTool);
+            var streamingProgressCancelled = 0;
+            var shouldSpeakForContext = request.SpeechEventSender is not null
+                && (string.Equals(request.InteractionSource, "voice", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(request.InteractionSource, "voice_stream", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(request.InteractionSource, "voice_correction", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(request.InteractionSource, "backend_idle_voice", StringComparison.OrdinalIgnoreCase))
+                && string.Equals(request.ClientMode, "orb", StringComparison.OrdinalIgnoreCase);
             result = await tool.ExecuteAsync(
                 new ToolExecutionContext
                 {
+                    CorrelationId = correlationId,
                     OriginalMessage = intentResult.OriginalMessage,
                     NormalizedCommand = intentResult.NormalizedCommand,
                     Intent = intentResult.Intent,
-                    Route = intentResult.Route
+                    Route = intentResult.Route,
+                    ShouldSpeak = shouldSpeakForContext,
+                    SpeechEventSender = request.SpeechEventSender,
+                    StreamingFinalAnswerStarted = () =>
+                    {
+                        if (Interlocked.Exchange(ref streamingProgressCancelled, 1) == 1)
+                        {
+                            return;
+                        }
+
+                        _logger.LogInformation(
+                            "StreamingFinalAnswerProgressCancelled CorrelationId: {CorrelationId}. ToolName: {ToolName}.",
+                            correlationId,
+                            tool.Name);
+                        pendingSpeechCancellation.Cancel();
+                        progressHandle?.MarkMainResponseReady();
+                    }
                 },
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
@@ -329,7 +446,8 @@ public sealed class CommandRouter
         }
 
         _logger.LogInformation(
-            "Tool execution completed. CorrelationId: {CorrelationId}. ToolName: {ToolName}. Success: {Success}. ErrorCode: {ErrorCode}",
+            "Tool execution completed. CaptureId: {CaptureId}. CorrelationId: {CorrelationId}. ToolName: {ToolName}. Success: {Success}. ErrorCode: {ErrorCode}",
+            captureId,
             correlationId,
             result.ToolName ?? tool.Name,
             result.Success,
@@ -351,7 +469,9 @@ public sealed class CommandRouter
             PreferPhraseCache = result.PreferPhraseCache,
             IsReplayableSpeech = result.IsReplayableSpeech,
             SuppressSpeech = suppressFinalSpeech,
+            SegmentedSpeechStarted = result.SegmentedSpeechStarted,
             CorrelationId = correlationId,
+            CaptureId = captureId,
             ErrorCode = result.ErrorCode,
             ToolName = result.ToolName ?? tool.Name,
             Intent = result.Intent ?? intentResult.Intent,
@@ -508,7 +628,9 @@ public sealed class CommandRouter
             PreferPhraseCache = response.PreferPhraseCache,
             IsReplayableSpeech = response.IsReplayableSpeech,
             SuppressSpeech = response.SuppressSpeech,
+            SegmentedSpeechStarted = response.SegmentedSpeechStarted,
             CorrelationId = response.CorrelationId,
+            CaptureId = response.CaptureId,
             ErrorCode = response.ErrorCode,
             ToolName = response.ToolName,
             Intent = response.Intent,
@@ -545,7 +667,9 @@ public sealed class CommandRouter
             PreferPhraseCache = presentation.PreferPhraseCache,
             IsReplayableSpeech = presentation.IsReplayable,
             SuppressSpeech = polishedResponse.SuppressSpeech,
+            SegmentedSpeechStarted = polishedResponse.SegmentedSpeechStarted,
             CorrelationId = polishedResponse.CorrelationId,
+            CaptureId = polishedResponse.CaptureId,
             ErrorCode = polishedResponse.ErrorCode,
             ToolName = polishedResponse.ToolName,
             Intent = polishedResponse.Intent,
