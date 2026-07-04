@@ -133,6 +133,36 @@ public sealed class AssistantSpeechPlaybackServiceTests
     }
 
     [Fact]
+    public async Task ResumeProvisionalAudioHoldAsync_EmitsSpeakingState()
+    {
+        var tts = new ImmediateAudioVoiceSynthesisService();
+        var wave = new RecordingWavePlayer();
+        var sink = new RecordingUiStateSink();
+        var playback = CreatePlayback(tts, wave, broadcaster: sink.Broadcaster);
+
+        await playback.EnqueueAsync(
+            "held final answer",
+            "turn-1",
+            (_, _) => Task.CompletedTask,
+            speechCacheKey: null,
+            isReplayableSpeech: null,
+            CancellationToken.None,
+            SpeechPlaybackItemType.FinalAnswer);
+
+        Assert.True(await wave.WaitForPlayAsync(TimeSpan.FromSeconds(2)));
+        var hold = await playback.BeginProvisionalAudioHoldAsync("turn-1", "test_hold");
+        var resumed = await playback.ResumeProvisionalAudioHoldAsync(hold.HoldId!, "test_resume");
+
+        Assert.True(resumed.Success);
+        Assert.True(await sink.WaitUntilAsync(uiState =>
+            uiState.BaseState == "speaking"
+            && uiState.Reason == "provisional_audio_hold_resumed"
+            && uiState.InterruptionState == "none"
+            && uiState.AudiblePlaybackActive
+            && uiState.SpeechItemType == "final_answer"));
+    }
+
+    [Fact]
     public async Task FlushProvisionalAudioHoldAsync_CancelsAndInvalidatesHeldPlayback()
     {
         var tts = new BlockingAfterAudioVoiceSynthesisService();

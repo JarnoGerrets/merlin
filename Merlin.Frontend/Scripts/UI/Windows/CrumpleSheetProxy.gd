@@ -13,6 +13,10 @@ var _crumple: float = 0.0
 var _throw_t: float = 0.0
 var _throw_offset: Vector2 = Vector2.ZERO
 var _ball_formed: bool = false
+var _texture_override: Texture2D
+var _baked_texture: Texture2D
+var _bake_in_progress: bool = false
+var _is_bake_renderer: bool = false
 
 
 func configure_from_window(source_window: Control) -> void:
@@ -32,6 +36,8 @@ func configure_from_window(source_window: Control) -> void:
 
 
 func set_crumple_progress(progress: float, ball_formed: bool) -> void:
+	if _baked_texture != null:
+		return
 	_crumple = clampf(progress, 0.0, 1.0)
 	_ball_formed = ball_formed
 	queue_redraw()
@@ -44,19 +50,78 @@ func throw_and_free(throw_velocity: Vector2, viewport_size: Vector2, min_ms: flo
 	var start_position: Vector2 = position
 	var tween: Tween = create_tween()
 	tween.set_parallel(true)
-	tween.tween_method(func(value: float) -> void:
-		_throw_t = value
-		_throw_offset = direction * distance * smoothstep(0.0, 1.0, value)
-		position = start_position + _throw_offset
-		rotation = direction.x * 1.35 * value
-		modulate.a = 1.0 - smoothstep(0.62, 1.0, value)
-		queue_redraw()
-	, 0.0, 1.0, duration_ms / 1000.0).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	if _baked_texture != null:
+		tween.tween_property(self, "position", start_position + direction * distance, duration_ms / 1000.0).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		tween.tween_property(self, "rotation", direction.x * 1.35, duration_ms / 1000.0).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		tween.tween_property(self, "modulate:a", 0.0, duration_ms / 1000.0).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	else:
+		tween.tween_method(func(value: float) -> void:
+			_throw_t = value
+			_throw_offset = direction * distance * smoothstep(0.0, 1.0, value)
+			position = start_position + _throw_offset
+			rotation = direction.x * 1.35 * value
+			modulate.a = 1.0 - smoothstep(0.62, 1.0, value)
+			queue_redraw()
+		, 0.0, 1.0, duration_ms / 1000.0).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	tween.set_parallel(false)
 	tween.tween_callback(queue_free)
 
 
+func bake_final_ball_async() -> void:
+	if _baked_texture != null or _bake_in_progress or _is_bake_renderer:
+		return
+	var texture: Texture2D = _window_texture()
+	if texture == null:
+		return
+
+	_bake_in_progress = true
+	var bake_viewport := SubViewport.new()
+	bake_viewport.size = Vector2i(ceili(size.x), ceili(size.y))
+	bake_viewport.transparent_bg = true
+	bake_viewport.render_target_clear_mode = SubViewport.CLEAR_MODE_ALWAYS
+	bake_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	add_child(bake_viewport)
+
+	var renderer: Control = get_script().new() as Control
+	var baked_cells: Array[Dictionary] = _cells.duplicate(true)
+	renderer.call("configure_as_bake_renderer", texture, _texture_size, _source_size, baked_cells)
+	renderer.size = size
+	renderer.position = Vector2.ZERO
+	renderer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bake_viewport.add_child(renderer)
+	renderer.queue_redraw()
+
+	await RenderingServer.frame_post_draw
+	if not is_instance_valid(self) or not is_instance_valid(bake_viewport):
+		return
+	var image: Image = bake_viewport.get_texture().get_image()
+	_baked_texture = ImageTexture.create_from_image(image)
+	if is_instance_valid(_source_viewport):
+		_source_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	bake_viewport.queue_free()
+	_bake_in_progress = false
+	queue_redraw()
+
+
+func configure_as_bake_renderer(texture: Texture2D, texture_size: Vector2, source_size: Vector2, cells: Array[Dictionary]) -> void:
+	_is_bake_renderer = true
+	_texture_override = texture
+	_texture_size = texture_size
+	_source_size = source_size
+	_cells = cells
+	_crumple = 1.0
+	_throw_t = 0.0
+	_ball_formed = true
+
+
+func is_baked() -> bool:
+	return _baked_texture != null
+
+
 func _draw() -> void:
+	if _baked_texture != null:
+		draw_texture(_baked_texture, Vector2.ZERO)
+		return
 	var texture: Texture2D = _window_texture()
 	if texture == null:
 		return
@@ -209,6 +274,8 @@ func _vertex_index(x: int, y: int) -> int:
 
 
 func _window_texture() -> Texture2D:
+	if _texture_override != null:
+		return _texture_override
 	if _source_viewport == null:
 		return null
 	return _source_viewport.get_texture()

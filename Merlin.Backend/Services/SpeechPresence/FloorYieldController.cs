@@ -85,11 +85,14 @@ public sealed class FloorYieldController : IFloorYieldController
         int requiredSustainedMs;
         lock (_syncRoot)
         {
-            if (_yieldedCurrentPlayback)
-            {
-                ResetCandidateCore("already_yielded_current_playback", decision);
-                return;
-            }
+            // 2026-07-04: Temporarily disabled for live barge-in testing. A missed or
+            // misheard first yield should not block the user from interrupting again
+            // during the same assistant answer.
+            // if (_yieldedCurrentPlayback)
+            // {
+            //     ResetCandidateCore("already_yielded_current_playback", decision);
+            //     return;
+            // }
 
             if (_candidateStartTimestampUtc is null || _candidateStartFrameId is null)
             {

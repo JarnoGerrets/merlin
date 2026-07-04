@@ -1354,6 +1354,18 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
             heldDurationMs,
             state.BufferedWaveProvider?.BufferedBytes,
             state.TurnGeneration);
+
+        _ = EmitAssistantUiStateImmediateAsync(
+            AssistantUiStateEvent.Create(
+                "speaking",
+                eventName,
+                state.CorrelationId,
+                state.TurnId,
+                speechItemType: MapSpeechItemType(state.ItemType),
+                audiblePlaybackActive: true,
+                interruptionState: "none"),
+            nameof(AssistantSpeechPlaybackService),
+            CancellationToken.None);
     }
 
     private void RefreshHoldTimeoutLocked(ActivePlaybackControlState state)

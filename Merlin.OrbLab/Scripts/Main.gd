@@ -3455,6 +3455,8 @@ func _update_crumple() -> void:
 	target_window.modulate = Color(1.0, 1.0, 1.0, 0.0)
 	if is_instance_valid(_crumple_proxy):
 		_crumple_proxy.set_crumple_progress(clampf(confidence, 0.0, 1.0), ball_formed)
+		if ball_formed:
+			_crumple_proxy.bake_final_ball_async()
 	var throw_velocity: Vector2 = _rightward_swipe_velocity([GESTURE_POINTER_PRIMARY])
 	_last_throw_velocity = throw_velocity
 	var formed_usec: int = int(_crumple_state.get("formed_usec", 0))
@@ -3471,6 +3473,7 @@ func _update_formed_crumple_ball(target_window, _pointer_a: String, _pointer_b: 
 	target_window.modulate = Color(1.0, 1.0, 1.0, 0.0)
 	if is_instance_valid(_crumple_proxy):
 		_crumple_proxy.set_crumple_progress(1.0, true)
+		_crumple_proxy.bake_final_ball_async()
 	if not _gesture_pointer_positions.has(GESTURE_POINTER_PRIMARY):
 		_cancel_crumple(true)
 		return
@@ -3478,7 +3481,8 @@ func _update_formed_crumple_ball(target_window, _pointer_a: String, _pointer_b: 
 	var desired_proxy_position: Vector2 = pointer_position - (_crumple_proxy.size * 0.5 if is_instance_valid(_crumple_proxy) else Vector2.ZERO)
 	if is_instance_valid(_crumple_proxy):
 		_crumple_proxy.position = desired_proxy_position
-		_crumple_proxy.queue_redraw()
+		if not _crumple_proxy.is_baked():
+			_crumple_proxy.queue_redraw()
 	var throw_velocity: Vector2 = _rightward_swipe_velocity([GESTURE_POINTER_PRIMARY])
 	_last_throw_velocity = throw_velocity
 	var now_usec: int = Time.get_ticks_usec()
@@ -3555,6 +3559,7 @@ func _throw_crumple_proxy(source_window, throw_velocity: Vector2) -> void:
 		_spawn_crumple_throw_proxy(source_window, throw_velocity)
 		return
 	_crumple_proxy.set_crumple_progress(1.0, true)
+	_crumple_proxy.bake_final_ball_async()
 	_crumple_proxy.throw_and_free(
 		throw_velocity,
 		get_viewport_rect().size,
