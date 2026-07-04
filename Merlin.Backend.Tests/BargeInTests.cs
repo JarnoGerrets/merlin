@@ -3166,6 +3166,102 @@ public sealed class BargeInCoordinatorTests
     }
 
     [Fact]
+    public async Task ProcessMicrophoneFrame_BackendIdleWakePhrase_RaisesWakeRequestBeforeLiveUtteranceGate()
+    {
+        var logger = new RecordingLogger<BargeInCoordinator>();
+        var gateLogger = new RecordingLogger<LiveUtteranceGate>();
+        var fixture = CreateFixture(
+            new BargeInOptions { Enabled = true },
+            "Hey Merlin, are you awake?",
+            liveUtteranceGate: CreateLiveUtteranceGate(gateLogger),
+            logger: logger,
+            merlinAwakeState: new MerlinAwakeStateService());
+        var requests = new List<BackendVoiceRequestCaptured>();
+        fixture.Coordinator.BackendVoiceRequestCaptured += (request, _) =>
+        {
+            requests.Add(request);
+            return Task.CompletedTask;
+        };
+
+        await fixture.Coordinator.StartLiveMonitoringAsync();
+        await SendTriggeredSpeechAsync(fixture.Coordinator);
+        await WaitUntilAsync(() => requests.Count > 0);
+
+        var request = Assert.Single(requests);
+        Assert.Equal("Hey Merlin, are you awake?", request.Text);
+        Assert.Contains(logger.Messages, message => message.Contains("BackendIdleVoiceAwakeGateHandled", StringComparison.Ordinal)
+            && message.Contains("WakePhraseAccepted", StringComparison.Ordinal));
+        Assert.DoesNotContain(gateLogger.Messages, message => message.Contains("LiveUtteranceGateEvaluated", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_BackendIdleIgnoredSpeech_DoesNotBlockLaterWakePhrase()
+    {
+        var logger = new RecordingLogger<BargeInCoordinator>();
+        var gateLogger = new RecordingLogger<LiveUtteranceGate>();
+        var fixture = CreateFixture(
+            new BargeInOptions { Enabled = true },
+            liveUtteranceGate: CreateLiveUtteranceGate(gateLogger),
+            logger: logger,
+            merlinAwakeState: new MerlinAwakeStateService());
+        fixture.Stt.Transcripts.Clear();
+        fixture.Stt.Transcripts.Enqueue("random room noise");
+        fixture.Stt.Transcripts.Enqueue("Hey Merlin, are you awake?");
+        var requests = new List<BackendVoiceRequestCaptured>();
+        fixture.Coordinator.BackendVoiceRequestCaptured += (request, _) =>
+        {
+            requests.Add(request);
+            return Task.CompletedTask;
+        };
+
+        await fixture.Coordinator.StartLiveMonitoringAsync();
+        await SendTriggeredSpeechAsync(fixture.Coordinator);
+        await WaitUntilAsync(() => logger.Messages.Any(message => message.Contains("ignored_while_sleeping", StringComparison.Ordinal)));
+        await SendTriggeredSpeechAsync(fixture.Coordinator);
+        await WaitUntilAsync(() => requests.Count > 0);
+
+        var request = Assert.Single(requests);
+        Assert.Equal("Hey Merlin, are you awake?", request.Text);
+        Assert.Equal(2, fixture.Stt.CallCount);
+        Assert.Contains(logger.Messages, message => message.Contains("ignored_while_sleeping", StringComparison.Ordinal));
+        Assert.Contains(logger.Messages, message => message.Contains("wake_phrase_accepted", StringComparison.Ordinal));
+        Assert.DoesNotContain(gateLogger.Messages, message => message.Contains("LiveUtteranceGateEvaluated", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_BackendIdleSleepPhrase_RaisesSleepRequestBeforeLiveUtteranceGate()
+    {
+        var logger = new RecordingLogger<BargeInCoordinator>();
+        var gateLogger = new RecordingLogger<LiveUtteranceGate>();
+        var awakeState = new MerlinAwakeStateService();
+        awakeState.EvaluateVoiceActivity("Hey Merlin, are you awake?");
+        var fixture = CreateFixture(
+            new BargeInOptions { Enabled = true },
+            "Merlin, go to sleep",
+            liveUtteranceGate: CreateLiveUtteranceGate(gateLogger),
+            logger: logger,
+            merlinAwakeState: awakeState);
+        var requests = new List<BackendVoiceRequestCaptured>();
+        fixture.Coordinator.BackendVoiceRequestCaptured += (request, _) =>
+        {
+            requests.Add(request);
+            return Task.CompletedTask;
+        };
+
+        await fixture.Coordinator.StartLiveMonitoringAsync();
+        await SendTriggeredSpeechAsync(fixture.Coordinator);
+        await WaitUntilAsync(() => requests.Count > 0);
+
+        var request = Assert.Single(requests);
+        Assert.Equal("Merlin, go to sleep", request.Text);
+        Assert.False(awakeState.IsAwake);
+        Assert.Contains(logger.Messages, message => message.Contains("BackendIdleVoiceAwakeGateHandled", StringComparison.Ordinal)
+            && message.Contains("SleepPhraseAccepted", StringComparison.Ordinal));
+        Assert.Contains(logger.Messages, message => message.Contains("sleep_phrase_accepted", StringComparison.Ordinal));
+        Assert.DoesNotContain(gateLogger.Messages, message => message.Contains("LiveUtteranceGateEvaluated", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ProcessMicrophoneFrame_CandidateDiagnosticsDisabledByDefault_HidesBurstCandidateLogs()
     {
         var diagnostics = new RecordingBargeInDiagnosticsLogger();
@@ -3539,7 +3635,8 @@ public sealed class BargeInCoordinatorTests
         IBargeInDebugSnapshotService? debugSnapshots = null,
         ISpeechPresenceDetector? speechPresenceDetector = null,
         ISpeechPresenceDecisionLogSink? speechPresenceDecisionLogSink = null,
-        ILiveInterruptionIntegrationService? liveInterruptionIntegrationService = null)
+        ILiveInterruptionIntegrationService? liveInterruptionIntegrationService = null,
+        MerlinAwakeStateService? merlinAwakeState = null)
     {
         options.TriggerPostSpeechWaitMs = 0;
         var diagnostics = diagnosticsLogger ?? new NoOpBargeInDiagnosticsLogger();
@@ -3569,6 +3666,7 @@ public sealed class BargeInCoordinatorTests
             logger ?? NullLogger<BargeInCoordinator>.Instance,
             new TestOptionsMonitor<BargeInOptions>(options),
             new TestOptionsMonitor<VoiceInputOptions>(new VoiceInputOptions()),
+            merlinAwakeState ?? new MerlinAwakeStateService(),
             liveUtteranceGate,
             debugSnapshots,
             speechPresenceDetector,
@@ -3812,14 +3910,16 @@ public sealed class BargeInCoordinatorTests
 
     internal sealed class FakeBargeInSttService : IBargeInSttService
     {
-        private readonly string _transcript;
+        private readonly Queue<string> _transcripts;
 
-        public FakeBargeInSttService(string transcript)
+        public FakeBargeInSttService(params string[] transcripts)
         {
-            _transcript = transcript;
+            _transcripts = new Queue<string>(transcripts.Length == 0 ? [string.Empty] : transcripts);
         }
 
         public int CallCount { get; private set; }
+
+        public Queue<string> Transcripts => _transcripts;
 
         public IReadOnlyList<BargeInAudioFrame> LastFrames { get; private set; } = [];
 
@@ -3835,9 +3935,12 @@ public sealed class BargeInCoordinatorTests
             LastAudioDuration = frames.Count == 0
                 ? TimeSpan.Zero
                 : TimeSpan.FromSeconds(frames.Sum(frame => frame.Samples.Length) / (double)frames[0].SampleRate);
+            var transcript = _transcripts.Count > 1
+                ? _transcripts.Dequeue()
+                : _transcripts.Peek();
             return Task.FromResult(new BargeInSttResult
             {
-                Transcript = _transcript,
+                Transcript = transcript,
                 AudioDuration = LastAudioDuration
             });
         }

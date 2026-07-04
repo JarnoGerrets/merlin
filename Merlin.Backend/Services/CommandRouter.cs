@@ -2,6 +2,7 @@ using Merlin.Backend.Models;
 using Merlin.Backend.Configuration;
 using Merlin.Backend.Services.Acknowledgement;
 using Merlin.Backend.Services.Feedback;
+using Merlin.Backend.Services.Vision;
 using Merlin.Backend.Tools;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
@@ -26,6 +27,7 @@ public sealed class CommandRouter
     private readonly ToolRegistry _toolRegistry;
     private readonly ILiveAssistantTurnService? _liveTurnService;
     private readonly UiControlModeController? _uiControlModeController;
+    private readonly IVisionSidecarHost? _visionSidecarHost;
 
     public CommandRouter(
         IIntentParser intentParser,
@@ -43,7 +45,8 @@ public sealed class CommandRouter
         IFeedbackContextFactory? feedbackContextFactory = null,
         IResponsiveFeedbackOrchestrator? responsiveFeedbackOrchestrator = null,
         IOptions<ResponsiveFeedbackOptions>? responsiveFeedbackOptions = null,
-        UiControlModeController? uiControlModeController = null)
+        UiControlModeController? uiControlModeController = null,
+        IVisionSidecarHost? visionSidecarHost = null)
     {
         _acknowledgementPolicy = acknowledgementPolicy;
         _acknowledgementSpeechService = acknowledgementSpeechService;
@@ -61,6 +64,7 @@ public sealed class CommandRouter
         _toolRegistry = toolRegistry;
         _liveTurnService = liveTurnService;
         _uiControlModeController = uiControlModeController;
+        _visionSidecarHost = visionSidecarHost;
     }
 
     public async Task<AssistantResponse> RouteAsync(string message, CancellationToken cancellationToken = default)
@@ -181,10 +185,18 @@ public sealed class CommandRouter
             {
                 _logger.LogInformation("UiControlModeStartCommandDetected CorrelationId: {CorrelationId}. Command: {Command}", correlationId, message);
                 _uiControlModeController?.Start();
+                if (_visionSidecarHost is not null)
+                {
+                    await _visionSidecarHost.StartTrackingAsync(cancellationToken);
+                }
             }
             else
             {
                 _logger.LogInformation("UiControlModeStopCommandDetected CorrelationId: {CorrelationId}. Command: {Command}", correlationId, message);
+                if (_visionSidecarHost is not null)
+                {
+                    await _visionSidecarHost.StopTrackingAsync(cancellationToken);
+                }
                 _uiControlModeController?.Stop();
             }
 

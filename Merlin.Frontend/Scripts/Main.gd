@@ -1,6 +1,14 @@
 extends Control
 
+const MerlinWindowScript := preload("res://Scripts/UI/Windows/MerlinWindow.gd")
+const MerlinWindowManagerScript := preload("res://Scripts/UI/Windows/MerlinWindowManager.gd")
+const MerlinWindowDefinitionScript := preload("res://Scripts/UI/Windows/MerlinWindowDefinition.gd")
+const MerlinWindowConstantsScript := preload("res://Scripts/UI/Windows/MerlinWindowConstants.gd")
+const CrumpleSheetProxyScript := preload("res://Scripts/UI/Windows/CrumpleSheetProxy.gd")
+const ChatLogContentScript := preload("res://Scripts/UI/ChatLog/ChatLogContent.gd")
+
 enum MerlinState {
+	SLEEPING,
 	IDLE,
 	THINKING,
 	SPEAKING,
@@ -24,11 +32,37 @@ const CHATLOG_MAX_WIDTH := 900.0
 const CHATLOG_MAX_HEIGHT := 1100.0
 const CHATLOG_INITIAL_LEFT := 24.0
 const CHATLOG_INITIAL_TOP := 76.0
-const CHATLOG_MAX_MESSAGES := 500
-const CHATLOG_BOTTOM_SCROLL_THRESHOLD := 36
 const GESTURE_CURSOR_SIZE := 34.0
 const GESTURE_CURSOR_CANVAS_LAYER := 128
-const GESTURE_POINTER_PRIMARY := 1
+const GESTURE_POINTER_PRIMARY := "primary"
+const GESTURE_POINTER_SECONDARY := "secondary"
+const PINCH_TAP_MAX_DURATION_MS := 220
+const PINCH_TAP_MAX_MOVEMENT_PX := 18.0
+const PINCH_HOLD_TO_GRAB_MS := 260
+const DRAG_START_MOVEMENT_PX := 20.0
+const GESTURE_MIN_RESIZE_START_DISTANCE_PX := 56.0
+const GESTURE_MIN_RESIZE_AXIS_DISTANCE_PX := 40.0
+const GESTURE_DIAGONAL_RESIZE_RATIO := 0.45
+const GESTURE_RESIZE_AXIS_WIDTH := "width"
+const GESTURE_RESIZE_AXIS_HEIGHT := "height"
+const GESTURE_RESIZE_AXIS_BOTH := "both"
+const GESTURE_RESIZE_SMOOTHING := 0.25
+const BALL_FORM_TARGET_PADDING_PX := 180.0
+const BALL_FORM_MIN_DURATION_MS := 450
+const BALL_FORM_CANCEL_TIMEOUT_MS := 3200
+const BALL_FORM_MIN_MOTION_PX := 180.0
+const BALL_FORM_MIN_CONFIDENCE := 1.0
+const BALL_FORM_COMPACT_RATIO := 0.72
+const BALL_FORM_THROW_LOCKOUT_MS := 220
+const BALL_FORM_TWO_HAND_FRESH_MS := 260
+const THROW_VELOCITY_THRESHOLD_PX_PER_SEC := 980.0
+const THROW_HISTORY_WINDOW_MS := 180
+const THROW_RIGHT_SWIPE_HISTORY_WINDOW_MS := 320
+const THROW_RIGHT_SWIPE_MIN_DISTANCE_PX := 360.0
+const THROW_RIGHT_SWIPE_MIN_X_VELOCITY_PX_PER_SEC := 650.0
+const THROW_RIGHT_SWIPE_MAX_VERTICAL_RATIO := 0.62
+const THROW_ANIMATION_MIN_MS := 850
+const THROW_ANIMATION_MAX_MS := 1250
 const VOICE_TRANSCRIBE_URL := "http://localhost:5000/api/voice/transcribe?extension=.wav"
 const VOICE_SYNTHESIS_STREAM_HOST := "localhost"
 const VOICE_SYNTHESIS_STREAM_PORT := 5000
@@ -109,7 +143,7 @@ const BARGE_IN_DEBUG_OVERLAY_SCRIPT := preload("res://Scripts/BargeInDebugOverla
 @onready var voice_button: Button = $VoiceControl/VoiceButton
 
 var _pending_requests := {}
-var _merlin_state: int = MerlinState.IDLE
+var _merlin_state: int = MerlinState.SLEEPING
 var _last_assistant_ui_state_sequence := -1
 var _canonical_ui_state_active := false
 var _focus_request_id := 0
@@ -134,24 +168,25 @@ var _visual_overlay_hold_until_usec := 0
 var _visual_overlay_hold_until_speech_end := false
 var _visual_overlay_waiting_for_confirmation := false
 var _application_choice_panel: PanelContainer
-var _chatlog_panel: PanelContainer
-var _chatlog_drag_handle: Control
-var _chatlog_message_scroll: ScrollContainer
-var _chatlog_message_list: VBoxContainer
-var _chatlog_messages: Array[Dictionary] = []
-var _chatlog_dragging := false
-var _chatlog_resizing := false
-var _chatlog_drag_offset := Vector2.ZERO
-var _chatlog_resize_start_mouse := Vector2.ZERO
-var _chatlog_resize_start_size := Vector2.ZERO
-var _chatlog_z_index := 200
+var _window_manager
+var _chatlog_panel
+var _chatlog_content
 var _ui_control_mode_active := false
 var _gesture_cursor_layer: CanvasLayer
 var _gesture_cursor: PanelContainer
+var _gesture_visual_pointer_id := ""
 var _gesture_pointer_positions := {}
 var _gesture_pointer_pinched := {}
+var _gesture_pending_pinches := {}
+var _gesture_pointer_history := {}
 var _gesture_grabs := {}
 var _gesture_hover_surface_id := ""
+var _gesture_hover_surface_by_pointer := {}
+var _gesture_resize_state := {}
+var _selected_surface_id := ""
+var _crumple_state := {}
+var _crumple_proxy
+var _last_throw_velocity := Vector2.ZERO
 var _gesture_ignore_logged := false
 var _voice_turn_started_usec := 0
 var _voice_stream_active := false
@@ -205,6 +240,7 @@ var _barge_in_debug_overlay: BargeInDebugOverlay
 func _ready() -> void:
 	_apply_visual_theme()
 	_setup_voice_mode()
+	_set_merlin_state(MerlinState.SLEEPING)
 	message_input.focus_mode = Control.FOCUS_ALL
 	message_input.keep_editing_on_text_submit = true
 	message_scroll.focus_mode = Control.FOCUS_NONE
@@ -254,6 +290,9 @@ func _process(delta: float) -> void:
 	_frame_profile_begin_frame()
 	_update_merlin_awake_timeout()
 	_update_visual_overlay(delta)
+	_update_pending_gesture_pinches()
+	_update_selected_ball_forming()
+	_update_crumple_timeout()
 	if _stream_poc_active:
 		_poll_streaming_pcm_poc()
 	_frame_profile_end_frame(delta)
@@ -345,97 +384,22 @@ func _setup_chatlog_panel() -> void:
 	if is_instance_valid(_chatlog_panel):
 		return
 
-	var panel := PanelContainer.new()
-	_chatlog_panel = panel
-	panel.name = "ChatFloatingPanel"
-	panel.visible = false
-	panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	panel.custom_minimum_size = Vector2(CHATLOG_MIN_WIDTH, CHATLOG_MIN_HEIGHT)
-	panel.position = Vector2(CHATLOG_INITIAL_LEFT, CHATLOG_INITIAL_TOP)
-	panel.size = Vector2(CHATLOG_DEFAULT_WIDTH, CHATLOG_DEFAULT_HEIGHT)
-	panel.z_index = _chatlog_z_index
-	panel.add_theme_stylebox_override("panel", _chatlog_panel_style())
-	add_child(panel)
+	if not is_instance_valid(_window_manager):
+		_window_manager = MerlinWindowManagerScript.new()
+		_window_manager.name = "MerlinWindowManager"
+		add_child(_window_manager)
 
-	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 0)
-	margin.add_theme_constant_override("margin_top", 0)
-	margin.add_theme_constant_override("margin_right", 0)
-	margin.add_theme_constant_override("margin_bottom", 0)
-	panel.add_child(margin)
+	var definition := MerlinWindowDefinitionScript.new()
+	definition.apply_chatlog_defaults()
+	_window_manager.register_window_definition(definition)
 
-	var layout := VBoxContainer.new()
-	layout.add_theme_constant_override("separation", 0)
-	margin.add_child(layout)
+	_chatlog_panel = MerlinWindowScript.new()
+	_chatlog_panel.configure(definition)
+	add_child(_chatlog_panel)
 
-	var header := HBoxContainer.new()
-	_chatlog_drag_handle = header
-	header.name = "DragHeader"
-	header.custom_minimum_size = Vector2(0, 38)
-	header.mouse_filter = Control.MOUSE_FILTER_STOP
-	header.add_theme_constant_override("separation", 8)
-	header.gui_input.connect(_on_chatlog_header_gui_input)
-	layout.add_child(header)
-
-	var title_margin := MarginContainer.new()
-	title_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title_margin.add_theme_constant_override("margin_left", 12)
-	title_margin.add_theme_constant_override("margin_top", 7)
-	title_margin.add_theme_constant_override("margin_bottom", 7)
-	header.add_child(title_margin)
-
-	var title := Label.new()
-	title.text = "Chat"
-	title.add_theme_color_override("font_color", COLOR_WHITE)
-	title.add_theme_font_size_override("font_size", 15)
-	title_margin.add_child(title)
-
-	var close_button := Button.new()
-	close_button.text = "X"
-	close_button.tooltip_text = "Close chat"
-	close_button.custom_minimum_size = Vector2(34, 30)
-	close_button.focus_mode = Control.FOCUS_NONE
-	close_button.pressed.connect(_hide_chatlog_panel)
-	_style_button(close_button)
-	header.add_child(close_button)
-
-	var body_margin := MarginContainer.new()
-	body_margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	body_margin.add_theme_constant_override("margin_left", 10)
-	body_margin.add_theme_constant_override("margin_top", 8)
-	body_margin.add_theme_constant_override("margin_right", 10)
-	body_margin.add_theme_constant_override("margin_bottom", 8)
-	layout.add_child(body_margin)
-
-	_chatlog_message_scroll = ScrollContainer.new()
-	_chatlog_message_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_chatlog_message_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_chatlog_message_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	body_margin.add_child(_chatlog_message_scroll)
-
-	_chatlog_message_list = VBoxContainer.new()
-	_chatlog_message_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_chatlog_message_list.add_theme_constant_override("separation", 8)
-	_chatlog_message_scroll.add_child(_chatlog_message_list)
-
-	var resize_handle := Control.new()
-	resize_handle.name = "ResizeHandle"
-	resize_handle.custom_minimum_size = Vector2(22, 18)
-	resize_handle.mouse_filter = Control.MOUSE_FILTER_STOP
-	resize_handle.gui_input.connect(_on_chatlog_resize_gui_input)
-	layout.add_child(resize_handle)
-
-	var resize_label := Label.new()
-	resize_label.text = "///"
-	resize_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	resize_label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
-	resize_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	resize_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	resize_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	resize_label.add_theme_color_override("font_color", COLOR_MUTED)
-	resize_label.add_theme_font_size_override("font_size", 11)
-	resize_handle.add_child(resize_label)
-	resize_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_chatlog_content = ChatLogContentScript.new()
+	_chatlog_panel.set_content(_chatlog_content)
+	_window_manager.register_window_instance(_chatlog_panel)
 
 
 func _setup_voice_mode() -> void:
@@ -1712,8 +1676,6 @@ func _on_connection_state_changed(state: String, detail: String) -> void:
 			_clear_error()
 			_add_system_message("Connected to Merlin.Backend.")
 			_add_notification("Connected", "system")
-			if _pending_requests.is_empty():
-				_set_merlin_state(MerlinState.IDLE)
 			_focus_message_input()
 		"connecting":
 			_clear_error()
@@ -1730,14 +1692,16 @@ func _on_connection_state_changed(state: String, detail: String) -> void:
 			_add_notification("Disconnected", "system")
 			_pending_requests.clear()
 			_update_pending_state()
-			_set_merlin_state(MerlinState.IDLE)
+			_set_merlin_state(MerlinState.SLEEPING)
 
 	_update_send_button()
 
 
 func _on_visual_state_received(state: Dictionary) -> void:
+	var mode := String(state.get("mode", ""))
+	if _merlin_state == MerlinState.SLEEPING and (mode.is_empty() or mode == "idle"):
+		return
 	if not _pending_requests.is_empty():
-		var mode := String(state.get("mode", ""))
 		if mode.is_empty() or mode == "idle":
 			core_orb.set_thinking()
 			return
@@ -1756,6 +1720,8 @@ func _on_assistant_ui_state_received(state: Dictionary) -> void:
 	_apply_assistant_ui_overlay_state(String(state.get("overlayState", "none")))
 
 	var base_state := String(state.get("baseState", "")).to_lower()
+	if _merlin_state == MerlinState.SLEEPING and base_state == "idle":
+		return
 	var mapped_state := _merlin_state_from_assistant_ui_base_state(base_state)
 	if mapped_state == -1:
 		print("assistant_ui_state ignored unknown baseState=%s sequence=%s" % [base_state, sequence])
@@ -1766,6 +1732,8 @@ func _on_assistant_ui_state_received(state: Dictionary) -> void:
 
 func _merlin_state_from_assistant_ui_base_state(base_state: String) -> int:
 	match base_state:
+		"sleeping":
+			return MerlinState.SLEEPING
 		"idle":
 			return MerlinState.IDLE
 		"listening":
@@ -1873,7 +1841,20 @@ func _on_malformed_response(raw_message: String, detail: String) -> void:
 
 func _handle_chatlog_visual_event(event_name: String, event: Dictionary) -> bool:
 	var panel_id := str(event.get("panelId", ""))
+	var window_type := str(event.get("windowType", panel_id))
 	match event_name:
+		"UI_WINDOW_SHOW":
+			if window_type == MerlinWindowConstantsScript.WINDOW_TYPE_CHATLOG:
+				_show_chatlog_panel()
+				return true
+		"UI_WINDOW_HIDE":
+			if window_type == MerlinWindowConstantsScript.WINDOW_TYPE_CHATLOG:
+				_hide_chatlog_panel()
+				return true
+		"UI_WINDOW_FOCUS":
+			if window_type == MerlinWindowConstantsScript.WINDOW_TYPE_CHATLOG:
+				_show_chatlog_panel()
+				return true
 		"UI_PANEL_SHOW":
 			if panel_id == "chatlog":
 				_show_chatlog_panel()
@@ -1892,11 +1873,8 @@ func _handle_chatlog_visual_event(event_name: String, event: Dictionary) -> bool
 				return true
 		"UI_CHATLOG_CLEAR":
 			if panel_id == "chatlog":
-				_chatlog_messages.clear()
-				if is_instance_valid(_chatlog_message_list):
-					for child in _chatlog_message_list.get_children():
-						_chatlog_message_list.remove_child(child)
-						child.queue_free()
+				if is_instance_valid(_chatlog_content):
+					_chatlog_content.clear_messages()
 				return true
 	return false
 
@@ -1905,6 +1883,8 @@ func _on_visual_event_received(event: Dictionary) -> void:
 	var event_name := str(event.get("event", "")).to_upper()
 	var event_started_usec := Time.get_ticks_usec()
 	if _handle_ui_control_visual_event(event_name):
+		return
+	if _handle_gesture_visual_event(event_name, event):
 		return
 	if _handle_chatlog_visual_event(event_name, event):
 		return
@@ -2682,6 +2662,8 @@ func _on_frontend_work_observed(metrics: Dictionary) -> void:
 
 func _merlin_state_name(state: int) -> String:
 	match state:
+		MerlinState.SLEEPING:
+			return "SLEEPING"
 		MerlinState.IDLE:
 			return "IDLE"
 		MerlinState.THINKING:
@@ -2936,17 +2918,26 @@ func _hide_application_choice_panel() -> void:
 
 
 func _setup_gesture_cursor() -> void:
-	if is_instance_valid(_gesture_cursor):
-		return
-
 	if not is_instance_valid(_gesture_cursor_layer):
 		_gesture_cursor_layer = CanvasLayer.new()
 		_gesture_cursor_layer.name = "GestureCursorLayer"
 		_gesture_cursor_layer.layer = GESTURE_CURSOR_CANVAS_LAYER
 		add_child(_gesture_cursor_layer)
 
+	_ensure_gesture_cursor(GESTURE_POINTER_PRIMARY)
+
+
+func _ensure_gesture_cursor(pointer_id: String) -> PanelContainer:
+	if not is_instance_valid(_gesture_cursor_layer):
+		_gesture_cursor_layer = CanvasLayer.new()
+		_gesture_cursor_layer.name = "GestureCursorLayer"
+		_gesture_cursor_layer.layer = GESTURE_CURSOR_CANVAS_LAYER
+		add_child(_gesture_cursor_layer)
+
+	if is_instance_valid(_gesture_cursor):
+		return _gesture_cursor
+
 	var cursor := PanelContainer.new()
-	_gesture_cursor = cursor
 	cursor.name = "GestureCursor"
 	cursor.visible = false
 	cursor.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -2956,7 +2947,9 @@ func _setup_gesture_cursor() -> void:
 	cursor.z_as_relative = false
 	cursor.add_theme_stylebox_override("panel", _gesture_cursor_style(false))
 	_gesture_cursor_layer.add_child(cursor)
-	_set_gesture_cursor_position(get_viewport_rect().size * 0.5)
+	_gesture_cursor = cursor
+	_set_gesture_cursor_position(pointer_id, get_viewport_rect().size * 0.5)
+	return cursor
 
 
 func _handle_ui_control_visual_event(event_name: String) -> bool:
@@ -2970,26 +2963,56 @@ func _handle_ui_control_visual_event(event_name: String) -> bool:
 	return false
 
 
+func _handle_gesture_visual_event(event_name: String, event: Dictionary) -> bool:
+	var pointer_id := str(event.get("pointerId", GESTURE_POINTER_PRIMARY))
+	if pointer_id.is_empty():
+		pointer_id = GESTURE_POINTER_PRIMARY
+	match event_name:
+		"GESTURE_POINTER_MOVE", "GESTURE_PINCH_MOVE":
+			_gesture_pointer_move(pointer_id, _gesture_event_position(event))
+			return true
+		"GESTURE_PINCH_START":
+			_gesture_pointer_move(pointer_id, _gesture_event_position(event))
+			_gesture_pinch_start(pointer_id)
+			return true
+		"GESTURE_PINCH_END":
+			_gesture_pinch_end(pointer_id)
+			return true
+	return false
+
+
+func _gesture_event_position(event: Dictionary) -> Vector2:
+	var viewport_size := get_viewport_rect().size
+	var x := clampf(float(event.get("x", 0.5)), 0.0, 1.0)
+	var y := clampf(float(event.get("y", 0.5)), 0.0, 1.0)
+	return Vector2(x * viewport_size.x, y * viewport_size.y)
+
+
 func _set_ui_control_mode_active(active: bool) -> void:
 	if _ui_control_mode_active == active:
 		return
 	_ui_control_mode_active = active
 	_gesture_ignore_logged = false
 	if active:
-		if not is_instance_valid(_gesture_cursor):
-			_setup_gesture_cursor()
-		_gesture_cursor.visible = true
+		_setup_gesture_cursor()
 		if not _gesture_pointer_positions.has(GESTURE_POINTER_PRIMARY):
 			_gesture_pointer_positions[GESTURE_POINTER_PRIMARY] = get_viewport_rect().size * 0.5
-		_set_gesture_cursor_position(_gesture_pointer_positions[GESTURE_POINTER_PRIMARY])
+		_gesture_visual_pointer_id = GESTURE_POINTER_PRIMARY
+		_set_gesture_cursor_visible(GESTURE_POINTER_PRIMARY, true)
+		_set_gesture_cursor_position(GESTURE_POINTER_PRIMARY, _gesture_pointer_positions[GESTURE_POINTER_PRIMARY])
 		_update_gesture_hover(GESTURE_POINTER_PRIMARY)
 	else:
+		_cancel_crumple(false)
 		_release_all_gesture_grabs()
 		_gesture_hover_surface_id = ""
+		_gesture_hover_surface_by_pointer.clear()
 		_gesture_pointer_pinched.clear()
-		if is_instance_valid(_gesture_cursor):
-			_gesture_cursor.visible = false
-			_gesture_cursor.add_theme_stylebox_override("panel", _gesture_cursor_style(false))
+		_gesture_pending_pinches.clear()
+		_gesture_pointer_history.clear()
+		_clear_selected_surface()
+		_gesture_visual_pointer_id = ""
+		_set_gesture_cursor_visible(GESTURE_POINTER_PRIMARY, false)
+		_set_gesture_cursor_pinched(GESTURE_POINTER_PRIMARY, false)
 		_apply_chatlog_gesture_state()
 
 
@@ -3020,21 +3043,33 @@ func _handle_synthetic_gesture_input(event: InputEvent) -> bool:
 	return false
 
 
-func _gesture_pointer_move(pointer_id: int, position: Vector2) -> void:
+func _gesture_pointer_move(pointer_id: String, position: Vector2) -> void:
 	if not _ui_control_mode_active:
 		print("GestureEventIgnoredBecauseUiControlModeOff")
 		return
 
 	_gesture_pointer_positions[pointer_id] = position
+	_record_gesture_pointer_history(pointer_id, position)
 	if pointer_id == GESTURE_POINTER_PRIMARY:
-		_set_gesture_cursor_position(position)
-	if _gesture_grabs.has(pointer_id):
+		_set_active_gesture_cursor_pointer(pointer_id)
+		_set_gesture_cursor_visible(pointer_id, true)
+		_set_gesture_cursor_position(pointer_id, position)
+	if _crumple_is_active():
+		_update_crumple()
+	elif _gesture_resize_is_active():
+		_update_gesture_resize()
+	elif pointer_id == GESTURE_POINTER_PRIMARY and _gesture_grabs.has(pointer_id):
 		_move_gesture_grab(pointer_id, position)
-	else:
+		_try_start_gesture_resize()
+	elif pointer_id == GESTURE_POINTER_PRIMARY:
+		_maybe_promote_pending_pinch(pointer_id)
 		_update_gesture_hover(pointer_id)
+	elif bool(_gesture_pointer_pinched.get(pointer_id, false)):
+		_maybe_promote_pending_pinch(pointer_id)
+		_try_start_gesture_resize()
 
 
-func _gesture_pinch_start(pointer_id: int) -> void:
+func _gesture_pinch_start(pointer_id: String) -> void:
 	if not _ui_control_mode_active:
 		print("GestureEventIgnoredBecauseUiControlModeOff")
 		return
@@ -3042,247 +3077,819 @@ func _gesture_pinch_start(pointer_id: int) -> void:
 		return
 
 	_gesture_pointer_pinched[pointer_id] = true
-	if _gesture_hover_surface_id == "chatlog" and is_instance_valid(_chatlog_panel):
-		_chatlog_z_index += 1
-		_chatlog_panel.z_index = _chatlog_z_index
-		_gesture_grabs[pointer_id] = {
-			"surface_id": "chatlog",
-			"start_position": _gesture_pointer_positions[pointer_id],
-			"panel_start_position": _chatlog_panel.position
-		}
+	var surface_id: String = _combined_gesture_hover_surface() if pointer_id == GESTURE_POINTER_PRIMARY else _surface_at_gesture_position(_gesture_pointer_positions[pointer_id])
+	if pointer_id == GESTURE_POINTER_PRIMARY and surface_id.is_empty():
+		surface_id = _surface_at_gesture_position(_gesture_pointer_positions[pointer_id])
+	_gesture_hover_surface_by_pointer[pointer_id] = surface_id
+	_gesture_pending_pinches[pointer_id] = {
+		"start_usec": Time.get_ticks_usec(),
+		"start_position": _gesture_pointer_positions[pointer_id],
+		"target_surface_id": surface_id
+	}
+	_record_gesture_pointer_history(pointer_id, _gesture_pointer_positions[pointer_id])
+	_try_start_gesture_resize()
 	_apply_chatlog_gesture_state()
-	if is_instance_valid(_gesture_cursor):
-		_gesture_cursor.add_theme_stylebox_override("panel", _gesture_cursor_style(true))
+	if pointer_id == GESTURE_POINTER_PRIMARY:
+		_set_gesture_cursor_pinched(pointer_id, true)
 
 
-func _gesture_pinch_end(pointer_id: int) -> void:
+func _gesture_pinch_end(pointer_id: String) -> void:
+	var released_usec := Time.get_ticks_usec()
 	_gesture_pointer_pinched.erase(pointer_id)
+	if _gesture_resize_uses_pointer(pointer_id):
+		_finish_gesture_resize(pointer_id)
+	elif _gesture_pending_pinches.has(pointer_id):
+		_finish_pending_pinch(pointer_id, released_usec)
 	if _gesture_grabs.has(pointer_id):
 		_gesture_grabs.erase(pointer_id)
-	_update_gesture_hover(pointer_id)
-	if is_instance_valid(_gesture_cursor):
-		_gesture_cursor.add_theme_stylebox_override("panel", _gesture_cursor_style(false))
+	_gesture_pending_pinches.erase(pointer_id)
+	_gesture_hover_surface_by_pointer.erase(pointer_id)
+	if pointer_id == GESTURE_POINTER_PRIMARY:
+		_set_gesture_cursor_pinched(pointer_id, false)
+		_update_gesture_hover(pointer_id)
 	_apply_chatlog_gesture_state()
 
 
-func _move_gesture_grab(pointer_id: int, position: Vector2) -> void:
+func _update_pending_gesture_pinches() -> void:
+	if not _ui_control_mode_active:
+		return
+	for pointer_id in _gesture_pending_pinches.keys():
+		_maybe_promote_pending_pinch(str(pointer_id))
+
+
+func _maybe_promote_pending_pinch(pointer_id: String) -> void:
+	if _crumple_is_active() or not _selected_surface_id.is_empty() or not _gesture_pending_pinches.has(pointer_id) or _gesture_grabs.has(pointer_id):
+		return
+	var pending: Dictionary = _gesture_pending_pinches.get(pointer_id, {})
+	var position: Vector2 = _gesture_pointer_positions.get(pointer_id, pending.get("start_position", Vector2.ZERO))
+	var start_position: Vector2 = pending.get("start_position", position)
+	var elapsed_ms := float(Time.get_ticks_usec() - int(pending.get("start_usec", Time.get_ticks_usec()))) / 1000.0
+	var moved_px := start_position.distance_to(position)
+	if moved_px < DRAG_START_MOVEMENT_PX and elapsed_ms < PINCH_HOLD_TO_GRAB_MS:
+		return
+	_promote_pending_pinch_to_grab(pointer_id)
+
+
+func _promote_pending_pinch_to_grab(pointer_id: String) -> void:
+	if not _gesture_pending_pinches.has(pointer_id) or not _gesture_pointer_positions.has(pointer_id):
+		return
+	var pending: Dictionary = _gesture_pending_pinches.get(pointer_id, {})
+	var surface_id := str(pending.get("target_surface_id", ""))
+	var target_window = _window_for_surface_id(surface_id)
+	if pointer_id == GESTURE_POINTER_PRIMARY and is_instance_valid(target_window):
+		if is_instance_valid(_window_manager):
+			_window_manager.focus_window(target_window)
+		_gesture_grabs[pointer_id] = {
+			"surface_id": target_window.window_type,
+			"start_position": _gesture_pointer_positions[pointer_id],
+			"panel_start_position": target_window.position
+		}
+	_gesture_pending_pinches.erase(pointer_id)
+	_try_start_gesture_resize()
+	_apply_chatlog_gesture_state()
+
+
+func _finish_pending_pinch(pointer_id: String, released_usec: int) -> void:
+	if pointer_id != GESTURE_POINTER_PRIMARY:
+		return
+	var pending: Dictionary = _gesture_pending_pinches.get(pointer_id, {})
+	var start_position: Vector2 = pending.get("start_position", _gesture_pointer_positions.get(pointer_id, Vector2.ZERO))
+	var release_position: Vector2 = _gesture_pointer_positions.get(pointer_id, start_position)
+	var duration_ms := float(released_usec - int(pending.get("start_usec", released_usec))) / 1000.0
+	var moved_px := start_position.distance_to(release_position)
+	if duration_ms <= PINCH_TAP_MAX_DURATION_MS and moved_px <= PINCH_TAP_MAX_MOVEMENT_PX:
+		_select_surface(str(pending.get("target_surface_id", "")))
+
+
+func _move_gesture_grab(pointer_id: String, position: Vector2) -> void:
 	var grab: Dictionary = _gesture_grabs.get(pointer_id, {})
-	if str(grab.get("surface_id", "")) != "chatlog" or not is_instance_valid(_chatlog_panel):
+	var grabbed_window = _window_for_surface_id(str(grab.get("surface_id", "")))
+	if not is_instance_valid(grabbed_window):
+		return
+	if grabbed_window.window_type == _selected_surface_id:
+		_gesture_grabs.erase(pointer_id)
 		return
 
 	var start_position: Vector2 = grab.get("start_position", position)
-	var panel_start_position: Vector2 = grab.get("panel_start_position", _chatlog_panel.position)
+	var panel_start_position: Vector2 = grab.get("panel_start_position", grabbed_window.position)
 	var delta := position - start_position
-	_chatlog_panel.position = panel_start_position + delta
-	_clamp_chatlog_panel_to_viewport()
+	grabbed_window.move_to(panel_start_position + delta)
 
 
-func _update_gesture_hover(pointer_id: int) -> void:
-	if not _ui_control_mode_active or _gesture_grabs.has(pointer_id):
+func _try_start_gesture_resize() -> void:
+	if _gesture_resize_is_active() or _crumple_is_active() or not _selected_surface_id.is_empty():
+		return
+	if not _gesture_grabs.has(GESTURE_POINTER_PRIMARY) or not bool(_gesture_pointer_pinched.get(GESTURE_POINTER_PRIMARY, false)):
+		return
+	var primary_grab: Dictionary = _gesture_grabs.get(GESTURE_POINTER_PRIMARY, {})
+	var grabbed_window = _window_for_surface_id(str(primary_grab.get("surface_id", "")))
+	if not is_instance_valid(grabbed_window) or not grabbed_window.has_capability(MerlinWindowConstantsScript.CAPABILITY_GESTURE_RESIZE):
+		return
+	if not _gesture_pointer_positions.has(GESTURE_POINTER_PRIMARY) or not _gesture_pointer_positions.has(GESTURE_POINTER_SECONDARY):
+		return
+	if not bool(_gesture_pointer_pinched.get(GESTURE_POINTER_SECONDARY, false)):
 		return
 
-	var hovered_surface := ""
-	if _gesture_pointer_positions.has(pointer_id) and _is_gesture_over_chatlog_header(_gesture_pointer_positions[pointer_id]):
-		hovered_surface = "chatlog"
-	if _gesture_hover_surface_id != hovered_surface:
-		_gesture_hover_surface_id = hovered_surface
+	var pointer_a := GESTURE_POINTER_PRIMARY
+	var pointer_b := GESTURE_POINTER_SECONDARY
+	var position_a: Vector2 = _gesture_pointer_positions[pointer_a]
+	var position_b: Vector2 = _gesture_pointer_positions[pointer_b]
+	var start_distance := position_a.distance_to(position_b)
+	if start_distance < GESTURE_MIN_RESIZE_START_DISTANCE_PX:
+		return
+	var start_delta := position_b - position_a
+	var resize_axes := _gesture_resize_axes_for_delta(start_delta)
+	if resize_axes.is_empty():
+		return
+
+	_gesture_resize_state = {
+		"surface_id": grabbed_window.window_type,
+		"pointer_a": pointer_a,
+		"pointer_b": pointer_b,
+		"start_a": position_a,
+		"start_b": position_b,
+		"start_delta": start_delta,
+		"start_distance": start_distance,
+		"start_midpoint": (position_a + position_b) * 0.5,
+		"start_rect": grabbed_window.get_window_rect(),
+		"resize_axes": resize_axes
+	}
+	_apply_chatlog_gesture_state()
+
+
+func _gesture_resize_is_active() -> bool:
+	return not _gesture_resize_state.is_empty()
+
+
+func _gesture_resize_uses_pointer(pointer_id: String) -> bool:
+	if not _gesture_resize_is_active():
+		return false
+	return str(_gesture_resize_state.get("pointer_a", "")) == pointer_id or str(_gesture_resize_state.get("pointer_b", "")) == pointer_id
+
+
+func _gesture_resize_axes_for_delta(start_delta: Vector2) -> String:
+	var abs_dx := absf(start_delta.x)
+	var abs_dy := absf(start_delta.y)
+	if abs_dx < GESTURE_MIN_RESIZE_AXIS_DISTANCE_PX and abs_dy < GESTURE_MIN_RESIZE_AXIS_DISTANCE_PX:
+		return ""
+
+	if abs_dx >= GESTURE_MIN_RESIZE_AXIS_DISTANCE_PX and abs_dy >= GESTURE_MIN_RESIZE_AXIS_DISTANCE_PX:
+		var smaller_axis := minf(abs_dx, abs_dy)
+		var larger_axis := maxf(abs_dx, abs_dy)
+		if larger_axis > 0.0 and smaller_axis / larger_axis >= GESTURE_DIAGONAL_RESIZE_RATIO:
+			return GESTURE_RESIZE_AXIS_BOTH
+
+	if abs_dx >= abs_dy and abs_dx >= GESTURE_MIN_RESIZE_AXIS_DISTANCE_PX:
+		return GESTURE_RESIZE_AXIS_WIDTH
+	if abs_dy >= GESTURE_MIN_RESIZE_AXIS_DISTANCE_PX:
+		return GESTURE_RESIZE_AXIS_HEIGHT
+	return ""
+
+
+func _update_gesture_resize() -> void:
+	if not _gesture_resize_is_active():
+		return
+	var target_window = _window_for_surface_id(str(_gesture_resize_state.get("surface_id", "")))
+	if not is_instance_valid(target_window):
+		return
+
+	var pointer_a := str(_gesture_resize_state.get("pointer_a", ""))
+	var pointer_b := str(_gesture_resize_state.get("pointer_b", ""))
+	if not _gesture_pointer_positions.has(pointer_a) or not _gesture_pointer_positions.has(pointer_b):
+		return
+
+	var position_a: Vector2 = _gesture_pointer_positions[pointer_a]
+	var position_b: Vector2 = _gesture_pointer_positions[pointer_b]
+	var start_midpoint: Vector2 = _gesture_resize_state.get("start_midpoint", (position_a + position_b) * 0.5)
+	var start_rect: Rect2 = _gesture_resize_state.get("start_rect", target_window.get_window_rect())
+	var start_delta: Vector2 = _gesture_resize_state.get("start_delta", position_b - position_a)
+	var resize_axes := str(_gesture_resize_state.get("resize_axes", GESTURE_RESIZE_AXIS_BOTH))
+	var current_delta := position_b - position_a
+	var current_midpoint := (position_a + position_b) * 0.5
+	var width_scale := 1.0
+	var height_scale := 1.0
+	if resize_axes == GESTURE_RESIZE_AXIS_WIDTH or resize_axes == GESTURE_RESIZE_AXIS_BOTH:
+		var start_dx := maxf(absf(start_delta.x), GESTURE_MIN_RESIZE_AXIS_DISTANCE_PX)
+		width_scale = absf(current_delta.x) / start_dx
+	if resize_axes == GESTURE_RESIZE_AXIS_HEIGHT or resize_axes == GESTURE_RESIZE_AXIS_BOTH:
+		var start_dy := maxf(absf(start_delta.y), GESTURE_MIN_RESIZE_AXIS_DISTANCE_PX)
+		height_scale = absf(current_delta.y) / start_dy
+	_set_gesture_cursor_size_multiplier(clampf(maxf(width_scale, height_scale), 0.75, 1.8))
+	var target_size := Vector2(
+		clampf(start_rect.size.x * width_scale, CHATLOG_MIN_WIDTH, CHATLOG_MAX_WIDTH),
+		clampf(start_rect.size.y * height_scale, CHATLOG_MIN_HEIGHT, CHATLOG_MAX_HEIGHT)
+	)
+	var start_center := start_rect.position + start_rect.size * 0.5
+	var target_center := start_center + (current_midpoint - start_midpoint)
+	var target_position := target_center - target_size * 0.5
+
+	target_window.set_window_rect(Rect2(
+		target_window.position.lerp(target_position, GESTURE_RESIZE_SMOOTHING),
+		target_window.size.lerp(target_size, GESTURE_RESIZE_SMOOTHING)
+	))
+
+
+func _finish_gesture_resize(released_pointer_id: String) -> void:
+	if not _gesture_resize_is_active():
+		return
+
+	var pointer_a := str(_gesture_resize_state.get("pointer_a", ""))
+	var resized_window = _window_for_surface_id(str(_gesture_resize_state.get("surface_id", MerlinWindowConstantsScript.WINDOW_TYPE_CHATLOG)))
+	_gesture_resize_state.clear()
+	_set_gesture_cursor_size_multiplier(1.0)
+
+	if released_pointer_id == pointer_a or released_pointer_id == GESTURE_POINTER_PRIMARY:
+		_gesture_grabs.erase(GESTURE_POINTER_PRIMARY)
+		_set_gesture_cursor_pinched(GESTURE_POINTER_PRIMARY, false)
+		_apply_chatlog_gesture_state()
+		return
+
+	if not _gesture_pointer_pinched.has(GESTURE_POINTER_PRIMARY) or not _gesture_pointer_positions.has(GESTURE_POINTER_PRIMARY):
+		_apply_chatlog_gesture_state()
+		return
+
+	if is_instance_valid(resized_window):
+		_gesture_grabs[GESTURE_POINTER_PRIMARY] = {
+			"surface_id": resized_window.window_type,
+			"start_position": _gesture_pointer_positions[GESTURE_POINTER_PRIMARY],
+			"panel_start_position": resized_window.position
+		}
+	_apply_chatlog_gesture_state()
+
+
+func _update_selected_ball_forming() -> void:
+	if not _ui_control_mode_active or _selected_surface_id.is_empty():
+		return
+	if bool(_gesture_pointer_pinched.get(GESTURE_POINTER_PRIMARY, false)) or bool(_gesture_pointer_pinched.get(GESTURE_POINTER_SECONDARY, false)):
+		return
+	if not _both_ball_form_hands_are_fresh():
+		if _crumple_is_active() and not bool(_crumple_state.get("ball_formed", false)):
+			_cancel_crumple(true)
+		return
+	if _gesture_resize_is_active() or _gesture_grabs.has(GESTURE_POINTER_PRIMARY):
+		_release_all_gesture_grabs()
+	if _crumple_is_active():
+		_update_crumple()
+	else:
+		_try_start_crumple_candidate()
+
+
+func _try_start_crumple_candidate() -> void:
+	if _crumple_is_active() or _selected_surface_id.is_empty():
+		return
+	if not _gesture_pointer_positions.has(GESTURE_POINTER_PRIMARY) or not _gesture_pointer_positions.has(GESTURE_POINTER_SECONDARY):
+		return
+	if not _both_ball_form_hands_are_fresh():
+		return
+	var selected_window = _window_for_surface_id(_selected_surface_id)
+	if not _is_gesture_dismissible_window(selected_window):
+		return
+	var target_rect: Rect2 = selected_window.get_global_rect().grow(BALL_FORM_TARGET_PADDING_PX)
+	var primary_position: Vector2 = _gesture_pointer_positions[GESTURE_POINTER_PRIMARY]
+	var secondary_position: Vector2 = _gesture_pointer_positions[GESTURE_POINTER_SECONDARY]
+	if not target_rect.has_point(primary_position) or not target_rect.has_point(secondary_position):
+		return
+	var initial_distance: float = maxf(primary_position.distance_to(secondary_position), GESTURE_MIN_RESIZE_START_DISTANCE_PX)
+	var midpoint: Vector2 = (primary_position + secondary_position) * 0.5
+	_crumple_state = {
+		"surface_id": _selected_surface_id,
+		"pointer_a": GESTURE_POINTER_PRIMARY,
+		"pointer_b": GESTURE_POINTER_SECONDARY,
+		"start_usec": Time.get_ticks_usec(),
+		"formed_usec": 0,
+		"initial_distance": initial_distance,
+		"min_distance": initial_distance,
+		"accumulated_motion": 0.0,
+		"orbit_motion": 0.0,
+		"confidence": 0.0,
+		"ball_formed": false,
+		"last_a": primary_position,
+		"last_b": secondary_position,
+		"last_midpoint": midpoint,
+		"last_angle": (secondary_position - primary_position).angle(),
+		"original_rect": selected_window.get_window_rect(),
+		"original_scale": selected_window.scale,
+		"original_rotation": selected_window.rotation,
+		"original_modulate": selected_window.modulate
+	}
+	selected_window.pivot_offset = selected_window.size * 0.5
+	_create_crumple_proxy(selected_window)
+	selected_window.modulate = Color(1.0, 1.0, 1.0, 0.0)
+	_apply_chatlog_gesture_state()
+
+
+func _crumple_is_active() -> bool:
+	return not _crumple_state.is_empty()
+
+
+func _crumple_uses_pointer(pointer_id: String) -> bool:
+	if not _crumple_is_active():
+		return false
+	return str(_crumple_state.get("pointer_a", "")) == pointer_id or str(_crumple_state.get("pointer_b", "")) == pointer_id
+
+
+func _update_crumple() -> void:
+	if not _crumple_is_active():
+		return
+	var target_window = _window_for_surface_id(str(_crumple_state.get("surface_id", "")))
+	if not is_instance_valid(target_window):
+		_cancel_crumple(false)
+		return
+	var pointer_a: String = str(_crumple_state.get("pointer_a", ""))
+	var pointer_b: String = str(_crumple_state.get("pointer_b", ""))
+	var ball_formed: bool = bool(_crumple_state.get("ball_formed", false))
+	if not ball_formed and not _both_ball_form_hands_are_fresh():
+		_cancel_crumple(true)
+		return
+	if ball_formed:
+		_update_formed_crumple_ball(target_window, pointer_a, pointer_b)
+		return
+	if not _gesture_pointer_positions.has(pointer_a) or not _gesture_pointer_positions.has(pointer_b):
+		_cancel_crumple(true)
+		return
+	var position_a: Vector2 = _gesture_pointer_positions[pointer_a]
+	var position_b: Vector2 = _gesture_pointer_positions[pointer_b]
+
+	var now_usec: int = Time.get_ticks_usec()
+	var start_usec: int = int(_crumple_state.get("start_usec", now_usec))
+	var elapsed_ms: float = float(now_usec - start_usec) / 1000.0
+	var original_rect: Rect2 = _crumple_state.get("original_rect", target_window.get_window_rect())
+	var target_rect: Rect2 = original_rect.grow(BALL_FORM_TARGET_PADDING_PX * 1.4)
+	if not ball_formed and (not target_rect.has_point(position_a) or not target_rect.has_point(position_b)):
+		_cancel_crumple(true)
+		return
+
+	var last_a: Vector2 = _crumple_state.get("last_a", position_a)
+	var last_b: Vector2 = _crumple_state.get("last_b", position_b)
+	var current_distance: float = position_a.distance_to(position_b)
+	var initial_distance: float = maxf(float(_crumple_state.get("initial_distance", current_distance)), 1.0)
+	var min_distance: float = minf(float(_crumple_state.get("min_distance", initial_distance)), current_distance)
+	var move_a: float = position_a.distance_to(last_a)
+	var move_b: float = position_b.distance_to(last_b)
+	var accumulated_motion: float = float(_crumple_state.get("accumulated_motion", 0.0)) + move_a + move_b
+	var current_angle: float = (position_b - position_a).angle()
+	var last_angle: float = float(_crumple_state.get("last_angle", current_angle))
+	var angle_delta: float = absf(wrapf(current_angle - last_angle, -PI, PI))
+	var orbit_motion: float = float(_crumple_state.get("orbit_motion", 0.0)) + angle_delta
+	var compact_ratio: float = clampf(min_distance / initial_distance, 0.35, 1.0)
+	var motion_score: float = clampf(accumulated_motion / BALL_FORM_MIN_MOTION_PX, 0.0, 1.0)
+	var compact_score: float = clampf((1.0 - compact_ratio) / (1.0 - BALL_FORM_COMPACT_RATIO), 0.0, 1.0)
+	var orbit_score: float = clampf(orbit_motion / 2.2, 0.0, 1.0)
+	var confidence: float = clampf(motion_score * 0.45 + compact_score * 0.35 + orbit_score * 0.20, 0.0, 1.25)
+	if not ball_formed and elapsed_ms >= BALL_FORM_MIN_DURATION_MS and confidence >= BALL_FORM_MIN_CONFIDENCE:
+		ball_formed = true
+		_crumple_state["ball_formed"] = true
+		_crumple_state["formed_usec"] = now_usec
+
+	_crumple_state["min_distance"] = min_distance
+	_crumple_state["accumulated_motion"] = accumulated_motion
+	_crumple_state["orbit_motion"] = orbit_motion
+	_crumple_state["confidence"] = confidence
+	_crumple_state["last_a"] = position_a
+	_crumple_state["last_b"] = position_b
+	_crumple_state["last_midpoint"] = (position_a + position_b) * 0.5
+	_crumple_state["last_angle"] = current_angle
+
+	target_window.scale = Vector2.ONE
+	target_window.rotation = 0.0
+	target_window.modulate = Color(1.0, 1.0, 1.0, 0.0)
+	if is_instance_valid(_crumple_proxy):
+		_crumple_proxy.set_crumple_progress(clampf(confidence, 0.0, 1.0), ball_formed)
+	var throw_velocity: Vector2 = _rightward_swipe_velocity([GESTURE_POINTER_PRIMARY])
+	_last_throw_velocity = throw_velocity
+	var formed_usec: int = int(_crumple_state.get("formed_usec", 0))
+	var throw_unlocked: bool = ball_formed and formed_usec > 0 and float(now_usec - formed_usec) / 1000.0 >= BALL_FORM_THROW_LOCKOUT_MS
+	if throw_unlocked and throw_velocity != Vector2.ZERO:
+		_commit_crumple_dismiss(throw_velocity)
+		return
+	_apply_chatlog_gesture_state()
+
+
+func _update_formed_crumple_ball(target_window, _pointer_a: String, _pointer_b: String) -> void:
+	target_window.scale = Vector2.ONE
+	target_window.rotation = 0.0
+	target_window.modulate = Color(1.0, 1.0, 1.0, 0.0)
+	if is_instance_valid(_crumple_proxy):
+		_crumple_proxy.set_crumple_progress(1.0, true)
+	if not _gesture_pointer_positions.has(GESTURE_POINTER_PRIMARY):
+		_cancel_crumple(true)
+		return
+	var pointer_position: Vector2 = _gesture_pointer_positions[GESTURE_POINTER_PRIMARY]
+	var desired_proxy_position: Vector2 = pointer_position - (_crumple_proxy.size * 0.5 if is_instance_valid(_crumple_proxy) else Vector2.ZERO)
+	if is_instance_valid(_crumple_proxy):
+		_crumple_proxy.position = desired_proxy_position
+		_crumple_proxy.queue_redraw()
+	var throw_velocity: Vector2 = _rightward_swipe_velocity([GESTURE_POINTER_PRIMARY])
+	_last_throw_velocity = throw_velocity
+	var now_usec: int = Time.get_ticks_usec()
+	var formed_usec: int = int(_crumple_state.get("formed_usec", 0))
+	var throw_unlocked: bool = formed_usec > 0 and float(now_usec - formed_usec) / 1000.0 >= BALL_FORM_THROW_LOCKOUT_MS
+	if throw_unlocked and throw_velocity != Vector2.ZERO:
+		_commit_crumple_dismiss(throw_velocity)
+		return
+	_apply_chatlog_gesture_state()
+
+
+func _update_crumple_timeout() -> void:
+	if not _crumple_is_active():
+		return
+	var elapsed_ms: float = float(Time.get_ticks_usec() - int(_crumple_state.get("start_usec", Time.get_ticks_usec()))) / 1000.0
+	if elapsed_ms > BALL_FORM_CANCEL_TIMEOUT_MS and not bool(_crumple_state.get("ball_formed", false)):
+		_cancel_crumple(true)
+
+
+func _cancel_crumple(keep_selection: bool) -> void:
+	if not _crumple_is_active():
+		return
+	var surface_id := str(_crumple_state.get("surface_id", ""))
+	var target_window = _window_for_surface_id(surface_id)
+	if is_instance_valid(target_window):
+		target_window.scale = _crumple_state.get("original_scale", Vector2.ONE)
+		target_window.rotation = float(_crumple_state.get("original_rotation", 0.0))
+		target_window.modulate = _crumple_state.get("original_modulate", Color.WHITE)
+	if is_instance_valid(_crumple_proxy):
+		_crumple_proxy.queue_free()
+	_crumple_proxy = null
+	_crumple_state.clear()
+	if not keep_selection:
+		_clear_selected_surface()
+	_apply_chatlog_gesture_state()
+
+
+func _commit_crumple_dismiss(throw_velocity: Vector2) -> void:
+	var surface_id := str(_crumple_state.get("surface_id", ""))
+	var target_window = _window_for_surface_id(surface_id)
+	if not _is_gesture_dismissible_window(target_window):
+		_cancel_crumple(true)
+		return
+	_throw_crumple_proxy(target_window, throw_velocity)
+	target_window.dismiss()
+	target_window.scale = _crumple_state.get("original_scale", Vector2.ONE)
+	target_window.rotation = float(_crumple_state.get("original_rotation", 0.0))
+	target_window.modulate = _crumple_state.get("original_modulate", Color.WHITE)
+	_crumple_state.clear()
+	_crumple_proxy = null
+	_clear_selected_surface()
+	_gesture_grabs.clear()
+	_gesture_pending_pinches.clear()
+	_apply_chatlog_gesture_state()
+
+
+func _create_crumple_proxy(source_window) -> void:
+	if not is_instance_valid(source_window):
+		return
+	if is_instance_valid(_crumple_proxy):
+		_crumple_proxy.queue_free()
+	var proxy = CrumpleSheetProxyScript.new()
+	proxy.name = "CrumpleSheetProxy"
+	add_child(proxy)
+	proxy.configure_from_window(source_window)
+	proxy.set_crumple_progress(0.0, false)
+	_crumple_proxy = proxy
+
+
+func _throw_crumple_proxy(source_window, throw_velocity: Vector2) -> void:
+	if not is_instance_valid(_crumple_proxy):
+		_create_crumple_proxy(source_window)
+	if not is_instance_valid(_crumple_proxy):
+		_spawn_crumple_throw_proxy(source_window, throw_velocity)
+		return
+	_crumple_proxy.set_crumple_progress(1.0, true)
+	_crumple_proxy.throw_and_free(
+		throw_velocity,
+		get_viewport_rect().size,
+		THROW_ANIMATION_MIN_MS,
+		THROW_ANIMATION_MAX_MS)
+
+
+func _spawn_crumple_throw_proxy(source_window, throw_velocity: Vector2) -> void:
+	if not is_instance_valid(source_window):
+		return
+	var proxy := PanelContainer.new()
+	proxy.name = "CrumpledWindowProxy"
+	proxy.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var source_rect: Rect2 = source_window.get_global_rect()
+	proxy.position = source_rect.position + source_rect.size * 0.5 - Vector2(42.0, 30.0)
+	proxy.size = Vector2(84.0, 60.0)
+	proxy.pivot_offset = proxy.size * 0.5
+	proxy.z_index = 4095
+	proxy.z_as_relative = false
+	var style := _panel_style(Color(0.012, 0.040, 0.088, 0.86), COLOR_AMBER, 2.0, 8)
+	style.shadow_color = Color(COLOR_AMBER.r, COLOR_AMBER.g, COLOR_AMBER.b, 0.58)
+	style.shadow_size = 24
+	proxy.add_theme_stylebox_override("panel", style)
+	add_child(proxy)
+	var direction := throw_velocity.normalized() if throw_velocity.length() > 0.0 else Vector2(1.0, -0.35).normalized()
+	var viewport_size := get_viewport_rect().size
+	var distance := maxf(viewport_size.x, viewport_size.y) + 260.0
+	var duration_ms := clampf(520000.0 / maxf(throw_velocity.length(), 1.0), THROW_ANIMATION_MIN_MS, THROW_ANIMATION_MAX_MS)
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(proxy, "position", proxy.position + direction * distance, duration_ms / 1000.0).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	tween.tween_property(proxy, "rotation", proxy.rotation + direction.x * 1.35, duration_ms / 1000.0)
+	tween.tween_property(proxy, "modulate:a", 0.0, duration_ms / 1000.0).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	tween.tween_property(proxy, "scale", Vector2(0.45, 0.45), duration_ms / 1000.0)
+	tween.set_parallel(false)
+	tween.tween_callback(proxy.queue_free)
+
+
+func _is_gesture_dismissible_window(window) -> bool:
+	return is_instance_valid(window) and window.visible and window.has_capability(MerlinWindowConstantsScript.CAPABILITY_GESTURE_DISMISS)
+
+
+func _both_ball_form_hands_are_fresh() -> bool:
+	return _pointer_is_fresh(GESTURE_POINTER_PRIMARY, BALL_FORM_TWO_HAND_FRESH_MS) and _pointer_is_fresh(GESTURE_POINTER_SECONDARY, BALL_FORM_TWO_HAND_FRESH_MS)
+
+
+func _pointer_is_fresh(pointer_id: String, max_age_ms: int) -> bool:
+	var history: Array = _gesture_pointer_history.get(pointer_id, [])
+	if history.is_empty():
+		return false
+	var latest: Dictionary = history[history.size() - 1]
+	var age_ms: float = float(Time.get_ticks_usec() - int(latest.get("usec", 0))) / 1000.0
+	return age_ms <= float(max_age_ms)
+
+
+func _record_gesture_pointer_history(pointer_id: String, position: Vector2) -> void:
+	var history: Array = _gesture_pointer_history.get(pointer_id, [])
+	history.append({
+		"usec": Time.get_ticks_usec(),
+		"position": position
+	})
+	var cutoff_usec := Time.get_ticks_usec() - THROW_RIGHT_SWIPE_HISTORY_WINDOW_MS * 1000
+	while history.size() > 0:
+		var first_sample: Dictionary = history[0]
+		if int(first_sample.get("usec", 0)) >= cutoff_usec:
+			break
+		history.remove_at(0)
+	_gesture_pointer_history[pointer_id] = history
+
+
+func _average_pointer_velocity(pointer_ids: Array, window_ms: int) -> Vector2:
+	var total := Vector2.ZERO
+	var count := 0
+	for pointer_id in pointer_ids:
+		var velocity: Vector2 = _pointer_velocity(str(pointer_id), window_ms)
+		if velocity == Vector2.ZERO:
+			continue
+		total += velocity
+		count += 1
+	return total / float(count) if count > 0 else Vector2.ZERO
+
+
+func _strongest_pointer_velocity(pointer_ids: Array, window_ms: int) -> Vector2:
+	var strongest := Vector2.ZERO
+	for pointer_id in pointer_ids:
+		var velocity: Vector2 = _pointer_velocity(str(pointer_id), window_ms)
+		if velocity.length() > strongest.length():
+			strongest = velocity
+	return strongest
+
+
+func _rightward_swipe_velocity(pointer_ids: Array) -> Vector2:
+	var strongest_velocity: Vector2 = Vector2.ZERO
+	for pointer_id in pointer_ids:
+		var candidate: String = str(pointer_id)
+		if not _gesture_pointer_positions.has(candidate):
+			continue
+		var velocity: Vector2 = _pointer_velocity(candidate, THROW_RIGHT_SWIPE_HISTORY_WINDOW_MS)
+		var delta: Vector2 = _pointer_delta(candidate, THROW_RIGHT_SWIPE_HISTORY_WINDOW_MS)
+		if velocity.x < THROW_RIGHT_SWIPE_MIN_X_VELOCITY_PX_PER_SEC:
+			continue
+		if delta.x < THROW_RIGHT_SWIPE_MIN_DISTANCE_PX:
+			continue
+		if absf(delta.y) > maxf(24.0, delta.x * THROW_RIGHT_SWIPE_MAX_VERTICAL_RATIO):
+			continue
+		if velocity.length() > strongest_velocity.length():
+			strongest_velocity = velocity
+	return strongest_velocity
+
+
+func _strongest_available_pointer(pointer_ids: Array, window_ms: int) -> String:
+	var strongest_pointer := ""
+	var strongest_speed := -1.0
+	for pointer_id in pointer_ids:
+		var candidate := str(pointer_id)
+		if not _gesture_pointer_positions.has(candidate):
+			continue
+		var velocity: Vector2 = _pointer_velocity(candidate, window_ms)
+		var speed := velocity.length()
+		if speed > strongest_speed:
+			strongest_pointer = candidate
+			strongest_speed = speed
+	return strongest_pointer
+
+
+func _pointer_velocity(pointer_id: String, window_ms: int) -> Vector2:
+	var history: Array = _gesture_pointer_history.get(pointer_id, [])
+	if history.size() < 2:
+		return Vector2.ZERO
+	var latest: Dictionary = history[history.size() - 1]
+	var latest_usec: int = int(latest.get("usec", Time.get_ticks_usec()))
+	var earliest: Dictionary = history[0]
+	for sample in history:
+		var candidate: Dictionary = sample
+		if latest_usec - int(candidate.get("usec", latest_usec)) <= window_ms * 1000:
+			earliest = candidate
+			break
+	var delta_usec: int = latest_usec - int(earliest.get("usec", latest_usec))
+	if delta_usec < 1:
+		delta_usec = 1
+	var delta_position: Vector2 = latest.get("position", Vector2.ZERO) - earliest.get("position", Vector2.ZERO)
+	return delta_position / (float(delta_usec) / 1000000.0)
+
+
+func _pointer_delta(pointer_id: String, window_ms: int) -> Vector2:
+	var history: Array = _gesture_pointer_history.get(pointer_id, [])
+	if history.size() < 2:
+		return Vector2.ZERO
+	var latest: Dictionary = history[history.size() - 1]
+	var latest_usec: int = int(latest.get("usec", Time.get_ticks_usec()))
+	var earliest: Dictionary = history[0]
+	for sample in history:
+		var candidate: Dictionary = sample
+		if latest_usec - int(candidate.get("usec", latest_usec)) <= window_ms * 1000:
+			earliest = candidate
+			break
+	return latest.get("position", Vector2.ZERO) - earliest.get("position", Vector2.ZERO)
+
+
+func _update_gesture_hover(pointer_id: String) -> void:
+	if pointer_id != GESTURE_POINTER_PRIMARY or not _ui_control_mode_active or _gesture_grabs.has(pointer_id):
+		return
+
+	var hovered_surface := _surface_at_gesture_position(_gesture_pointer_positions[pointer_id]) if _gesture_pointer_positions.has(pointer_id) else ""
+	_gesture_hover_surface_by_pointer[pointer_id] = hovered_surface
+	var combined_hover := _combined_gesture_hover_surface()
+	if _gesture_hover_surface_id != combined_hover:
+		_gesture_hover_surface_id = combined_hover
 		_apply_chatlog_gesture_state()
 
 
-func _is_gesture_over_chatlog_header(position: Vector2) -> bool:
-	if not is_instance_valid(_chatlog_panel) or not _chatlog_panel.visible:
-		return false
-	if not is_instance_valid(_chatlog_drag_handle):
-		return false
-	var header_rect := Rect2(_chatlog_drag_handle.global_position, _chatlog_drag_handle.size)
-	return header_rect.has_point(position)
+func _surface_at_gesture_position(position: Vector2) -> String:
+	if is_instance_valid(_window_manager):
+		var window = _window_manager.get_topmost_window_at(position, MerlinWindowConstantsScript.CAPABILITY_GESTURE_GRAB)
+		if is_instance_valid(window):
+			return window.window_type
+	return ""
 
 
-func _set_gesture_cursor_position(position: Vector2) -> void:
-	if not is_instance_valid(_gesture_cursor):
+func _window_for_surface_id(surface_id: String):
+	if surface_id.is_empty() or not is_instance_valid(_window_manager):
+		return null
+	return _window_manager.get_registered_window(surface_id)
+
+
+func _combined_gesture_hover_surface() -> String:
+	return str(_gesture_hover_surface_by_pointer.get(GESTURE_POINTER_PRIMARY, ""))
+
+
+func _is_gesture_over_chatlog_panel(position: Vector2) -> bool:
+	var window = _window_for_surface_id(MerlinWindowConstantsScript.WINDOW_TYPE_CHATLOG)
+	return is_instance_valid(window) and window.contains_screen_point(position)
+
+
+func _set_gesture_cursor_position(pointer_id: String, position: Vector2) -> void:
+	var cursor := _ensure_gesture_cursor(pointer_id)
+	if not is_instance_valid(cursor):
 		return
-	_gesture_cursor.position = position - Vector2(GESTURE_CURSOR_SIZE, GESTURE_CURSOR_SIZE) * 0.5
+	cursor.position = position - cursor.size * 0.5
+
+
+func _set_gesture_cursor_visible(pointer_id: String, visible: bool) -> void:
+	var cursor := _ensure_gesture_cursor(pointer_id)
+	if is_instance_valid(cursor):
+		cursor.visible = visible
+
+
+func _set_gesture_cursor_pinched(pointer_id: String, pinched: bool) -> void:
+	if not _gesture_visual_pointer_id.is_empty() and pointer_id != _gesture_visual_pointer_id:
+		return
+	var cursor := _ensure_gesture_cursor(pointer_id)
+	if is_instance_valid(cursor):
+		cursor.add_theme_stylebox_override("panel", _gesture_cursor_style(pinched))
+
+
+func _set_gesture_cursor_size_multiplier(multiplier: float) -> void:
+	var cursor := _ensure_gesture_cursor(_gesture_visual_pointer_id if not _gesture_visual_pointer_id.is_empty() else GESTURE_POINTER_PRIMARY)
+	if not is_instance_valid(cursor):
+		return
+	var size := Vector2(GESTURE_CURSOR_SIZE, GESTURE_CURSOR_SIZE) * multiplier
+	cursor.custom_minimum_size = size
+	cursor.size = size
+	if not _gesture_visual_pointer_id.is_empty() and _gesture_pointer_positions.has(_gesture_visual_pointer_id):
+		_set_gesture_cursor_position(_gesture_visual_pointer_id, _gesture_pointer_positions[_gesture_visual_pointer_id])
+
+
+func _set_active_gesture_cursor_pointer(pointer_id: String) -> void:
+	if pointer_id != GESTURE_POINTER_PRIMARY:
+		return
+	_gesture_visual_pointer_id = pointer_id
+	if _gesture_pointer_positions.has(pointer_id):
+		_set_gesture_cursor_position(pointer_id, _gesture_pointer_positions[pointer_id])
+	_set_gesture_cursor_visible(pointer_id, true)
+	_set_gesture_cursor_pinched(pointer_id, bool(_gesture_pointer_pinched.get(pointer_id, false)))
 
 
 func _release_all_gesture_grabs() -> void:
 	_gesture_grabs.clear()
-	_chatlog_dragging = false
-	_chatlog_resizing = false
+	_gesture_resize_state.clear()
+	_set_gesture_cursor_size_multiplier(1.0)
 
 
 func _chatlog_is_gesture_grabbed() -> bool:
+	if _gesture_resize_is_active():
+		return true
 	for grab in _gesture_grabs.values():
-		if grab is Dictionary and str(grab.get("surface_id", "")) == "chatlog":
+		if grab is Dictionary and str(grab.get("surface_id", "")) == MerlinWindowConstantsScript.WINDOW_TYPE_CHATLOG:
 			return true
 	return false
 
 
+func _chatlog_is_gesture_resizing() -> bool:
+	return _gesture_resize_is_active() and str(_gesture_resize_state.get("surface_id", "")) == MerlinWindowConstantsScript.WINDOW_TYPE_CHATLOG
+
+
+func _chatlog_is_selected() -> bool:
+	return _selected_surface_id == MerlinWindowConstantsScript.WINDOW_TYPE_CHATLOG
+
+
+func _chatlog_is_crumpling() -> bool:
+	return _crumple_is_active() and str(_crumple_state.get("surface_id", "")) == MerlinWindowConstantsScript.WINDOW_TYPE_CHATLOG
+
+
 func _apply_chatlog_gesture_state() -> void:
 	if is_instance_valid(_chatlog_panel):
-		_chatlog_panel.add_theme_stylebox_override(
-			"panel",
-			_chatlog_panel_style(_gesture_hover_surface_id == "chatlog", _chatlog_is_gesture_grabbed()))
+		_chatlog_panel.set_gesture_visual_state(
+			_gesture_hover_surface_id == MerlinWindowConstantsScript.WINDOW_TYPE_CHATLOG,
+			_chatlog_is_selected(),
+			_chatlog_is_gesture_grabbed(),
+			_chatlog_is_gesture_resizing(),
+			_chatlog_is_crumpling())
+
+
+func _select_surface(surface_id: String) -> void:
+	var target_window = _window_for_surface_id(surface_id)
+	if not is_instance_valid(target_window):
+		_clear_selected_surface()
+		return
+	_cancel_crumple(true)
+	_release_all_gesture_grabs()
+	_gesture_pending_pinches.clear()
+	_selected_surface_id = target_window.window_type
+	if is_instance_valid(_window_manager):
+		_window_manager.focus_window(target_window)
+	_apply_chatlog_gesture_state()
+
+
+func _clear_selected_surface() -> void:
+	if _selected_surface_id.is_empty():
+		return
+	_selected_surface_id = ""
+	_apply_chatlog_gesture_state()
 
 
 func _show_chatlog_panel() -> void:
 	if not is_instance_valid(_chatlog_panel):
 		_setup_chatlog_panel()
-	_chatlog_z_index += 1
-	_chatlog_panel.z_index = _chatlog_z_index
-	_clamp_chatlog_panel_to_viewport()
-	_chatlog_panel.visible = true
-	_chatlog_panel.grab_focus()
+	if is_instance_valid(_window_manager):
+		_window_manager.show_window(MerlinWindowConstantsScript.WINDOW_TYPE_CHATLOG)
 
 
 func _hide_chatlog_panel() -> void:
-	if is_instance_valid(_chatlog_panel):
-		_chatlog_panel.visible = false
-	_chatlog_dragging = false
-	_chatlog_resizing = false
+	if is_instance_valid(_window_manager):
+		_window_manager.hide_window(MerlinWindowConstantsScript.WINDOW_TYPE_CHATLOG)
 	_release_all_gesture_grabs()
 	_gesture_hover_surface_id = ""
+	_gesture_hover_surface_by_pointer.clear()
+	if _selected_surface_id == MerlinWindowConstantsScript.WINDOW_TYPE_CHATLOG:
+		_clear_selected_surface()
 	_apply_chatlog_gesture_state()
 
 
-func _on_chatlog_header_gui_input(event: InputEvent) -> void:
-	if not is_instance_valid(_chatlog_panel):
-		return
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		if event.pressed:
-			_chatlog_z_index += 1
-			_chatlog_panel.z_index = _chatlog_z_index
-			_chatlog_dragging = true
-			_chatlog_drag_offset = _chatlog_panel.get_global_mouse_position() - _chatlog_panel.position
-			_chatlog_panel.accept_event()
-		else:
-			_chatlog_dragging = false
-			_chatlog_panel.accept_event()
-	elif event is InputEventMouseMotion and _chatlog_dragging:
-		_chatlog_panel.position = _chatlog_panel.get_global_mouse_position() - _chatlog_drag_offset
-		_clamp_chatlog_panel_to_viewport()
-		_chatlog_panel.accept_event()
+func _on_chatlog_header_gui_input(_event: InputEvent) -> void:
+	# Mouse drag now lives inside MerlinWindow.
+	pass
 
 
-func _on_chatlog_resize_gui_input(event: InputEvent) -> void:
-	if not is_instance_valid(_chatlog_panel):
-		return
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		if event.pressed:
-			_chatlog_z_index += 1
-			_chatlog_panel.z_index = _chatlog_z_index
-			_chatlog_resizing = true
-			_chatlog_resize_start_mouse = _chatlog_panel.get_global_mouse_position()
-			_chatlog_resize_start_size = _chatlog_panel.size
-			_chatlog_panel.accept_event()
-		else:
-			_chatlog_resizing = false
-			_chatlog_panel.accept_event()
-	elif event is InputEventMouseMotion and _chatlog_resizing:
-		var delta := _chatlog_panel.get_global_mouse_position() - _chatlog_resize_start_mouse
-		var target_size := _chatlog_resize_start_size + delta
-		_chatlog_panel.size = Vector2(
-			clampf(target_size.x, CHATLOG_MIN_WIDTH, CHATLOG_MAX_WIDTH),
-			clampf(target_size.y, CHATLOG_MIN_HEIGHT, CHATLOG_MAX_HEIGHT)
-		)
-		_clamp_chatlog_panel_to_viewport()
-		_chatlog_panel.accept_event()
+func _on_chatlog_resize_gui_input(_event: InputEvent) -> void:
+	# Mouse resize now lives inside MerlinWindow.
+	pass
 
 
 func _clamp_chatlog_panel_to_viewport() -> void:
 	if not is_instance_valid(_chatlog_panel):
 		return
-	var viewport_size := get_viewport_rect().size
-	var max_position := Vector2(
-		maxf(0.0, viewport_size.x - 80.0),
-		maxf(0.0, viewport_size.y - 60.0)
-	)
-	_chatlog_panel.position = Vector2(
-		clampf(_chatlog_panel.position.x, 0.0, max_position.x),
-		clampf(_chatlog_panel.position.y, 0.0, max_position.y)
-	)
+	_chatlog_panel.clamp_to_viewport()
 
 
 func _append_chatlog_message(role: String, text: String, source: String = "", timestamp_utc: String = "") -> void:
-	var clean_text := text.strip_edges()
-	if clean_text.is_empty():
+	if is_instance_valid(_chatlog_content):
+		_chatlog_content.append_message(role, text, source, timestamp_utc)
 		return
-
-	var entry := {
-		"role": role,
-		"text": clean_text,
-		"source": source,
-		"timestampUtc": timestamp_utc,
-	}
-	_chatlog_messages.append(entry)
-	while _chatlog_messages.size() > CHATLOG_MAX_MESSAGES:
-		_chatlog_messages.pop_front()
-		if is_instance_valid(_chatlog_message_list) and _chatlog_message_list.get_child_count() > 0:
-			var oldest := _chatlog_message_list.get_child(0)
-			_chatlog_message_list.remove_child(oldest)
-			oldest.queue_free()
-
-	if not is_instance_valid(_chatlog_message_list):
-		return
-
-	var should_scroll := _chatlog_should_auto_scroll()
-	_chatlog_message_list.add_child(_create_chatlog_entry(entry))
-	if should_scroll:
-		call_deferred("_scroll_chatlog_to_bottom")
-
-
-func _create_chatlog_entry(entry: Dictionary) -> Control:
-	var role := str(entry.get("role", "assistant")).to_lower()
-	var text := str(entry.get("text", ""))
-	var author := "User" if role == "user" else "Merlin"
-	var color := COLOR_WHITE if role == "user" else COLOR_CYAN
-	var timestamp := _format_chatlog_timestamp(str(entry.get("timestampUtc", "")))
-
-	var container := VBoxContainer.new()
-	container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	container.focus_mode = Control.FOCUS_NONE
-	container.add_theme_constant_override("separation", 4)
-
-	var heading := Label.new()
-	heading.text = "[%s] %s" % [timestamp, author] if not timestamp.is_empty() else author
-	heading.add_theme_color_override("font_color", color)
-	heading.add_theme_font_size_override("font_size", 12)
-	container.add_child(heading)
-
-	var body := _create_selectable_text(text, COLOR_WHITE, 13)
-	container.add_child(body)
-	return container
-
-
-func _format_chatlog_timestamp(timestamp_utc: String) -> String:
-	if timestamp_utc.is_empty():
-		var now := Time.get_datetime_dict_from_system()
-		return "%02d:%02d" % [int(now.get("hour", 0)), int(now.get("minute", 0))]
-	var parsed := Time.get_datetime_dict_from_datetime_string(timestamp_utc, false)
-	if parsed.is_empty():
-		return ""
-	return "%02d:%02d" % [int(parsed.get("hour", 0)), int(parsed.get("minute", 0))]
-
-
-func _chatlog_should_auto_scroll() -> bool:
-	if not is_instance_valid(_chatlog_message_scroll):
-		return false
-	var bar := _chatlog_message_scroll.get_v_scroll_bar()
-	return bar.max_value - _chatlog_message_scroll.scroll_vertical <= CHATLOG_BOTTOM_SCROLL_THRESHOLD
-
-
-func _scroll_chatlog_to_bottom() -> void:
-	if is_instance_valid(_chatlog_message_scroll):
-		_chatlog_message_scroll.scroll_vertical = int(_chatlog_message_scroll.get_v_scroll_bar().max_value)
-
-
-func _chatlog_panel_style(gesture_hovered: bool = false, gesture_grabbed: bool = false) -> StyleBoxFlat:
-	var border := COLOR_AMBER if gesture_grabbed else Color(COLOR_CYAN.r, COLOR_CYAN.g, COLOR_CYAN.b, 0.92 if gesture_hovered else 0.72)
-	var shadow := COLOR_AMBER if gesture_grabbed else COLOR_CYAN
-	var style := _panel_style(Color(0.002, 0.015, 0.046, 0.92), border, 1.0 if not gesture_hovered else 1.5, 8)
-	style.shadow_color = Color(shadow.r, shadow.g, shadow.b, 0.38 if gesture_hovered or gesture_grabbed else 0.22)
-	style.shadow_size = 22 if gesture_hovered or gesture_grabbed else 16
-	style.shadow_offset = Vector2(0, 0)
-	return style
+	_setup_chatlog_panel()
+	if is_instance_valid(_chatlog_content):
+		_chatlog_content.append_message(role, text, source, timestamp_utc)
 
 
 func _gesture_cursor_style(pinched: bool) -> StyleBoxFlat:
@@ -3548,6 +4155,11 @@ func _set_merlin_state(state: int) -> void:
 	_merlin_state = state
 	activity_label.text = _activity_text_for_state(state)
 	match state:
+		MerlinState.SLEEPING:
+			if core_orb.has_method("set_sleeping"):
+				core_orb.set_sleeping()
+			else:
+				core_orb.set_idle()
 		MerlinState.THINKING:
 			core_orb.set_thinking()
 		MerlinState.LISTENING:
@@ -3567,6 +4179,8 @@ func _set_merlin_state(state: int) -> void:
 
 func _activity_text_for_state(state: int) -> String:
 	match state:
+		MerlinState.SLEEPING:
+			return "Merlin is sleeping"
 		MerlinState.THINKING:
 			return "Merlin is thinking"
 		MerlinState.LISTENING:

@@ -31,6 +31,11 @@ func set_idle() -> void:
 	state_changed.emit("idle")
 
 
+func set_sleeping() -> void:
+	update_visual_state({ "mode": "sleeping", "energy": 0.0, "thinking_intensity": 0.0, "tool_intensity": 0.0, "speech_energy": 0.0 })
+	state_changed.emit("sleeping")
+
+
 func set_thinking() -> void:
 	update_visual_state({ "mode": "thinking", "energy": 0.55, "thinking_intensity": 1.0 })
 	state_changed.emit("thinking")

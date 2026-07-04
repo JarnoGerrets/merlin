@@ -32,6 +32,7 @@ public static class SpokenCommandNormalizer
     private static readonly HashSet<string> CommandStarters = new(StringComparer.Ordinal)
     {
         "cancel",
+        "clean",
         "close",
         "disable",
         "done",

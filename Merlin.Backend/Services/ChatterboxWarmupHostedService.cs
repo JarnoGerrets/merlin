@@ -11,6 +11,7 @@ public sealed class ChatterboxWarmupHostedService : IHostedService
     private readonly IWebHostEnvironment _environment;
     private readonly ChatterboxTtsProvider _ttsProvider;
     private readonly ChatterboxWorkerClient _workerClient;
+    private readonly WakeResponsePhraseLibrary _wakeResponsePhrases;
     private readonly ILogger<ChatterboxWarmupHostedService> _logger;
     private readonly TtsOptions _options;
 
@@ -18,12 +19,14 @@ public sealed class ChatterboxWarmupHostedService : IHostedService
         IWebHostEnvironment environment,
         ChatterboxTtsProvider ttsProvider,
         ChatterboxWorkerClient workerClient,
+        WakeResponsePhraseLibrary wakeResponsePhrases,
         IOptions<TtsOptions> options,
         ILogger<ChatterboxWarmupHostedService> logger)
     {
         _environment = environment;
         _ttsProvider = ttsProvider;
         _workerClient = workerClient;
+        _wakeResponsePhrases = wakeResponsePhrases;
         _options = options.Value;
         _logger = logger;
     }
@@ -106,9 +109,9 @@ public sealed class ChatterboxWarmupHostedService : IHostedService
 
         _logger.LogInformation(
             "Chatterbox common phrase precache started. PhraseCount: {PhraseCount}.",
-            ToolSpeechTemplates.CommonPhrases.Count);
+            ToolSpeechTemplates.CommonPhrases.Count + _wakeResponsePhrases.CommonPhrases.Count);
 
-        foreach (var phrase in ToolSpeechTemplates.CommonPhrases)
+        foreach (var phrase in ToolSpeechTemplates.CommonPhrases.Concat(_wakeResponsePhrases.CommonPhrases))
         {
             cancellationToken.ThrowIfCancellationRequested();
             try

@@ -42,6 +42,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     private readonly ISpeechPresenceDetector? _speechPresenceDetector;
     private readonly ISpeechPresenceDecisionLogSink? _speechPresenceDecisionLogSink;
     private readonly IFloorYieldController? _floorYieldController;
+    private readonly MerlinAwakeStateService _merlinAwakeState;
     private readonly object _syncRoot = new();
     private long _analysisFrameSequence;
     private BargeInSpeechContext? _activeContext;
@@ -89,6 +90,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         ILogger<BargeInCoordinator> logger,
         IOptionsMonitor<BargeInOptions> options,
         IOptionsMonitor<VoiceInputOptions> voiceInputOptions,
+        MerlinAwakeStateService merlinAwakeState,
         ILiveUtteranceGate? liveUtteranceGate = null,
         IBargeInDebugSnapshotService? debugSnapshots = null,
         ISpeechPresenceDetector? speechPresenceDetector = null,
@@ -116,6 +118,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         _logger = logger;
         _options = options;
         _voiceInputOptions = voiceInputOptions;
+        _merlinAwakeState = merlinAwakeState;
         _liveInterruptionIntegrationService = liveInterruptionIntegrationService;
         _liveUtteranceGate = liveUtteranceGate;
         _debugSnapshots = debugSnapshots;
@@ -607,18 +610,24 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                 vad.Confidence);
         }
 
-        await EmitAssistantUiStateImmediateAsync(
-            AssistantUiStateEvent.Create(
-                "listening",
-                IsLiveMonitorContext(context)
-                    ? "backend_idle_voice_capture_started"
-                    : "barge_in_capture_started",
-                context.CorrelationId,
-                context.AssistantTurnId,
-                audiblePlaybackActive: false,
-                interruptionState: "capturing"),
-            nameof(BargeInCoordinator),
-            cancellationToken);
+        var isSleepingIdleCapture = IsLiveMonitorContext(context)
+            && !_liveTurnService.TryGetCurrentActiveTurn(out _)
+            && !_merlinAwakeState.IsAwake;
+        if (!isSleepingIdleCapture)
+        {
+            await EmitAssistantUiStateImmediateAsync(
+                AssistantUiStateEvent.Create(
+                    "listening",
+                    IsLiveMonitorContext(context)
+                        ? "backend_idle_voice_capture_started"
+                        : "barge_in_capture_started",
+                    context.CorrelationId,
+                    context.AssistantTurnId,
+                    audiblePlaybackActive: false,
+                    interruptionState: "capturing"),
+                nameof(BargeInCoordinator),
+                cancellationToken);
+        }
         _diagnostics.StateChanged(
             context,
             BargeInState.SoftPausedForUserSpeech,
@@ -1968,6 +1977,55 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
 
         var normalized = InterruptionClassifier.Normalize(stt.Transcript);
         var utterance = CreateUserUtterance(context, stt.Transcript, vad.Confidence, timeline.CaptureId);
+        if (IsLiveMonitorContext(context) && !utterance.AssistantWasSpeaking)
+        {
+            var awakeResult = _merlinAwakeState.EvaluateVoiceActivity(
+                utterance.Text,
+                utterance.CorrelationId,
+                utterance.ActiveTurnId);
+            if (awakeResult.IsWakePhrase || awakeResult.IsSleepPhrase || !awakeResult.ShouldAllow)
+            {
+                var awakeRouteDecision = new UtteranceRouteDecision
+                {
+                    Kind = UtteranceRouteKind.BackgroundOrNoOp,
+                    Confidence = 1.0,
+                    Reason = awakeResult.Reason,
+                    Action = awakeResult.IsWakePhrase
+                        ? "wake_phrase_accepted"
+                        : awakeResult.IsSleepPhrase && awakeResult.ShouldAllow
+                            ? "sleep_phrase_accepted"
+                            : "merlin_sleeping"
+                };
+                timeline.MarkRouted(
+                    utterance,
+                    null,
+                    awakeRouteDecision);
+                LogVoiceCaptureRouted(
+                    timeline,
+                    utterance,
+                    null,
+                    awakeRouteDecision);
+                _logger.LogInformation(
+                    "BackendIdleVoiceAwakeGateHandled. CaptureId: {CaptureId}. Text: {Text}. Decision: {Decision}. Reason: {Reason}.",
+                    utterance.CaptureId,
+                    utterance.Text,
+                    awakeResult.Decision,
+                    awakeResult.Reason);
+                if (awakeResult.IsWakePhrase || (awakeResult.IsSleepPhrase && awakeResult.ShouldAllow))
+                {
+                    await RaiseBackendVoiceRequestCapturedAsync(context, utterance, cancellationToken);
+                }
+
+                timeline.ToolResult = awakeResult.IsWakePhrase
+                    ? "wake_phrase_accepted"
+                    : awakeResult.IsSleepPhrase && awakeResult.ShouldAllow
+                        ? "sleep_phrase_accepted"
+                        : "ignored_while_sleeping";
+                LogVoiceCaptureTimelineCompleted(timeline);
+                _vadService.Reset();
+                return;
+            }
+        }
         _diagnostics.StateChanged(
             context,
             BargeInState.ClassifyingInterruption,
@@ -1996,6 +2054,12 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         var routeDecision = gateResult is not null && _liveUtteranceGate is not null
             ? _liveUtteranceGate.ToRouteDecision(utterance, gateResult)
             : RouteUtterance(utterance);
+        if (IsLiveMonitorContext(context)
+            && routeDecision.Kind is not UtteranceRouteKind.BackgroundOrNoOp
+            && routeDecision.Kind is not UtteranceRouteKind.Unknown)
+        {
+            _merlinAwakeState?.TouchActivity();
+        }
         timeline.MarkRouted(utterance, gateResult, routeDecision);
         LogVoiceCaptureRouted(timeline, utterance, gateResult, routeDecision);
         _logger.LogInformation(

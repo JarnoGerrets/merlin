@@ -9,6 +9,7 @@ using Merlin.Backend.Services.BargeIn;
 using Merlin.Backend.Services.InterruptionIntelligence;
 using Merlin.Backend.Services.LiveUtterance;
 using Merlin.Backend.Services.SpeechPresence;
+using Merlin.Backend.Services.Vision;
 using Microsoft.Extensions.Options;
 
 namespace Merlin.Backend.WebSocket;
@@ -32,6 +33,9 @@ public sealed class WebSocketHandler
     private readonly VoiceStreamSessionService _voiceStreamSessionService;
     private readonly ISpeechPresenceDecisionLogSink? _speechPresenceDecisionLogSink;
     private readonly AssistantUiStateBroadcaster? _assistantUiStateBroadcaster;
+    private readonly VisionGestureEventRouter? _visionGestureEventRouter;
+    private readonly MerlinAwakeStateService _merlinAwakeState;
+    private readonly WakeResponsePhraseLibrary _wakeResponsePhrases;
     private readonly ConcurrentDictionary<string, AssistantRequest> _recentRequestsByCorrelationId = new(StringComparer.OrdinalIgnoreCase);
 
     public WebSocketHandler(
@@ -50,7 +54,10 @@ public sealed class WebSocketHandler
         IOptionsMonitor<ChatLogOptions>? chatLogOptions = null,
         ISpeechPresenceDecisionLogSink? speechPresenceDecisionLogSink = null,
         ILiveSpokenAnswerTrackingService? spokenAnswerTracking = null,
-        AssistantUiStateBroadcaster? assistantUiStateBroadcaster = null)
+        AssistantUiStateBroadcaster? assistantUiStateBroadcaster = null,
+        VisionGestureEventRouter? visionGestureEventRouter = null,
+        MerlinAwakeStateService? merlinAwakeState = null,
+        WakeResponsePhraseLibrary? wakeResponsePhrases = null)
     {
         _commandRouter = commandRouter;
         _bargeInCoordinator = bargeInCoordinator;
@@ -68,6 +75,9 @@ public sealed class WebSocketHandler
         _bargeInDebugSnapshots = bargeInDebugSnapshots;
         _speechPresenceDecisionLogSink = speechPresenceDecisionLogSink;
         _assistantUiStateBroadcaster = assistantUiStateBroadcaster;
+        _visionGestureEventRouter = visionGestureEventRouter;
+        _merlinAwakeState = merlinAwakeState ?? new MerlinAwakeStateService();
+        _wakeResponsePhrases = wakeResponsePhrases ?? new WakeResponsePhraseLibrary();
     }
 
     public async Task HandleAsync(HttpContext context)
@@ -88,6 +98,7 @@ public sealed class WebSocketHandler
         Func<LiveUserUtteranceRouted, CancellationToken, Task>? liveUtteranceHandler = null;
         Func<BargeInDebugSnapshot, CancellationToken, Task>? bargeInDebugHandler = null;
         Func<AssistantUiStateEvent, string, CancellationToken, Task>? assistantUiStateHandler = null;
+        Func<VisionGestureEvent, CancellationToken, Task>? visionGestureHandler = null;
         _runtimeStateService.IncrementActiveWebSocketConnections();
         _logger.LogInformation(
             "WebSocket connection opened. ActiveConnections: {ActiveConnections}",
@@ -143,6 +154,16 @@ public sealed class WebSocketHandler
                 _assistantUiStateBroadcaster.StateChanged += assistantUiStateHandler;
             }
 
+            if (_visionGestureEventRouter is not null)
+            {
+                visionGestureHandler = (gestureEvent, token) => SendVisionGestureEventAsync(
+                    webSocket,
+                    sendGate,
+                    gestureEvent,
+                    token);
+                _visionGestureEventRouter.GestureEventForwarded += visionGestureHandler;
+            }
+
             await ReceiveLoopAsync(
                 webSocket,
                 sendGate,
@@ -179,6 +200,11 @@ public sealed class WebSocketHandler
             if (_assistantUiStateBroadcaster is not null && assistantUiStateHandler is not null)
             {
                 _assistantUiStateBroadcaster.StateChanged -= assistantUiStateHandler;
+            }
+
+            if (_visionGestureEventRouter is not null && visionGestureHandler is not null)
+            {
+                _visionGestureEventRouter.GestureEventForwarded -= visionGestureHandler;
             }
 
             devVisualFlowCancellation?.Cancel();
@@ -797,6 +823,42 @@ public sealed class WebSocketHandler
             cancellationToken);
     }
 
+    private Task SendVisionGestureEventAsync(
+        System.Net.WebSockets.WebSocket webSocket,
+        SemaphoreSlim sendGate,
+        VisionGestureEvent gestureEvent,
+        CancellationToken cancellationToken)
+    {
+        var eventName = gestureEvent.Type switch
+        {
+            "gesture.pointer.move" => "GESTURE_POINTER_MOVE",
+            "gesture.pinch.start" => "GESTURE_PINCH_START",
+            "gesture.pinch.move" => "GESTURE_PINCH_MOVE",
+            "gesture.pinch.end" => "GESTURE_PINCH_END",
+            _ => null
+        };
+
+        if (eventName is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return SendJsonAsync(
+            webSocket,
+            sendGate,
+            JsonSerializer.Serialize(new
+            {
+                type = eventName,
+                @event = eventName,
+                pointerId = gestureEvent.PointerId,
+                x = gestureEvent.X,
+                y = gestureEvent.Y,
+                confidence = gestureEvent.Confidence,
+                source = gestureEvent.Source
+            }, JsonSerializerOptions),
+            cancellationToken);
+    }
+
     private async Task QueueSpeechIfNeededAsync(
         System.Net.WebSockets.WebSocket webSocket,
         SemaphoreSlim sendGate,
@@ -869,7 +931,8 @@ public sealed class WebSocketHandler
                 (visualEvent, token) => SendVisualEventAsync(webSocket, sendGate, visualEvent, token),
                 response.SpeechCacheKey,
                 response.SpeechCacheKey is not null ? response.IsReplayableSpeech : null,
-                cancellationToken);
+                cancellationToken,
+                DetermineSpeechPlaybackItemType(response));
             return;
         }
 
@@ -884,6 +947,13 @@ public sealed class WebSocketHandler
             response.ToolName,
             speechDecision.ShouldSpeak,
             speechDecision.ShouldQueue);
+    }
+
+    private static SpeechPlaybackItemType DetermineSpeechPlaybackItemType(AssistantResponse response)
+    {
+        return string.Equals(response.ResponseType, "sleep_acknowledgement", StringComparison.OrdinalIgnoreCase)
+            ? SpeechPlaybackItemType.SleepAcknowledgement
+            : SpeechPlaybackItemType.FinalAnswer;
     }
 
     internal static bool ShouldAppendAssistantChatLog(
@@ -1329,7 +1399,57 @@ public sealed class WebSocketHandler
 
     private AssistantResponse? EvaluateVoiceRequestGate(AssistantRequest request, string correlationId)
     {
-        if (_liveUtteranceGate is null || !IsVoiceRequest(request))
+        if (!IsVoiceRequest(request))
+        {
+            return null;
+        }
+
+        var awakeResult = _merlinAwakeState?.EvaluateVoiceActivity(
+            request.Message,
+            correlationId,
+            correlationId);
+        if (awakeResult is not null)
+        {
+            if (awakeResult.IsWakePhrase)
+            {
+                var wakePhrase = _wakeResponsePhrases.Select(DateTimeOffset.UtcNow);
+                return BuildAwakeGateResponse(
+                    correlationId,
+                    "WAKE_PHRASE_ACCEPTED",
+                    "wake_phrase_accepted",
+                    wakePhrase.Text,
+                    awakeResult,
+                    speechCacheKey: wakePhrase.Id,
+                    success: true,
+                    responseType: "wake_acknowledgement");
+            }
+
+            if (awakeResult.IsSleepPhrase && awakeResult.ShouldAllow)
+            {
+                var sleepPhrase = _wakeResponsePhrases.SelectSleep(DateTimeOffset.UtcNow);
+                return BuildAwakeGateResponse(
+                    correlationId,
+                    "SLEEP_PHRASE_ACCEPTED",
+                    "sleep_phrase_accepted",
+                    sleepPhrase.Text,
+                    awakeResult,
+                    speechCacheKey: sleepPhrase.Id,
+                    success: true,
+                    responseType: "sleep_acknowledgement");
+            }
+
+            if (!awakeResult.ShouldAllow)
+            {
+                return BuildAwakeGateResponse(
+                    correlationId,
+                    "MERLIN_SLEEPING",
+                    "merlin_sleeping",
+                    string.Empty,
+                    awakeResult);
+            }
+        }
+
+        if (_liveUtteranceGate is null)
         {
             return null;
         }
@@ -1365,7 +1485,19 @@ public sealed class WebSocketHandler
 
         if (result.ShouldRouteToCommandRouter)
         {
+            _merlinAwakeState?.TouchActivity();
             return null;
+        }
+
+        if (result.Decision is LiveUtteranceGateDecisionKind.AcceptPlaybackControl
+            or LiveUtteranceGateDecisionKind.AcceptCancellation
+            or LiveUtteranceGateDecisionKind.AcceptContinuation
+            or LiveUtteranceGateDecisionKind.AcceptCorrection
+            or LiveUtteranceGateDecisionKind.AcceptReplacement
+            or LiveUtteranceGateDecisionKind.AcceptStatusQuestion
+            or LiveUtteranceGateDecisionKind.AskClarification)
+        {
+            _merlinAwakeState?.TouchActivity();
         }
 
         return result.Decision switch
@@ -1426,6 +1558,36 @@ public sealed class WebSocketHandler
             OriginalMessage = result.NormalizedText,
             ParserUsed = result.Decision.ToString(),
             CapabilityId = "live_utterance_gate",
+            CapabilityName = result.Reason,
+            ResponseType = responseType
+        };
+    }
+
+    private static AssistantResponse BuildAwakeGateResponse(
+        string correlationId,
+        string errorCode,
+        string intent,
+        string message,
+        MerlinAwakeGateResult result,
+        string? speechCacheKey = null,
+        bool success = false,
+        string responseType = "ignored")
+    {
+        return new AssistantResponse
+        {
+            Success = success,
+            Message = message,
+            SpokenText = message,
+            CorrelationId = correlationId,
+            ErrorCode = success ? null : errorCode,
+            Intent = intent,
+            IntentConfidence = result.ShouldAllow ? 1.0 : 0.0,
+            SpeechCacheKey = speechCacheKey,
+            PreferPhraseCache = !string.IsNullOrWhiteSpace(speechCacheKey),
+            IsReplayableSpeech = !string.IsNullOrWhiteSpace(speechCacheKey),
+            OriginalMessage = result.Reason,
+            ParserUsed = nameof(MerlinAwakeStateService),
+            CapabilityId = "merlin_awake_state",
             CapabilityName = result.Reason,
             ResponseType = responseType
         };

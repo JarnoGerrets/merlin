@@ -1,0 +1,11 @@
+[gd_scene format=3 uid="uid://csyg3jblo4oan"]
+
+[ext_resource type="Script" path="res://Scripts/Components/HolographicTrashcan.gd" id="1_trashcan"]
+
+[node name="HolographicTrashcan" type="Control"]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 360.0
+offset_bottom = 560.0
+mouse_filter = 1
+script = ExtResource("1_trashcan")

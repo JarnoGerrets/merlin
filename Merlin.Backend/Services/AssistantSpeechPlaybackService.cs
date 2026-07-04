@@ -857,9 +857,13 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
                         await TrySendEventAsync(sendEventAsync, "SPEAKING_START", correlationId, null, token);
                         await EmitAssistantUiStateImmediateAsync(
                             AssistantUiStateEvent.Create(
-                                "speaking",
+                                itemType is SpeechPlaybackItemType.SleepAcknowledgement
+                                    ? "sleeping"
+                                    : "speaking",
                                 itemType is SpeechPlaybackItemType.StopConfirmation
                                     ? "stop_confirmation_playback_started"
+                                    : itemType is SpeechPlaybackItemType.SleepAcknowledgement
+                                        ? "sleep_acknowledgement_playback_started"
                                     : "audio_playback_started",
                                 correlationId,
                                 correlationId,
@@ -1635,7 +1639,9 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
         string source,
         CancellationToken cancellationToken)
     {
-        if (itemType is SpeechPlaybackItemType.FinalAnswer or SpeechPlaybackItemType.StopConfirmation)
+        if (itemType is SpeechPlaybackItemType.FinalAnswer
+            or SpeechPlaybackItemType.StopConfirmation
+            or SpeechPlaybackItemType.SleepAcknowledgement)
         {
             return _assistantUiStateBroadcaster?.EmitTerminalAsync(uiState, source, cancellationToken)
                 ?? Task.CompletedTask;
@@ -1647,6 +1653,11 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
 
     private static string CompletionBaseState(SpeechPlaybackItemType itemType)
     {
+        if (itemType is SpeechPlaybackItemType.SleepAcknowledgement)
+        {
+            return "sleeping";
+        }
+
         return itemType is SpeechPlaybackItemType.Acknowledgement or SpeechPlaybackItemType.Progress
             ? "thinking"
             : "idle";
@@ -1658,6 +1669,7 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
         {
             SpeechPlaybackItemType.FinalAnswer => "final_answer_completed",
             SpeechPlaybackItemType.StopConfirmation => "stop_confirmation_playback_completed",
+            SpeechPlaybackItemType.SleepAcknowledgement => "sleep_acknowledgement_completed",
             SpeechPlaybackItemType.Acknowledgement => "acknowledgement_playback_completed",
             SpeechPlaybackItemType.Progress => "progress_playback_completed",
             _ => "audio_playback_completed"
@@ -1670,6 +1682,7 @@ public sealed class AssistantSpeechPlaybackService : IAssistantSpeechPlaybackSer
         {
             SpeechPlaybackItemType.Acknowledgement => "acknowledgement",
             SpeechPlaybackItemType.Progress => "progress",
+            SpeechPlaybackItemType.SleepAcknowledgement => "sleep_acknowledgement",
             SpeechPlaybackItemType.FinalAnswer => "final_answer",
             SpeechPlaybackItemType.StopConfirmation => "stop_confirmation",
             SpeechPlaybackItemType.InterruptionClarification => "clarification",

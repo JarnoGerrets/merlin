@@ -1,5 +1,6 @@
 using Merlin.Backend.Models;
 using Merlin.Backend.Services;
+using Merlin.Backend.Services.Vision;
 using Merlin.Backend.Tools;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
@@ -251,6 +252,8 @@ public sealed class CommandRouterTests
     [InlineData("Hi Merlin, start UI control")]
     [InlineData("Merlin, let me control UI")]
     [InlineData("Hey Merlin, give me control of the UI")]
+    [InlineData("Hey Merlin, open your eyes")]
+    [InlineData("can you open your eyes please")]
     public async Task RouteAsync_WhenUiControlStartCommand_ReturnsStartedWithoutIntentParsing(string command)
     {
         var parser = new ThrowingIntentParser();
@@ -289,6 +292,8 @@ public sealed class CommandRouterTests
     [InlineData("Hey Merlin, I am done with the UI")]
     [InlineData("Okay Merlin, stop gesture mode")]
     [InlineData("Merlin, close UI control")]
+    [InlineData("Hey Merlin, close your eyes")]
+    [InlineData("can you close your eyes please")]
     public async Task RouteAsync_WhenUiControlStopCommand_ReturnsStoppedWithoutIntentParsing(string command)
     {
         var parser = new ThrowingIntentParser();
@@ -357,6 +362,54 @@ public sealed class CommandRouterTests
         Assert.True(second.Success);
         Assert.Equal("ui_control_mode_stop", first.Intent);
         Assert.Equal("ui_control_mode_stop", second.Intent);
+        Assert.Equal(UiControlModeState.Off, controller.State);
+    }
+
+    [Fact]
+    public async Task RouteAsync_WhenUiControlStarts_StartsVisionTracking()
+    {
+        var controller = new UiControlModeController(NullLogger<UiControlModeController>.Instance);
+        var vision = new FakeVisionSidecarHost();
+        var router = new CommandRouter(
+            new ThrowingIntentParser(),
+            new ToolRegistry([new ThrowingTool()]),
+            NullLogger<CommandRouter>.Instance,
+            new RuntimeStateService(),
+            new NoOpResponsePolisher(),
+            uiControlModeController: controller,
+            visionSidecarHost: vision);
+
+        var response = await router.RouteAsync("Hey Merlin, give me control of the UI");
+
+        Assert.True(response.Success);
+        Assert.Equal("ui_control_mode_start", response.Intent);
+        Assert.Equal(1, vision.StartTrackingCalls);
+        Assert.Equal(0, vision.StopTrackingCalls);
+        Assert.Equal(UiControlModeState.Active, controller.State);
+    }
+
+    [Fact]
+    public async Task RouteAsync_WhenUiControlStops_StopsVisionTrackingBeforeModeOff()
+    {
+        var controller = new UiControlModeController(NullLogger<UiControlModeController>.Instance);
+        controller.Start();
+        var vision = new FakeVisionSidecarHost();
+        var router = new CommandRouter(
+            new ThrowingIntentParser(),
+            new ToolRegistry([new ThrowingTool()]),
+            NullLogger<CommandRouter>.Instance,
+            new RuntimeStateService(),
+            new NoOpResponsePolisher(),
+            uiControlModeController: controller,
+            visionSidecarHost: vision);
+
+        var response = await router.RouteAsync("I'm done with the UI");
+
+        Assert.True(response.Success);
+        Assert.Equal("ui_control_mode_stop", response.Intent);
+        Assert.Equal(0, vision.StartTrackingCalls);
+        Assert.Equal(1, vision.StopTrackingCalls);
+        Assert.True(vision.WasUiControlActiveWhenStopCalled);
         Assert.Equal(UiControlModeState.Off, controller.State);
     }
 
@@ -709,6 +762,43 @@ public sealed class CommandRouterTests
         public Task<ToolResult> ExecuteAsync(string command, CancellationToken cancellationToken = default)
         {
             throw new InvalidOperationException("This tool should not execute.");
+        }
+    }
+
+    private sealed class FakeVisionSidecarHost : IVisionSidecarHost
+    {
+        public int StartTrackingCalls { get; private set; }
+
+        public int StopTrackingCalls { get; private set; }
+
+        public bool WasUiControlActiveWhenStopCalled { get; private set; }
+
+        public VisionHealthState State { get; private set; } = VisionHealthState.Ready;
+
+        public Task WarmAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task StartTrackingAsync(CancellationToken cancellationToken = default)
+        {
+            StartTrackingCalls++;
+            State = VisionHealthState.Tracking;
+            return Task.CompletedTask;
+        }
+
+        public Task StopTrackingAsync(CancellationToken cancellationToken = default)
+        {
+            StopTrackingCalls++;
+            WasUiControlActiveWhenStopCalled = State is VisionHealthState.Tracking or VisionHealthState.Ready;
+            State = VisionHealthState.Ready;
+            return Task.CompletedTask;
+        }
+
+        public Task ShutdownAsync(CancellationToken cancellationToken = default)
+        {
+            State = VisionHealthState.Stopped;
+            return Task.CompletedTask;
         }
     }
 

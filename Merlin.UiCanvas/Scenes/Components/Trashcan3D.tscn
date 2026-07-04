@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://befguu76b21q6"]
+
+[ext_resource type="Script" path="res://Scripts/Trashcan/Trashcan3DController.gd" id="1_controller"]
+
+[node name="Trashcan3DRoot" type="Node3D"]
+script = ExtResource("1_controller")

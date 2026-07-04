@@ -1,7 +1,7 @@
 extends Node3D
 class_name MerlinOrganism3D
 
-enum OrganismState { IDLE, LISTENING, THINKING, SPEAKING, EXECUTING, ERROR, CONFIRMATION }
+enum OrganismState { SLEEPING, IDLE, LISTENING, THINKING, SPEAKING, EXECUTING, ERROR, CONFIRMATION }
 
 class OrganismNode:
 	var base_position := Vector3.ZERO
@@ -957,6 +957,12 @@ func set_idle() -> void:
 	_set_state(OrganismState.IDLE, _cyan_palette(), 0.18, 1.00)
 
 
+func set_sleeping() -> void:
+	_set_state(OrganismState.SLEEPING, _cyan_palette(), 0.08, 0.82)
+	_rotation_velocity = Vector3.ZERO
+	_rotation_target_velocity = Vector3.ZERO
+
+
 func set_thinking() -> void:
 	_set_state(OrganismState.THINKING, _cyan_palette(), 0.42, 1.12)
 
@@ -1086,6 +1092,9 @@ func set_visual_state(state: Dictionary) -> void:
 		visual_state[key] = state[key]
 	var mode := String(visual_state.get("mode", "idle"))
 	match mode:
+		"sleeping":
+			if current_state != OrganismState.SLEEPING:
+				set_sleeping()
 		"thinking":
 			if current_state != OrganismState.THINKING:
 				set_thinking()
@@ -3522,6 +3531,8 @@ func _orb_quality_name() -> String:
 
 
 func _state_feature_enabled(feature_name: String) -> bool:
+	if current_state == OrganismState.SLEEPING:
+		return feature_name == "breathing" or feature_name == "core_glow"
 	return _state_feature_enabled_for_name(_organism_state_name(current_state), feature_name)
 
 
@@ -3535,7 +3546,7 @@ func _state_feature_enabled_for_name(state_name: String, feature_name: String) -
 
 
 func _orb_lab_state_names() -> Array[String]:
-	return ["IDLE", "LISTENING", "THINKING", "SPEAKING", "EXECUTING", "ERROR", "CONFIRMATION"]
+	return ["SLEEPING", "IDLE", "LISTENING", "THINKING", "SPEAKING", "EXECUTING", "ERROR", "CONFIRMATION"]
 
 
 func _apply_current_state_feature_side_effects() -> void:
@@ -4029,6 +4040,8 @@ func _distance_to_screen_segment(point: Vector2, a: Vector2, b: Vector2) -> floa
 
 func _organism_state_name(state: int) -> String:
 	match state:
+		OrganismState.SLEEPING:
+			return "SLEEPING"
 		OrganismState.IDLE:
 			return "IDLE"
 		OrganismState.LISTENING:
@@ -4049,6 +4062,8 @@ func _organism_state_name(state: int) -> String:
 
 func _state_activity_floor() -> float:
 	match current_state:
+		OrganismState.SLEEPING:
+			return 0.08
 		OrganismState.THINKING:
 			return 0.42
 		OrganismState.LISTENING:
@@ -4067,6 +4082,8 @@ func _state_activity_floor() -> float:
 
 func _state_brightness_floor() -> float:
 	match current_state:
+		OrganismState.SLEEPING:
+			return 0.82
 		OrganismState.SPEAKING:
 			return 1.00
 		OrganismState.THINKING:

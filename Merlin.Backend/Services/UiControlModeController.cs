@@ -29,6 +29,8 @@ public sealed class UiControlModeController
 
     public UiControlModeState State { get; private set; } = UiControlModeState.Off;
 
+    public bool IsActive => State is UiControlModeState.Active;
+
     public UiControlModeState Start()
     {
         lock (_gate)
@@ -73,7 +75,8 @@ public static class UiControlModeCommandMatcher
         "gesture mode",
         "start gesture mode",
         "edit the ui",
-        "let me edit the ui"
+        "let me edit the ui",
+        "open your eyes"
     ];
 
     private static readonly string[] StopPhrases =
@@ -87,7 +90,8 @@ public static class UiControlModeCommandMatcher
         "exit gesture mode",
         "close ui control",
         "cancel ui control",
-        "done controlling"
+        "done controlling",
+        "close your eyes"
     ];
 
     public static bool TryMatch(string? message, out UiControlModeCommandAction action)
