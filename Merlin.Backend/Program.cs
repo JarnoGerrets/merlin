@@ -35,6 +35,7 @@ using System.Text.Json;
 EnvFileLoader.Load();
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.UseMerlinConfiguration(builder.Environment, args);
 
 builder.Services.Configure<ApplicationLaunchOptions>(
     builder.Configuration.GetSection("ApplicationLaunch"));
@@ -348,6 +349,7 @@ builder.Services.AddSingleton<IInterruptionFeedbackPort, ResponsiveFeedbackInter
 builder.Services.AddSingleton<IInterruptionRequestRouterPort, NoOpInterruptionRequestRouterPort>();
 builder.Services.AddSingleton<IInterruptionModelPort, LiveInterruptionModelPort>();
 builder.Services.AddSingleton<IInterruptionSpeechOutputPort, AssistantSpeechInterruptionSpeechOutputPort>();
+builder.Services.AddSingleton<IPendingInterruptionClarificationService, PendingInterruptionClarificationService>();
 builder.Services.AddSingleton<IInterruptionOrchestrator, InterruptionOrchestrator>();
 builder.Services.AddSingleton<ILiveInterruptionIntegrationService, LiveInterruptionIntegrationService>();
 builder.Services.AddSingleton<IContinuousMicAudioBuffer, ContinuousMicAudioBuffer>();

@@ -1,0 +1,8 @@
+{
+  "VoiceInput": {
+    "Owner": "backend",
+    "BackendVoiceInputEnabled": true,
+    "FrontendVoiceInputEnabled": false,
+    "BackendIdleVoiceInteractionSource": "backend_idle_voice"
+  }
+}

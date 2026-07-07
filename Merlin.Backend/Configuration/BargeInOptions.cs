@@ -182,6 +182,10 @@ public sealed class BargeInOptions
 
     public bool ClarificationResumeEnabled { get; set; } = false;
 
+    public bool EnableInterruptionHandlingWatchdog { get; set; } = true;
+
+    public int InterruptionHandlingWatchdogTimeoutMs { get; set; } = 15000;
+
     public string[] WakeWords { get; set; } = ["merlin"];
 
     public string[] HardStopPhrases { get; set; } =

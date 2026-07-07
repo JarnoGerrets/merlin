@@ -1,6 +1,7 @@
 ---
 type: report-index
 status: current
+area: cross-cutting
 tags:
   - merlin
   - agent/report
@@ -8,14 +9,8 @@ tags:
 
 # Agent Reports Index
 
-| Title | Path | Related system | Key takeaway | Date |
+| Report | Path | Related System | Key Takeaway | Status |
 | --- | --- | --- | --- | --- |
-| merlin_frontend_ui_current_architecture_report | `Merlin.ToDo/done/DONE frontend_ui/merlin_frontend_ui_current_architecture_report.md` | frontend/ui | Architecture snapshot/report. | unknown |
-| voice-naturalness-roadmap-index | `Merlin.ToDo/done/DONE merlin-voice-naturalness-roadmap/voice-naturalness-roadmap-index.md` | voice/interruption | Index/phase overview. | unknown |
-| 00_README | `Merlin.ToDo/done/merlin-memory-layer-phases/00_README.md` | memory | Index/phase overview. | unknown |
-| 01_phase_1_current_conversation_memory | `Merlin.ToDo/done/merlin-memory-layer-phases/01_phase_1_current_conversation_memory.md` | memory | Reference report or historical handoff. | unknown |
-| 00_README | `Merlin.ToDo/done/merlin_sqlite_efcore_persistence_phases/00_README.md` | cross-cutting | Index/phase overview. | unknown |
-| 06_phase_6_verification_handoff_to_memory_layer | `Merlin.ToDo/done/merlin_sqlite_efcore_persistence_phases/06_phase_6_verification_handoff_to_memory_layer.md` | memory | Reference report or historical handoff. | unknown |
-| README | `Merlin.ToDo/merlin_capability_specs/README.md` | cross-cutting | Index/phase overview. | unknown |
-| Merlin_Self_Speech_Gate_Diagnostics_And_Stricter_Echo_Policy | `Merlin.ToDo/Merlin_Self_Speech_Gate_Diagnostics_And_Stricter_Echo_Policy.md` | cross-cutting | Reference report or historical handoff. | unknown |
-| current_motion_structure_report | `Merlin.ToDo/motion_control/report/current_motion_structure_report.md` | motion | Current motion structure and pain points. | unknown |
+| AskClarification PR10.4 Prerequisite Investigation | `Merlin.Vault/07_Agent_Reports/AskClarification PR10.4 Prerequisite Investigation.md` | Voice Interruption System | Full PR10.4 is No-Go until pending clarification owner, awaiting state, timeout recovery, watchdog, and full ownership are implemented in sequence. | completed |
+| Merlin Frontend UI Current Architecture Report | `Merlin.Vault/12_Source_Material/Imported_Merlin_ToDo/done/DONE frontend_ui/merlin_frontend_ui_current_architecture_report.md` | Dashboard UI Control | Imported report; verify against current code before relying on it. | implemented |
+| Merlin Current Motion-Control Structure Report | `Merlin.Vault/12_Source_Material/Imported_Merlin_ToDo/motion_control/report/current_motion_structure_report.md` | Motion Control | Imported report; verify against current code before relying on it. | still-useful |

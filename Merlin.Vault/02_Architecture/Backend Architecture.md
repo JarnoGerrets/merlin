@@ -5,67 +5,80 @@ area: backend
 tags:
   - merlin
   - architecture
+  - layer/backend
 ---
 
 # Backend Architecture
 
 ## Purpose
 
-Map backend responsibilities.
+ASP.NET Core backend owns routing, voice, browser workspace, motion profiles, memory, safety, and WebSocket communication.
 
 ## Current Design
 
-Backend owns routing, memory, safety, browser orchestration, speech playback, interruption handling, active surface, and motion profile dispatch.
+Current implementation is distributed across the files in the component table. The vault treats code as source of truth and separates implemented behavior from plans.
 
 ## Planned Design
 
-Keep new systems behind services and tests; avoid bloating CommandRouter further.
+Future design should build on verified foundations only: active surface first, safety before execution, and profiles before app-specific behavior.
 
 ## Main Components
 
-- `CommandRouter`
-- `LiveUtteranceGate`
-- `BargeInCoordinator`
-- `BrowserWorkspaceService`
-- `ActiveSurfaceService`
-- `MotionControlModeService`
-- memory services under `Core/Memory`
+| Component | File / Class | Responsibility |
+| --- | --- | --- |
+| DI root | `Merlin.Backend/Program.cs` | Registers memory, voice, browser, motion, safety, tools, and WebSocket services. |
+| Command routing | `CommandRouter.cs` | Main deterministic route after utterance/gate. |
+| Browser workspace | `BrowserWorkspaceService.cs` | Host lifecycle and browser commands. |
+| Memory | `Core/Memory/*` | Prompt context and durable memory. |
 
 ## Data / Event Flow
 
-Requests enter through HTTP/WebSocket/voice routing, resolve into service/tool actions, and emit responses/state.
+See linked flow notes for exact call/message paths. In short, user voice and visual/motion inputs enter backend routing, which dispatches to services or emits frontend/BrowserHost messages.
+
+## State Ownership
+
+| State | Owner | Readers | Writers | Reset Conditions |
+| --- | --- | --- | --- | --- |
+| Active surface | `ActiveSurfaceService` | CommandRouter, LiveUtteranceGate, motion registry | BrowserWorkspaceService and future surface producers | Browser close/reset to Dashboard |
+| Motion enabled/profile | `MotionControlModeService` | VisionGestureEventRouter, tests | CommandRouter/profile switch | `eyes closed`, profile activation failure |
+| Browser host lifecycle | `BrowserWorkspaceService` | browser motion/page services | open/close/host-exit handlers | host exit/close |
+| Playback state | `AssistantSpeechPlaybackService` | UI broadcaster, interruption services | playback start/pause/resume/stop | final answer completed/cancelled |
+
+## Safety Boundaries
+
+Routing decides where a command goes. Safety decides whether it may execute. ActiveSurface and motion profiles must never bypass BrowserPageSafetyGuard or confirmation for risky actions.
 
 ## Mermaid Diagram
 
 ```mermaid
-flowchart LR
-    Input[AssistantRequest / live utterance] --> Gate[LiveUtteranceGate]
-    Gate --> Router[CommandRouter]
-    Router --> Services[Backend services]
-    Services --> State[Runtime state]
-    State --> WS[WebSocketHandler]
+flowchart TD
+    U[User voice/gesture] --> R[Routing or Vision pipeline]
+    R --> S[Active surface context]
+    S --> C[Command/service/profile]
+    C --> F[Frontend, BrowserHost, Memory, Tools]
+    C --> G[Safety/confirmation when needed]
+    G --> F
 ```
-
-## Code Map
-
-| File | Role |
-| --- | --- |
-| `Merlin.Backend/Program.cs` | DI and hosted services. |
-| `Merlin.Backend/Services/CommandRouter.cs` | Main routing switchboard. |
-| `Merlin.Backend/Services/LiveUtterance/LiveUtteranceGate.cs` | Live utterance gate. |
 
 ## Important Decisions
 
-- Active Surface should be checked before ambiguous browser/media commands.
+- [[ADR-0002 Active Surface Before App-Specific Routing]]
+- [[ADR-0003 Motion Profiles Over One Global Motion Mode]]
+- [[ADR-0005 Safety Does Not Get Bypassed By Routing Context]]
 
-## Risks
+## Known Fragility
 
-- CommandRouter is large and accumulates feature logic.
+- Some behavior is still centralized in large scripts/services.
+- BrowserHost/native overlay lifecycle and DPI behavior need live validation.
+- Voice correction/barge-in tests currently fail and should be treated as blockers for learning features.
 
 ## Open Questions
 
-- When should browser/media routing move fully into surface-aware routers?
+- Which runtime observations should be promoted into permanent code atlas notes after the next validation session?
 
 ## Related Notes
 
-- [[Command Routing Architecture]]
+- [[Code Atlas Index]]
+- [[Voice Command Flow]]
+- [[Motion Gesture Dispatch Flow]]
+- [[Browser Workspace Flow]]

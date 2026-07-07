@@ -14,6 +14,11 @@ public sealed record AssistantUiStateEvent(
     DateTimeOffset TimestampUtc)
 {
     public const string EventType = "assistant_ui_state";
+    public const string InterruptionStateNone = "none";
+    public const string InterruptionStateCapturing = "capturing";
+    public const string InterruptionStateHandling = "handling";
+    public const string InterruptionStateHeldForUserSpeech = "held_for_user_speech";
+    public const string InterruptionStateAwaitingClarification = "awaiting_interruption_clarification";
 
     public static AssistantUiStateEvent Create(
         string baseState,
@@ -23,7 +28,7 @@ public sealed record AssistantUiStateEvent(
         string overlayState = "none",
         string speechItemType = "none",
         bool audiblePlaybackActive = false,
-        string interruptionState = "none",
+        string interruptionState = InterruptionStateNone,
         DateTimeOffset? timestampUtc = null) =>
         new(
             EventType,

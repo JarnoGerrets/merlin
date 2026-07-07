@@ -1,70 +1,88 @@
 ---
 type: architecture
-status: current
+status: mixed
 area: backend
 tags:
   - merlin
   - architecture
+  - layer/backend
 ---
 
 # Voice Pipeline Architecture
 
 ## Purpose
 
-Document STT, gate, barge-in, and playback.
+Voice pipeline spans frontend capture, backend STT/gating/interruption, response generation, TTS, and playback state.
 
 ## Current Design
 
-Voice capture and STT feed LiveUtteranceGate and BargeInCoordinator; accepted commands route into CommandRouter; responses use TTS and playback services.
+Current implementation is distributed across the files in the component table. The vault treats code as source of truth and separates implemented behavior from plans.
 
 ## Planned Design
 
-Future voice work should preserve wake/stop safety and active-surface command routing.
+Future design should build on verified foundations only: active surface first, safety before execution, and profiles before app-specific behavior.
 
 ## Main Components
 
-- `BargeInCoordinator`
-- `LiveUtteranceGate`
-- `AssistantSpeechPlaybackService`
-- `ChatterboxTtsProvider`
-- voice scripts
+| Component | File / Class | Responsibility |
+| --- | --- | --- |
+| CommandRouter | `Merlin.Backend/Services/CommandRouter.cs` | Routes commands where relevant. |
+| ActiveSurfaceService | `Merlin.Backend/Services/Context/ActiveSurface/ActiveSurfaceService.cs` | Current surface context. |
+| BrowserWorkspaceService | `Merlin.Backend/Services/BrowserWorkspace/BrowserWorkspaceService.cs` | Browser host and page actions where relevant. |
+| MotionControlModeService | `Merlin.Backend/Services/Motion/MotionControlModeService.cs` | Motion profile owner where relevant. |
 
 ## Data / Event Flow
 
-Voice audio -> STT -> gate -> route/interrupt -> command/correction -> TTS playback.
+See linked flow notes for exact call/message paths. In short, user voice and visual/motion inputs enter backend routing, which dispatches to services or emits frontend/BrowserHost messages.
+
+## State Ownership
+
+| State | Owner | Readers | Writers | Reset Conditions |
+| --- | --- | --- | --- | --- |
+| Active surface | `ActiveSurfaceService` | CommandRouter, LiveUtteranceGate, motion registry | BrowserWorkspaceService and future surface producers | Browser close/reset to Dashboard |
+| Motion enabled/profile | `MotionControlModeService` | VisionGestureEventRouter, tests | CommandRouter/profile switch | `eyes closed`, profile activation failure |
+| Browser host lifecycle | `BrowserWorkspaceService` | browser motion/page services | open/close/host-exit handlers | host exit/close |
+| Playback state | `AssistantSpeechPlaybackService` | UI broadcaster, interruption services | playback start/pause/resume/stop | final answer completed/cancelled |
+| Live interruption outcome | `LiveInterruptionIntegrationService` | BargeInCoordinator/live pipeline | classifier decisions, playback hold resolution, model/speech ports | handled terminal outcome, sequential recomposition result, or explicit legacy escape hatch |
+
+## Safety Boundaries
+
+Routing decides where a command goes. Safety decides whether it may execute. ActiveSurface and motion profiles must never bypass BrowserPageSafetyGuard or confirmation for risky actions.
 
 ## Mermaid Diagram
 
 ```mermaid
 flowchart TD
-    Audio[Mic audio] --> STT[STT]
-    STT --> Gate[LiveUtteranceGate]
-    Gate --> Barge[BargeInCoordinator]
-    Barge --> Router[CommandRouter]
-    Router --> TTS[TTS]
-    TTS --> Playback[AssistantSpeechPlaybackService]
+    U[User voice/gesture] --> R[Routing or Vision pipeline]
+    R --> S[Active surface context]
+    S --> C[Command/service/profile]
+    C --> F[Frontend, BrowserHost, Memory, Tools]
+    C --> G[Safety/confirmation when needed]
+    G --> F
 ```
-
-## Code Map
-
-| File | Role |
-| --- | --- |
-| `Merlin.Backend/Services/BargeIn/BargeInCoordinator.cs` | Barge-in/routing. |
-| `Merlin.Backend/Services/LiveUtterance/LiveUtteranceGate.cs` | Gate. |
-| `Merlin.Backend/Services/AssistantSpeechPlaybackService.cs` | Playback. |
 
 ## Important Decisions
 
-- Global stop/cancel must remain robust.
+- [[ADR-0002 Active Surface Before App-Specific Routing]]
+- [[ADR-0003 Motion Profiles Over One Global Motion Mode]]
+- [[ADR-0005 Safety Does Not Get Bypassed By Routing Context]]
 
-## Risks
+## Known Fragility
 
-- Timing-sensitive tests currently fail in full suite.
+- Some behavior is still centralized in large scripts/services.
+- BrowserHost/native overlay lifecycle and DPI behavior need live validation.
+- Voice correction/barge-in tests currently fail and should be treated as blockers for learning features.
+- Live unclear-interruption prompting still lacks a durable pending clarification owner; safe terminal fallback exists to avoid wedging.
 
 ## Open Questions
 
-- Which voice tests are flaky versus currently broken?
+- Which runtime observations should be promoted into permanent code atlas notes after the next validation session?
 
 ## Related Notes
 
-- [[Voice Interruption System]]
+- [[Code Atlas Index]]
+- [[Voice Command Flow]]
+- [[Motion Gesture Dispatch Flow]]
+- [[Browser Workspace Flow]]
+- [[LiveUtteranceGate]]
+- [[AssistantSpeechPlaybackService]]

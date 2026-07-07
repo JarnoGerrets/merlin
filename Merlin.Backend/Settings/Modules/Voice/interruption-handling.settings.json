@@ -1,0 +1,42 @@
+{
+  "InterruptionHandling": {
+    "Enabled": true,
+    "EnableLiveBargeInIntegration": true,
+    "EnableLiveShadowMode": false,
+    "EnableLivePlaybackActions": true,
+    "EnableLiveRedirectRouting": true,
+    "EnableLiveResponsiveFeedbackBridge": false,
+    "EnableLiveModelCalls": true,
+    "EnableLiveMinimalBehavior": true,
+    "EnableLiveSpokenAnswerTracking": true,
+    "EnableSpokenAnswerTrackingDiagnostics": true,
+    "EnableLocalClassification": true,
+    "EnableModelClassificationForAmbiguousCases": false,
+    "EnableClarificationCalls": true,
+    "EnableContinuationRecomposition": true,
+    "EnableParallelContinuationRecomposition": false,
+    "EnableSequentialRecomposition": true,
+    "RecomposeAfterMeaningfulInterruption": true,
+    "ResumeRawOnlyForBackchannels": true,
+    "UseResponsiveFeedbackForBridgePhrases": true,
+    "SuppressNormalProgressDuringInterruptionHandling": true,
+    "ClarificationMaxTokens": 90,
+    "ContinuationMaxTokens": 500,
+    "ClassificationMaxTokens": 120,
+    "MinimumInterruptionTranscriptChars": 2,
+    "MinimumInterruptionTranscriptConfidence": 0.55,
+    "MaxQueuedFollowUps": 3,
+    "MeaningfulInterruptionPauseTimeoutMs": 1200,
+    "ClarificationTimeoutMs": 5000,
+    "ContinuationTimeoutMs": 15000,
+    "RecentlyYieldedTurnTtlMs": 20000,
+    "ProvisionalAudioHoldTimeoutMs": 2000,
+    "StopConfirmationPhrases": [
+      "Got it, I'll stop.",
+      "Okay, stopping.",
+      "Understood, I'll be quiet.",
+      "I'll shut up, sir."
+    ],
+    "EnableDiagnosticsLogging": true
+  }
+}

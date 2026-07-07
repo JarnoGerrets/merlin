@@ -1,4 +1,4 @@
----
+﻿---
 type: adr
 status: accepted | proposed | superseded
 tags:

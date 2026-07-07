@@ -1,0 +1,15 @@
+{
+  "ChatLog": {
+    "Enabled": true,
+    "DefaultWidth": 420,
+    "DefaultHeight": 720,
+    "MinWidth": 280,
+    "MinHeight": 220,
+    "MaxWidth": 900,
+    "MaxHeight": 1100,
+    "InitialAnchor": "left",
+    "RememberPosition": true,
+    "RememberSize": true,
+    "MaxMessages": 500
+  }
+}

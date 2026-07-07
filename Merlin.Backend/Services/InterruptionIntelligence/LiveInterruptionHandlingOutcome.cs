@@ -20,6 +20,8 @@ public sealed class LiveInterruptionHandlingOutcome
 
     public string? RewrittenRequest { get; init; }
 
+    public string? PendingClarificationId { get; init; }
+
     public InterruptionHandlingResult? Result { get; init; }
 
     public ConversationalInterruptionType? InterruptionType { get; init; }

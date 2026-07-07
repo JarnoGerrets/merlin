@@ -482,6 +482,8 @@ public sealed class WebRtcApmAecTests
         Assert.False(options.AllowDegradedAecFallback);
         Assert.True(options.RequireWakeWordForFirstVersion);
         Assert.False(options.AllowNaturalSoftBargeInWhenAecVerified);
+        Assert.True(options.EnableInterruptionHandlingWatchdog);
+        Assert.True(options.InterruptionHandlingWatchdogTimeoutMs > 0);
     }
 
     [Fact]
@@ -3117,6 +3119,317 @@ public sealed class BargeInCoordinatorTests
     }
 
     [Fact]
+    public async Task ProcessMicrophoneFrame_PendingInterruptionClarificationResponseBypassesBackendVoiceRequest()
+    {
+        var pendingClarifications = new PendingInterruptionClarificationService(
+            Options.Create(new InterruptionHandlingOptions
+            {
+                PendingInterruptionClarificationTimeoutMs = 15000
+            }),
+            NullLogger<PendingInterruptionClarificationService>.Instance);
+        var pending = pendingClarifications.CreatePending(
+            new PendingInterruptionClarificationCreateRequest
+            {
+                ActiveTurnId = "turn-1",
+                CorrelationId = "correlation-1",
+                CaptureId = "capture-original",
+                OriginalTranscript = "what did you mean",
+                NormalizedTranscript = "what did you mean",
+                RouteKind = "PauseAndClarify",
+                RouteAction = "AskClarification",
+                Layer1Decision = "AskClarification"
+            });
+        var fixture = CreateFixture(
+            new BargeInOptions { Enabled = true },
+            "In the pool.",
+            liveUtteranceGate: CreateLiveUtteranceGate(),
+            pendingInterruptionClarifications: pendingClarifications);
+        var requests = new List<BackendVoiceRequestCaptured>();
+        var routed = new List<LiveUserUtteranceRouted>();
+        fixture.Coordinator.BackendVoiceRequestCaptured += (request, _) =>
+        {
+            requests.Add(request);
+            return Task.CompletedTask;
+        };
+        fixture.Coordinator.LiveUserUtteranceRouted += (route, _) =>
+        {
+            routed.Add(route);
+            return Task.CompletedTask;
+        };
+
+        await fixture.Coordinator.StartLiveMonitoringAsync();
+        await SendTriggeredSpeechAsync(fixture.Coordinator);
+        await WaitUntilAsync(() => routed.Count > 0);
+
+        Assert.Empty(requests);
+        var route = Assert.Single(routed);
+        Assert.Equal(UtteranceRouteKind.AddToActiveTurn, route.Decision.Kind);
+        Assert.Equal("PendingInterruptionClarificationResponse", route.Decision.Action);
+        Assert.Equal("In the pool.", route.Utterance.Text);
+        Assert.Null(pendingClarifications.TryGetLatestPending());
+        Assert.False(pendingClarifications.HasActivePendingForTurn(pending.ActiveTurnId));
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_PendingInterruptionClarificationResponseTransitionsToHandling()
+    {
+        var pendingClarifications = new PendingInterruptionClarificationService(
+            Options.Create(new InterruptionHandlingOptions
+            {
+                PendingInterruptionClarificationTimeoutMs = 15000
+            }),
+            NullLogger<PendingInterruptionClarificationService>.Instance);
+        pendingClarifications.CreatePending(
+            new PendingInterruptionClarificationCreateRequest
+            {
+                ActiveTurnId = "turn-1",
+                CorrelationId = "correlation-1",
+                CaptureId = "capture-original",
+                OriginalTranscript = "what did you mean",
+                NormalizedTranscript = "what did you mean",
+                RouteKind = "PauseAndClarify",
+                RouteAction = "AskClarification",
+                Layer1Decision = "AskClarification"
+            });
+        var ui = new RecordingUiStateSink();
+        var fixture = CreateFixture(
+            new BargeInOptions { Enabled = true },
+            "In the pool.",
+            liveUtteranceGate: CreateLiveUtteranceGate(),
+            pendingInterruptionClarifications: pendingClarifications,
+            assistantUiStateBroadcaster: ui.Broadcaster);
+        var routed = new List<LiveUserUtteranceRouted>();
+        fixture.Coordinator.LiveUserUtteranceRouted += (route, _) =>
+        {
+            routed.Add(route);
+            return Task.CompletedTask;
+        };
+
+        await fixture.Coordinator.StartLiveMonitoringAsync();
+        await SendTriggeredSpeechAsync(fixture.Coordinator);
+        await WaitUntilAsync(() => routed.Count > 0);
+
+        Assert.Contains(ui.Events, state =>
+            state.BaseState == "thinking"
+            && state.Reason == "pending_interruption_clarification_response_captured"
+            && state.TurnId == "turn-1"
+            && state.InterruptionState == AssistantUiStateEvent.InterruptionStateHandling);
+    }
+
+    [Fact]
+    public async Task ProcessMicrophoneFrame_PendingInterruptionClarificationResponseHandledByOwnerDoesNotRaiseGenericRoute()
+    {
+        var pendingClarifications = new PendingInterruptionClarificationService(
+            Options.Create(new InterruptionHandlingOptions
+            {
+                PendingInterruptionClarificationTimeoutMs = 15000
+            }),
+            NullLogger<PendingInterruptionClarificationService>.Instance);
+        pendingClarifications.CreatePending(
+            new PendingInterruptionClarificationCreateRequest
+            {
+                ActiveTurnId = "turn-1",
+                CorrelationId = "correlation-1",
+                CaptureId = "capture-original",
+                OriginalTranscript = "what did you mean",
+                NormalizedTranscript = "what did you mean",
+                RouteKind = "PauseAndClarify",
+                RouteAction = "AskClarification",
+                Layer1Decision = "AskClarification",
+                OriginalUserQuestion = "Why does pool water look blue?",
+                SafeSpokenPrefix = "Pool water can look blue for several reasons."
+            });
+        var owner = new FakeLiveInterruptionIntegrationService(new LiveInterruptionHandlingOutcome
+        {
+            WasEvaluatedByConversationalInterruption = true,
+            WasHandledByConversationalInterruption = true,
+            AllowLegacyCleanup = false,
+            AllowLegacySemanticRouting = false,
+            ShouldCancelPlayback = true,
+            Result = new InterruptionHandlingResult
+            {
+                Type = InterruptionHandlingResultType.ClarificationAndRecompositionPrepared,
+                Reason = "owner handled"
+            },
+            Reason = "owner handled"
+        });
+        var fixture = CreateFixture(
+            new BargeInOptions { Enabled = true },
+            "In the pool.",
+            liveUtteranceGate: CreateLiveUtteranceGate(),
+            liveInterruptionIntegrationService: owner,
+            pendingInterruptionClarifications: pendingClarifications);
+        var requests = new List<BackendVoiceRequestCaptured>();
+        var routed = new List<LiveUserUtteranceRouted>();
+        fixture.Coordinator.BackendVoiceRequestCaptured += (request, _) =>
+        {
+            requests.Add(request);
+            return Task.CompletedTask;
+        };
+        fixture.Coordinator.LiveUserUtteranceRouted += (route, _) =>
+        {
+            routed.Add(route);
+            return Task.CompletedTask;
+        };
+
+        await fixture.Coordinator.StartLiveMonitoringAsync();
+        await SendTriggeredSpeechAsync(fixture.Coordinator);
+        await WaitUntilAsync(() => owner.PendingResponseCallCount > 0);
+
+        Assert.Empty(requests);
+        Assert.Empty(routed);
+        Assert.Equal(1, owner.PendingResponseCallCount);
+        Assert.Equal("In the pool.", owner.LastPendingResponse?.ResponseText);
+        Assert.Null(pendingClarifications.TryGetLatestPending());
+    }
+
+    [Fact]
+    public async Task InterruptionHandlingWatchdog_ClearsOwnerlessHandlingState()
+    {
+        var ui = new RecordingUiStateSink();
+        var logger = new RecordingLogger<BargeInCoordinator>();
+        var fixture = CreateFixture(
+            new BargeInOptions
+            {
+                Enabled = true,
+                EnableInterruptionHandlingWatchdog = true,
+                InterruptionHandlingWatchdogTimeoutMs = 40
+            },
+            logger: logger,
+            assistantUiStateBroadcaster: ui.Broadcaster);
+
+        await fixture.Coordinator.EmitAssistantUiStateForDiagnosticsAsync(
+            AssistantUiStateEvent.Create(
+                "thinking",
+                "test_stale_handling",
+                "correlation-1",
+                "turn-1",
+                interruptionState: AssistantUiStateEvent.InterruptionStateHandling));
+
+        await WaitUntilAsync(() => ui.Events.Any(state =>
+            state.Reason == "stale_interruption_handling_watchdog_recovered"
+            && state.InterruptionState == AssistantUiStateEvent.InterruptionStateNone));
+
+        Assert.Contains(ui.Events, state =>
+            state.Reason == "stale_interruption_handling_watchdog_recovered"
+            && state.BaseState == "idle"
+            && state.TurnId == "turn-1"
+            && state.InterruptionState == AssistantUiStateEvent.InterruptionStateNone);
+        Assert.Contains(logger.Messages, message => message.Contains("InterruptionHandlingWatchdogRecovered", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task InterruptionHandlingWatchdog_DoesNotClearWhilePendingClarificationExists()
+    {
+        var pendingClarifications = new PendingInterruptionClarificationService(
+            Options.Create(new InterruptionHandlingOptions
+            {
+                PendingInterruptionClarificationTimeoutMs = 15000
+            }),
+            NullLogger<PendingInterruptionClarificationService>.Instance);
+        pendingClarifications.CreatePending(
+            new PendingInterruptionClarificationCreateRequest
+            {
+                ActiveTurnId = "turn-1",
+                CorrelationId = "correlation-1",
+                CaptureId = "capture-original",
+                OriginalTranscript = "what did you mean",
+                NormalizedTranscript = "what did you mean",
+                RouteKind = "PauseAndClarify",
+                RouteAction = "AskClarification",
+                Layer1Decision = "AskClarification"
+            });
+        var ui = new RecordingUiStateSink();
+        var logger = new RecordingLogger<BargeInCoordinator>();
+        var fixture = CreateFixture(
+            new BargeInOptions
+            {
+                Enabled = true,
+                EnableInterruptionHandlingWatchdog = true,
+                InterruptionHandlingWatchdogTimeoutMs = 40
+            },
+            logger: logger,
+            pendingInterruptionClarifications: pendingClarifications,
+            assistantUiStateBroadcaster: ui.Broadcaster);
+
+        await fixture.Coordinator.EmitAssistantUiStateForDiagnosticsAsync(
+            AssistantUiStateEvent.Create(
+                "thinking",
+                "test_pending_handling",
+                "correlation-1",
+                "turn-1",
+                interruptionState: AssistantUiStateEvent.InterruptionStateHandling));
+        await WaitUntilAsync(() => logger.Messages.Any(message => message.Contains("InterruptionHandlingWatchdogDeferred", StringComparison.Ordinal)));
+
+        Assert.DoesNotContain(ui.Events, state => state.Reason == "stale_interruption_handling_watchdog_recovered");
+        Assert.True(pendingClarifications.HasActivePendingForTurn("turn-1"));
+    }
+
+    [Fact]
+    public async Task InterruptionHandlingWatchdog_DoesNotClearAwaitingClarificationState()
+    {
+        var ui = new RecordingUiStateSink();
+        var fixture = CreateFixture(
+            new BargeInOptions
+            {
+                Enabled = true,
+                EnableInterruptionHandlingWatchdog = true,
+                InterruptionHandlingWatchdogTimeoutMs = 40
+            },
+            assistantUiStateBroadcaster: ui.Broadcaster);
+
+        await fixture.Coordinator.EmitAssistantUiStateForDiagnosticsAsync(
+            AssistantUiStateEvent.Create(
+                "thinking",
+                "test_handling_before_awaiting",
+                "correlation-1",
+                "turn-1",
+                interruptionState: AssistantUiStateEvent.InterruptionStateHandling));
+        await fixture.Coordinator.EmitAssistantUiStateForDiagnosticsAsync(
+            AssistantUiStateEvent.Create(
+                "listening",
+                "pending_interruption_clarification_awaiting_response",
+                "correlation-1",
+                "turn-1",
+                interruptionState: AssistantUiStateEvent.InterruptionStateAwaitingClarification));
+
+        await Task.Delay(120);
+
+        Assert.Contains(ui.Events, state =>
+            state.InterruptionState == AssistantUiStateEvent.InterruptionStateAwaitingClarification
+            && state.Reason == "pending_interruption_clarification_awaiting_response");
+        Assert.DoesNotContain(ui.Events, state => state.Reason == "stale_interruption_handling_watchdog_recovered");
+    }
+
+    [Fact]
+    public async Task InterruptionHandlingWatchdog_DoesNotClearWhileHeldPlaybackExists()
+    {
+        var ui = new RecordingUiStateSink();
+        var logger = new RecordingLogger<BargeInCoordinator>();
+        var fixture = CreateFixture(
+            new BargeInOptions
+            {
+                Enabled = true,
+                EnableInterruptionHandlingWatchdog = true,
+                InterruptionHandlingWatchdogTimeoutMs = 40
+            },
+            logger: logger,
+            assistantUiStateBroadcaster: ui.Broadcaster);
+        fixture.Playback.Snapshot = HeldSnapshot(CreateContext());
+
+        await fixture.Coordinator.EmitAssistantUiStateForDiagnosticsAsync(
+            AssistantUiStateEvent.Create(
+                "thinking",
+                "test_held_playback_handling",
+                "correlation-1",
+                "turn-1",
+                interruptionState: AssistantUiStateEvent.InterruptionStateHandling));
+        await WaitUntilAsync(() => logger.Messages.Any(message => message.Contains("InterruptionHandlingWatchdogDeferred", StringComparison.Ordinal)));
+
+        Assert.DoesNotContain(ui.Events, state => state.Reason == "stale_interruption_handling_watchdog_recovered");
+    }
+
+    [Fact]
     public async Task ProcessMicrophoneFrame_BackendIdleVoice_AddsCaptureIdAndTimelineLogs()
     {
         var logger = new RecordingLogger<BargeInCoordinator>();
@@ -3636,7 +3949,9 @@ public sealed class BargeInCoordinatorTests
         ISpeechPresenceDetector? speechPresenceDetector = null,
         ISpeechPresenceDecisionLogSink? speechPresenceDecisionLogSink = null,
         ILiveInterruptionIntegrationService? liveInterruptionIntegrationService = null,
-        MerlinAwakeStateService? merlinAwakeState = null)
+        MerlinAwakeStateService? merlinAwakeState = null,
+        IPendingInterruptionClarificationService? pendingInterruptionClarifications = null,
+        AssistantUiStateBroadcaster? assistantUiStateBroadcaster = null)
     {
         options.TriggerPostSpeechWaitMs = 0;
         var diagnostics = diagnosticsLogger ?? new NoOpBargeInDiagnosticsLogger();
@@ -3671,7 +3986,9 @@ public sealed class BargeInCoordinatorTests
             debugSnapshots,
             speechPresenceDetector,
             speechPresenceDecisionLogSink,
-            liveInterruptionIntegrationService: liveInterruptionIntegrationService);
+            assistantUiStateBroadcaster: assistantUiStateBroadcaster,
+            liveInterruptionIntegrationService: liveInterruptionIntegrationService,
+            pendingInterruptionClarifications: pendingInterruptionClarifications);
 
         return new TestFixture(coordinator, tap, stt, playback, liveTurnService, speakerDucking);
     }
@@ -4361,6 +4678,10 @@ public sealed class BargeInCoordinatorTests
 
         public YieldedInterruptionUtterance? LastUtterance { get; private set; }
 
+        public int PendingResponseCallCount { get; private set; }
+
+        public PendingInterruptionClarificationResponse? LastPendingResponse { get; private set; }
+
         public Task<LiveInterruptionHandlingOutcome?> TryHandleYieldedInterruptionAsync(
             YieldedInterruptionUtterance utterance,
             CancellationToken cancellationToken = default)
@@ -4375,6 +4696,15 @@ public sealed class BargeInCoordinatorTests
             CancellationToken cancellationToken = default)
         {
             return Task.FromResult(_outcome?.Result);
+        }
+
+        public Task<LiveInterruptionHandlingOutcome?> TryHandlePendingClarificationResponseAsync(
+            PendingInterruptionClarificationResponse response,
+            CancellationToken cancellationToken = default)
+        {
+            PendingResponseCallCount++;
+            LastPendingResponse = response;
+            return Task.FromResult(_outcome);
         }
     }
 
@@ -4562,6 +4892,39 @@ public sealed class BargeInCoordinatorTests
         public IDisposable? OnChange(Action<T, string?> listener)
         {
             return null;
+        }
+    }
+
+    private sealed class RecordingUiStateSink
+    {
+        private readonly object _sync = new();
+        private readonly List<AssistantUiStateEvent> _events = [];
+
+        public RecordingUiStateSink()
+        {
+            Broadcaster = new AssistantUiStateBroadcaster(NullLogger<AssistantUiStateBroadcaster>.Instance);
+            Broadcaster.StateChanged += (uiState, _, _) =>
+            {
+                lock (_sync)
+                {
+                    _events.Add(uiState);
+                }
+
+                return Task.CompletedTask;
+            };
+        }
+
+        public AssistantUiStateBroadcaster Broadcaster { get; }
+
+        public IReadOnlyList<AssistantUiStateEvent> Events
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _events.ToArray();
+                }
+            }
         }
     }
 

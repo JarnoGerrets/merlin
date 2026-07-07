@@ -1,0 +1,28 @@
+{
+  "Tts": {
+    "Provider": "chatterbox",
+    "FallbackProvider": "piper",
+    "ChatterboxDevice": "cuda",
+    "ChatterboxReferenceVoicePath": "VoiceReference\\Reference.wav",
+    "ChatterboxCacheDir": "VoiceCache\\Chatterbox",
+    "ChatterboxModel": "turbo",
+    "ChatterboxExaggeration": 0.65,
+    "ChatterboxCfgWeight": 0.25,
+    "ChatterboxTemperature": 0.65,
+    "ChatterboxRepetitionPenalty": 1.15,
+    "ChatterboxTopP": 0.9,
+    "ChatterboxMinP": 0.05,
+    "ChatterboxKeepWarm": true,
+    "ChatterboxMaxTextCharsPerChunk": 350,
+    "ChatterboxEnableInteractiveChunking": true,
+    "ChatterboxFirstChunkTargetChars": 70,
+    "ChatterboxFirstChunkMaxChars": 120,
+    "ChatterboxNextChunkTargetChars": 95,
+    "ChatterboxNextChunkMaxChars": 140,
+    "ChatterboxEnablePhraseCache": true,
+    "ChatterboxCircuitBreakerFailures": 3,
+    "ChatterboxCircuitBreakerCooldownSeconds": 60,
+    "ChatterboxPythonExecutable": "python",
+    "ChatterboxWorkerScriptPath": "VoiceScripts\\chatterbox_worker.py"
+  }
+}

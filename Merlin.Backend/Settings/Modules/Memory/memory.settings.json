@@ -1,0 +1,6 @@
+{
+  "MerlinDatabase": {
+    "UseAppData": true,
+    "RelativeAppDataPath": "Merlin/db/merlin_memory.db"
+  }
+}

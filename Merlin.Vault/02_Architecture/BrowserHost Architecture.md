@@ -5,66 +5,82 @@ area: browserhost
 tags:
   - merlin
   - architecture
+  - layer/browserhost
 ---
 
 # BrowserHost Architecture
 
 ## Purpose
 
-Document the separate WebView2 host.
+Separate Merlin.BrowserHost project hosts WebView2 and native pointer/input helpers.
 
 ## Current Design
 
-BrowserHost is a WinForms process with WebView2, page scripts, native input, and native pointer overlay.
+Current implementation is distributed across the files in the component table. The vault treats code as source of truth and separates implemented behavior from plans.
 
 ## Planned Design
 
-Future site/app profiles should build on page snapshots and learned profiles, not hard-coded guesses in generic browser control.
+Future design should build on verified foundations only: active surface first, safety before execution, and profiles before app-specific behavior.
 
 ## Main Components
 
-- `BrowserWorkspaceForm`
-- `BrowserWorkspaceCommand`
-- `NativeBrowserPointerOverlayWindow`
-- `NativeBrowserInputService`
-- JS scripts
+| Component | File / Class | Responsibility |
+| --- | --- | --- |
+| Host project | `Merlin.BrowserHost/Merlin.BrowserHost.csproj` | Separate WinForms/WebView2 host. |
+| Main form | `BrowserWorkspaceForm.cs` | WebView2 lifecycle and stdin command loop. |
+| Native overlay | `NativeBrowserPointerOverlayWindow.cs` | Transparent browser pointer overlay. |
+| Input | `NativeBrowserInputService.cs` | Native input injection. |
 
 ## Data / Event Flow
 
-Backend sends JSON commands over stdin; BrowserHost logs/results through stdout; WebView2 executes scripts.
+See linked flow notes for exact call/message paths. In short, user voice and visual/motion inputs enter backend routing, which dispatches to services or emits frontend/BrowserHost messages.
+
+## State Ownership
+
+| State | Owner | Readers | Writers | Reset Conditions |
+| --- | --- | --- | --- | --- |
+| Active surface | `ActiveSurfaceService` | CommandRouter, LiveUtteranceGate, motion registry | BrowserWorkspaceService and future surface producers | Browser close/reset to Dashboard |
+| Motion enabled/profile | `MotionControlModeService` | VisionGestureEventRouter, tests | CommandRouter/profile switch | `eyes closed`, profile activation failure |
+| Browser host lifecycle | `BrowserWorkspaceService` | browser motion/page services | open/close/host-exit handlers | host exit/close |
+| Playback state | `AssistantSpeechPlaybackService` | UI broadcaster, interruption services | playback start/pause/resume/stop | final answer completed/cancelled |
+
+## Safety Boundaries
+
+Routing decides where a command goes. Safety decides whether it may execute. ActiveSurface and motion profiles must never bypass BrowserPageSafetyGuard or confirmation for risky actions.
 
 ## Mermaid Diagram
 
 ```mermaid
 flowchart TD
-    Backend[BrowserWorkspaceService] --> Cmd[stdin JSON]
-    Cmd --> Host[BrowserWorkspaceForm]
-    Host --> WebView[WebView2]
-    Host --> Overlay[Native pointer overlay]
-    WebView --> Snapshot[PageSnapshotScript]
+    U[User voice/gesture] --> R[Routing or Vision pipeline]
+    R --> S[Active surface context]
+    S --> C[Command/service/profile]
+    C --> F[Frontend, BrowserHost, Memory, Tools]
+    C --> G[Safety/confirmation when needed]
+    G --> F
 ```
-
-## Code Map
-
-| File | Role |
-| --- | --- |
-| `Merlin.BrowserHost/BrowserWorkspaceForm.cs` | Main command loop. |
-| `Merlin.BrowserHost/NativeBrowserPointerOverlayWindow.cs` | Native overlay. |
-| `Merlin.BrowserHost/CommonActionScript.cs` | Generic media/common actions. |
 
 ## Important Decisions
 
-- BrowserHost owns final pointer click location.
+- [[ADR-0002 Active Surface Before App-Specific Routing]]
+- [[ADR-0003 Motion Profiles Over One Global Motion Mode]]
+- [[ADR-0005 Safety Does Not Get Bypassed By Routing Context]]
 
-## Risks
+## Known Fragility
 
-- Z-order/lifecycle fragility.
-- DPI/multi-monitor uncertainty.
+- Some behavior is still centralized in large scripts/services.
+- BrowserHost/native overlay lifecycle and DPI behavior need live validation.
+- Voice correction/barge-in tests currently fail and should be treated as blockers for learning features.
 
 ## Open Questions
 
-- How should host closure reset Merlin UI state?
+- Which runtime observations should be promoted into permanent code atlas notes after the next validation session?
 
 ## Related Notes
 
-- [[Browser Workspace]]
+- [[Code Atlas Index]]
+- [[Voice Command Flow]]
+- [[Motion Gesture Dispatch Flow]]
+- [[Browser Workspace Flow]]
+- [[BrowserWorkspaceService]]
+- [[Backend BrowserHost Commands]]

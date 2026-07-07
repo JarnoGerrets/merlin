@@ -1,0 +1,12 @@
+{
+  "Piper": {
+    "ExecutablePath": "..\\.tmp\\piper\\piper\\piper.exe",
+    "ModelPath": "..\\.tmp\\piper\\voices\\en_GB-northern_english_male-medium.onnx",
+    "ConfigPath": "..\\.tmp\\piper\\voices\\en_GB-northern_english_male-medium.onnx.json",
+    "SampleRate": 22050,
+    "Channels": 1,
+    "Format": "s16le",
+    "SentenceSilenceSeconds": 0.05,
+    "EndSilenceMs": 180
+  }
+}

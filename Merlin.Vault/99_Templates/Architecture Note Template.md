@@ -1,4 +1,4 @@
----
+﻿---
 type: architecture
 status: current | planned | mixed | unknown
 area: backend | frontend | browserhost | cross-cutting

@@ -1,0 +1,13 @@
+{
+  "WebSearch": {
+    "Enabled": false,
+    "Provider": "Fake",
+    "ApiKey": "",
+    "MaxResults": 8,
+    "RequestTimeoutSeconds": 15,
+    "PreferOfficialSourcesForTechnicalQueries": true,
+    "FetchPagesForSynthesis": false,
+    "CacheResultsSeconds": 300,
+    "SafeSearch": "moderate"
+  }
+}

@@ -6,78 +6,123 @@ tags:
   - merlin
   - feature
   - status/implemented
+  - layer/cross-cutting
 ---
 
 # Browser Workspace
 
 ## Summary
 
-In-Merlin browser using a separate BrowserHost/WebView2 process.
+Backend-managed BrowserHost/WebView2 workspace with commands, snapshots, pointer overlay, click, scroll, and active-surface updates.
 
 ## Status
 
 implemented
 
+## Verified Against Code
+
+Status verified: yes
+
+Evidence:
+- `Merlin.Backend/Services/BrowserWorkspace/BrowserWorkspaceService.cs exists.`
+- `Merlin.BrowserHost/BrowserWorkspaceForm.cs exists.`
+- `Merlin.BrowserHost/BrowserWorkspaceCommand.cs defines host command DTOs.`
+- `BrowserWorkspaceScoringTests.cs and browser motion/page safety tests exist.`
+
 ## What Exists Today
 
-- BrowserHost/WebView2 process exists.
-- BrowserWorkspaceService launches and controls it.
-- Navigation, scroll, zoom, search, page snapshot, click visible element, common actions exist.
-- Native browser pointer overlay exists.
-- ActiveSurface updates exist.
-- BrowserPageSafetyGuard exists.
-
-## Code Map
-
-| File | Role | Notes |
-| --- | --- | --- |
-| `Merlin.Backend/Services/BrowserWorkspace/BrowserWorkspaceService.cs` | Orchestration | Process lifecycle and commands. |
-| `Merlin.BrowserHost/BrowserWorkspaceForm.cs` | Host window | WebView2 command loop. |
-| `Merlin.BrowserHost/PageSnapshotScript.cs` | Snapshot | Extracts page elements. |
-| `Merlin.Backend/Services/BrowserWorkspace/PageControl/Safety/BrowserPageSafetyGuard.cs` | Safety | Click/action checks. |
-
-## Related Systems
-
-- [[System Architecture Overview]]
-- [[Command Routing Architecture]]
-- [[Active Surface Architecture]]
-
-
-## Dependencies
-
-Dependencies are listed here and in [[Master Roadmap]]. Planned/future work must not start until dependencies are ready.
-
-## Dependents
-
-See linked roadmap notes.
+Backend opens/closes BrowserHost, sends stdin JSON commands, reads stdout state, updates ActiveSurface, and supports navigation/page actions/motion overlay.
 
 ## Current Behavior
 
-Commands open/close browser, navigate sites, manipulate page, and show motion pointer.
+Open browser/search/navigation work. Closing closes host but UI restore has known stale-state risk. Page-aware actions and safety are partial.
 
 ## Planned Behavior
 
-Site-specific profiles and corrections should come later through Control Profile DB.
+Tighten close/reset, page action revalidation, and safety integration for raw pointer actions.
+
+## Code Map
+
+| File | Class / Function | Role | Notes |
+| --- | --- | --- | --- |
+| `Merlin.Backend/Services/BrowserWorkspace/BrowserWorkspaceService.cs` | BrowserWorkspaceService | Backend owner | Host lifecycle and command protocol. |
+| `Merlin.BrowserHost/BrowserWorkspaceForm.cs` | BrowserWorkspaceForm | WebView2 host | Command loop and browser UI. |
+| `Merlin.BrowserHost/NativeBrowserPointerOverlayWindow.cs` | NativeBrowserPointerOverlayWindow | Native pointer overlay | Transparent overlay and click point. |
+
+## Code Atlas
+
+- [[BrowserWorkspaceService]]
+- [[BrowserWorkspaceForm]]
+- [[BrowserWorkspaceCommand]]
+- [[NativeBrowserPointerOverlayWindow]]
+- [[Browser Workspace Flow]]
+- [[Backend BrowserHost Commands]]
+
+## Related Systems
+
+- [[Active Surface Layer]]
+- [[Browser Control]]
+- [[Browser Page-Aware Control]]
+- [[Browser Pointer Overlay]]
+- [[Safety and Confirmation]]
+
+## Dependencies
+
+- [[Active Surface Layer]]
+- [[Safety and Confirmation]]
+
+## Dependents
+
+- [[Browser Control]]
+- [[Browser Pointer Overlay]]
+- [[Browser Page-Aware Control]]
+
+## Readiness
+
+Ready for implementation: yes
+
+Reason:
+Implemented; next work should fix lifecycle and safety gaps.
+
+Blocked by:
+- Learned site controls blocked by [[Control Profile DB]].
+
+Next safe action:
+Fix browser close/reset stale state and raw pointer safety gap.
 
 ## Non-Goals / Do Not Build Yet
 
-Do not build app/site-specific V2 behavior unless the relevant roadmap item is explicitly requested and marked ready.
+- Do not treat arbitrary website-specific behavior as generic browser control.
 
 ## Known Bugs / Fragility
 
-- Host lifecycle/z-order can be fragile.
-- Browser close may not fully restore Merlin UI state.
-- Snapshots can stale quickly.
-- Raw motion click safety gap.
+- Browser close/reset stale state.
+- Overlay lifecycle/z-order fragility.
+- DPI/multi-monitor uncertainty.
 
 ## Tests
 
-See [[Current Test Coverage]].
+| Test File | Coverage | Gaps |
+| --- | --- | --- |
+| `Merlin.Backend.Tests/BrowserWorkspaceScoringTests.cs` | Scoring | No full WebView2 automation. |
+| `Merlin.Backend.Tests/BrowserPageSafetyGuardTests.cs` | Safety guard | Raw motion clicks bypass page safety. |
 
-## Relevant Docs / Reports / Prompts
+## Relevant Implementation Plans
 
-See [[07_Agent_Reports/Index|Agent Reports Index]] and [[08_Implementation_Prompts/Index|Implementation Prompts Index]].
+- [[Browser Control Phases 2-5 Plan]]
+- [[Site Control Profiles Learning Plan]]
 
-## Next Actions
+## Relevant Reports
 
-Stabilize close/reset and safety integration.
+- See [[Agent Reports Index]] for cross-cutting reports.
+
+## Relevant Prompts
+
+- [[Implementation Prompts Index]]
+
+## Source Material
+
+- [[Imported Merlin.ToDo Index]] (4 imported source item(s) mapped to this feature).
+## Open Questions
+
+- Which runtime observations should be added after the next live validation?

@@ -1,0 +1,20 @@
+{
+  "BrowserWorkspace": {
+    "Enabled": true,
+    "HostExecutablePath": "",
+    "StartUrl": "about:blank",
+    "OpenUrlsInsideWorkspaceWhenActive": true,
+    "SearchEngineUrlTemplate": "https://www.google.com/search?q={query}",
+    "SnapshotTimeoutMs": 5000,
+    "Snapshot": {
+      "MaxInputs": 50,
+      "MaxSearchFields": 10,
+      "MaxButtons": 75,
+      "MaxLinks": 100,
+      "MaxHeadings": 50,
+      "MaxResults": 30,
+      "MaxTextBlocks": 20,
+      "MaxElementTextLength": 300
+    }
+  }
+}

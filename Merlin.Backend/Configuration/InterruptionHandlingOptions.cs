@@ -34,6 +34,8 @@ public sealed class InterruptionHandlingOptions
 
     public bool EnableSequentialRecomposition { get; set; } = false;
 
+    public bool EnablePendingInterruptionClarification { get; set; } = false;
+
     public bool RecomposeAfterMeaningfulInterruption { get; set; } = true;
 
     public bool ResumeRawOnlyForBackchannels { get; set; } = true;
@@ -63,6 +65,8 @@ public sealed class InterruptionHandlingOptions
     public int RecentlyYieldedTurnTtlMs { get; set; } = 10000;
 
     public int ProvisionalAudioHoldTimeoutMs { get; set; } = 8000;
+
+    public int PendingInterruptionClarificationTimeoutMs { get; set; } = 15000;
 
     public string[] StopConfirmationPhrases { get; set; } =
     [

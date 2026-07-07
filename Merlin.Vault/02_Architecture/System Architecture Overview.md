@@ -1,77 +1,84 @@
 ---
 type: architecture
-status: current
+status: mixed
 area: cross-cutting
 tags:
   - merlin
   - architecture
+  - layer/cross-cutting
 ---
 
 # System Architecture Overview
 
 ## Purpose
 
-Show how Merlin runtime parts fit together.
+Merlin is a local assistant split across backend services, Godot frontend, Python vision sidecar, and BrowserHost.
 
 ## Current Design
 
-Merlin currently runs as a .NET backend with WebSocket communication to a Godot UI, Python workers for voice/vision, and a separate BrowserHost process for WebView2 browsing.
+Current implementation is distributed across the files in the component table. The vault treats code as source of truth and separates implemented behavior from plans.
 
 ## Planned Design
 
-Future architecture should keep context routing, safety, and control profiles separated.
+Future design should build on verified foundations only: active surface first, safety before execution, and profiles before app-specific behavior.
 
 ## Main Components
 
-- Backend service graph via `Program.cs`.
-- Godot frontend receives WebSocket events.
-- BrowserHost is a child process controlled by JSON commands.
-- Python workers provide STT/TTS/vision sidecars.
+| Component | File / Class | Responsibility |
+| --- | --- | --- |
+| CommandRouter | `Merlin.Backend/Services/CommandRouter.cs` | Routes commands where relevant. |
+| ActiveSurfaceService | `Merlin.Backend/Services/Context/ActiveSurface/ActiveSurfaceService.cs` | Current surface context. |
+| BrowserWorkspaceService | `Merlin.Backend/Services/BrowserWorkspace/BrowserWorkspaceService.cs` | Browser host and page actions where relevant. |
+| MotionControlModeService | `Merlin.Backend/Services/Motion/MotionControlModeService.cs` | Motion profile owner where relevant. |
 
 ## Data / Event Flow
 
-Voice and motion enter backend through separate routes, then converge on command/state updates sent to frontend or browser host.
+See linked flow notes for exact call/message paths. In short, user voice and visual/motion inputs enter backend routing, which dispatches to services or emits frontend/BrowserHost messages.
+
+## State Ownership
+
+| State | Owner | Readers | Writers | Reset Conditions |
+| --- | --- | --- | --- | --- |
+| Active surface | `ActiveSurfaceService` | CommandRouter, LiveUtteranceGate, motion registry | BrowserWorkspaceService and future surface producers | Browser close/reset to Dashboard |
+| Motion enabled/profile | `MotionControlModeService` | VisionGestureEventRouter, tests | CommandRouter/profile switch | `eyes closed`, profile activation failure |
+| Browser host lifecycle | `BrowserWorkspaceService` | browser motion/page services | open/close/host-exit handlers | host exit/close |
+| Playback state | `AssistantSpeechPlaybackService` | UI broadcaster, interruption services | playback start/pause/resume/stop | final answer completed/cancelled |
+
+## Safety Boundaries
+
+Routing decides where a command goes. Safety decides whether it may execute. ActiveSurface and motion profiles must never bypass BrowserPageSafetyGuard or confirmation for risky actions.
 
 ## Mermaid Diagram
 
 ```mermaid
 flowchart TD
-    User[User] --> Voice[Voice pipeline]
-    User --> Camera[Camera]
-    Voice --> Backend[Merlin.Backend]
-    Camera --> Vision[Vision sidecar]
-    Vision --> Backend
-    Backend --> Godot[Godot frontend]
-    Backend --> BrowserHost[BrowserHost WebView2]
-    Backend --> TTS[TTS playback]
+    U[User voice/gesture] --> R[Routing or Vision pipeline]
+    R --> S[Active surface context]
+    S --> C[Command/service/profile]
+    C --> F[Frontend, BrowserHost, Memory, Tools]
+    C --> G[Safety/confirmation when needed]
+    G --> F
 ```
-
-## Code Map
-
-| File | Role |
-| --- | --- |
-| `Merlin.Backend/Program.cs` | Service registration. |
-| `Merlin.Backend/WebSocket/WebSocketHandler.cs` | Frontend bridge. |
-| `Merlin.Frontend/Scripts/Main.gd` | Main Godot UI runtime. |
-| `Merlin.BrowserHost/BrowserWorkspaceForm.cs` | WebView2 host. |
 
 ## Important Decisions
 
-- Use Active Surface for context.
-- Use Motion Profiles rather than one global motion mode.
-- Safety decides whether; routing decides where.
+- [[ADR-0002 Active Surface Before App-Specific Routing]]
+- [[ADR-0003 Motion Profiles Over One Global Motion Mode]]
+- [[ADR-0005 Safety Does Not Get Bypassed By Routing Context]]
 
-## Risks
+## Known Fragility
 
-- Cross-process lifecycle can leave stale state.
-- Browser/motion safety paths are not fully unified.
+- Some behavior is still centralized in large scripts/services.
+- BrowserHost/native overlay lifecycle and DPI behavior need live validation.
+- Voice correction/barge-in tests currently fail and should be treated as blockers for learning features.
 
 ## Open Questions
 
-- Which frontend validation command should be canonical?
+- Which runtime observations should be promoted into permanent code atlas notes after the next validation session?
 
 ## Related Notes
 
-- [[Command Routing Architecture]]
-- [[Motion Architecture]]
-- [[BrowserHost Architecture]]
+- [[Code Atlas Index]]
+- [[Voice Command Flow]]
+- [[Motion Gesture Dispatch Flow]]
+- [[Browser Workspace Flow]]

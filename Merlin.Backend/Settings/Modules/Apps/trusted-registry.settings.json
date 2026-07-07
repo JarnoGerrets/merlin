@@ -1,0 +1,10 @@
+{
+  "TrustedRegistry": {
+    "Enabled": true,
+    "DatabasePath": null,
+    "ImportLegacyJsonOnStartup": true,
+    "KeepLegacyJsonAsBackup": true,
+    "WriteThroughLegacyJson": false,
+    "EnableTrustedCommandParser": false
+  }
+}

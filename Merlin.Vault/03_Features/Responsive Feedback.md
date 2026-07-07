@@ -6,71 +6,107 @@ tags:
   - merlin
   - feature
   - status/partial
+  - layer/backend
 ---
 
 # Responsive Feedback
 
 ## Summary
 
-Acknowledgements and lightweight feedback while longer work continues.
+Short acknowledgements and feedback during interruptions/requests.
 
 ## Status
 
 partial
 
+## Verified Against Code
+
+Status verified: yes
+
+Evidence:
+- ResponsiveFeedbackOrchestrator.cs and feedback services exist.
+- AcknowledgementIntegrationTests.cs exists.
+
 ## What Exists Today
 
-- Acknowledgement policy/speech services exist.
-- Responsive feedback orchestrator/options exist.
-- Tests cover feedback selectors and integrations.
-
-## Code Map
-
-| File | Role | Notes |
-| --- | --- | --- |
-| `Merlin.Backend/Services/Acknowledgement/*` | Acknowledgement | Immediate speech decisions. |
-| `Merlin.Backend/Services/Feedback/*` | Feedback | Context/vector/orchestration. |
-| `Merlin.Backend.Tests/ResponsiveFeedback*Tests.cs` | Tests | Feedback behavior. |
-
-## Related Systems
-
-- [[System Architecture Overview]]
-- [[Command Routing Architecture]]
-- [[Active Surface Architecture]]
-
-
-## Dependencies
-
-Dependencies are listed here and in [[Master Roadmap]]. Planned/future work must not start until dependencies are ready.
-
-## Dependents
-
-See linked roadmap notes.
+Feedback/acknowledgement services exist and integrate with speech playback.
 
 ## Current Behavior
 
-Provides progress/acknowledgement for selected requests.
+Partial UX layer; dependent on voice/playback timing stability.
 
 ## Planned Behavior
 
-Migrate carefully per responsive feedback roadmap.
+Make feedback surface-aware and non-blocking.
+
+## Code Map
+
+| File | Class / Function | Role | Notes |
+| --- | --- | --- | --- |
+| `Merlin.Backend/Services/Feedback/ResponsiveFeedbackOrchestrator.cs` | ResponsiveFeedbackOrchestrator | Feedback orchestration | Selects/emits feedback. |
+| `Merlin.Backend/Services/AcknowledgementSpeechService.cs` | AcknowledgementSpeechService | Acknowledgement speech | Short spoken feedback. |
+
+## Code Atlas
+
+- [[AssistantSpeechPlaybackService]]
+- [[Assistant Playback Events]]
+
+## Related Systems
+
+- Better command UX
+- [[Voice Interruption System]]
+
+## Dependencies
+
+- [[Voice Interruption System]]
+
+## Dependents
+
+- Better command UX
+
+## Readiness
+
+Ready for implementation: no
+
+Reason:
+Voice timing tests should be stabilized first.
+
+Blocked by:
+- [[Voice Interruption System]]
+
+Next safe action:
+Fix voice timing regressions first.
 
 ## Non-Goals / Do Not Build Yet
 
-Do not build app/site-specific V2 behavior unless the relevant roadmap item is explicitly requested and marked ready.
+- Do not add more chatty confirmations while command outcomes are unstable.
 
 ## Known Bugs / Fragility
 
-- Can conflict with interruption/playback if state is wrong.
+- Feedback can conflict with calibration/timed prompts if not gated by playback completion.
 
 ## Tests
 
-See [[Current Test Coverage]].
+| Test File | Coverage | Gaps |
+| --- | --- | --- |
+| `Merlin.Backend.Tests/AcknowledgementIntegrationTests.cs` | Acknowledgements | End-to-end timing remains manual. |
 
-## Relevant Docs / Reports / Prompts
+## Relevant Implementation Plans
 
-See [[07_Agent_Reports/Index|Agent Reports Index]] and [[08_Implementation_Prompts/Index|Implementation Prompts Index]].
+- [[Responsive Feedback Migration V2 Plan]]
+- [[Responsive Feedback Migration Original Plan]]
 
-## Next Actions
+## Relevant Reports
 
-Avoid chatty confirmations for terse commands.
+- See [[Agent Reports Index]] for cross-cutting reports.
+
+## Relevant Prompts
+
+- [[Implementation Prompts Index]]
+
+## Source Material
+
+- [[Imported Merlin.ToDo Index]] (3 imported source item(s) mapped to this feature).
+## Open Questions
+
+- Which runtime observations should be added after the next live validation?

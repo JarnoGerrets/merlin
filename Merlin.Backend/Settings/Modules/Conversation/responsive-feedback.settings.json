@@ -1,0 +1,25 @@
+{
+  "ResponsiveFeedback": {
+    "Enabled": true,
+    "EnableSpeechFeedback": true,
+    "EnableVisualFeedback": false,
+    "UseCardSelectorForImmediateFeedback": true,
+    "UseCardSelectorForProgressFeedback": false,
+    "UseCardSelectorForInterruptionBridgeFeedback": true,
+    "ImmediateFeedbackDelayMs": 150,
+    "MinimumMsBeforeGenericFeedback": 250,
+    "MinimumSelectionScore": 0.5,
+    "GlobalCooldownMs": 1500,
+    "DefaultCardCooldownSeconds": 60,
+    "SameTextCooldownSeconds": 120,
+    "MaxImmediateFeedbackPerTurn": 1,
+    "MaxInterruptionBridgeFeedbackPerInterruption": 1,
+    "PreferTaskAwareFeedback": true,
+    "SuppressIfMainResponseReady": true,
+    "SuppressNormalProgressDuringInterruptionHandling": true,
+    "UseStableCardIdAsSpeechCacheKey": true,
+    "MarkFeedbackAsReplayableSpeech": true,
+    "EnableDiagnosticsLogging": false,
+    "CardsFilePath": null
+  }
+}

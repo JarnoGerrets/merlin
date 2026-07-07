@@ -1,0 +1,14 @@
+{
+  "Voice": {
+    "PythonExecutable": "C:\\Users\\jarno\\anaconda3\\envs\\merlin-voice\\python.exe",
+    "PythonArguments": [],
+    "WhisperModelSize": "medium.en",
+    "WhisperDevice": "cuda",
+    "WhisperComputeType": "int8_float16",
+    "WhisperLanguage": "en",
+    "WhisperBeamSize": 5,
+    "WhisperVadMinSilenceDurationMs": 600,
+    "WhisperInitialPrompt": "Merlin voice commands may include app names, website domains, browser mappings, terminal.nl, facebook.com, github.com, vscode, Visual Studio Code, PowerShell, Chrome, show chat, open chat, close chat, hide chat, chatlog, chat log, dot com, dot nl, dot co dot uk.",
+    "ProcessTimeoutSeconds": 120
+  }
+}

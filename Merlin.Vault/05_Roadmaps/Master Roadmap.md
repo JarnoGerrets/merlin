@@ -1,6 +1,7 @@
 ---
 type: roadmap
-status: current
+status: mixed
+area: cross-cutting
 tags:
   - merlin
   - roadmap
@@ -8,61 +9,44 @@ tags:
 
 # Master Roadmap
 
-Work is grouped by dependency order.
+## Scope
 
-## Foundation / Core Routing
+Dependency-ordered source of truth across all Merlin systems.
 
-| Item | Status | Depends on | Blocks | Ready? | Do not build yet reason | Relevant notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| Active Surface Layer | implemented | none | motion profiles, context routing | yes | n/a | [[Active Surface Layer]] |
-| Motion Control Profile Layer | implemented | active surface, vision sidecar | site/app profiles | yes | n/a | [[Motion Control Profile Layer]] |
-| CommandRouter decomposition | planned | stable behavior tests | cleaner future features | no | avoid refactor during feature work | [[Command Routing Architecture]] |
+## Dependency-Ordered Items
 
-## Voice and Interruption
+| Item | Status | Depends on | Blocks | Ready? | Why / why not | Relevant feature notes | Relevant code atlas notes | Next safe action |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Stabilize correction/barge-in tests | partial | current failing tests | Control Profile DB, learned site profiles, interruption UX | yes | Runtime code exists, but failures are isolated enough to investigate. | [[Correction Layer]], [[Voice Interruption System]] | [[LiveUtteranceGate]], [[AssistantSpeechPlaybackService]], [[CorrectionRequestBuilder]] | Fix failing tests without touching browser/motion. |
+| Harden browser close/reset | partial | BrowserWorkspaceService, ActiveSurfaceService, frontend restore | reliable browser UX, site profiles | yes | Known stale state after close affects active surface and UI restore. | [[Browser Workspace]], [[Active Surface Layer]], [[Browser Control]] | [[BrowserWorkspaceService]], [[ActiveSurfaceService]], [[Main.gd]] | Sync close/reset/front-end restore path. |
+| Add raw motion click safety | partial | BrowserPinchClickController, BrowserPageSafetyGuard | safe motion browser control, learned profiles | yes | Raw native click works but bypasses page-action safety. | [[Browser Pinch Click]], [[Safety and Confirmation]] | [[BrowserPinchClickController]], [[BrowserPageSafetyGuard]], [[NativeBrowserInputService]] | Design safety adapter for motion clicks. |
+| Tune motion profile config/diagnostics | partial | Motion profile layer and vision worker | better dashboard/browser motion UX | yes | Profiles exist; tuning needs diagnostics not architecture change. | [[Motion Control]], [[Motion Control Profile Layer]], [[Vision Sidecar]] | [[MotionControlModeService]], [[MotionControlProfileRegistry]], [[vision_worker.py]] | Add/read diagnostics before changing thresholds. |
+| Seeded YouTube media shortcut profile | planned | BrowserWorkspace active surface and BrowserHost command protocol | first site-control example | yes | Small scoped exception, not learned profile DB. | [[Site Control Profiles]], [[Browser Control]], [[YouTube Site Control Profile Media Commands]] | [[BrowserMediaCommandNormalizer]], [[CommandRouter]], [[BrowserWorkspaceService]], [[BrowserWorkspaceForm]] | Implement fullscreen confirmations and J/L seek mapping. |
+| Control Profile DB | future | correction stability, raw click safety, page-aware control | learned site/app profiles | no | Foundations still fragile. | [[Control Profile DB]], [[Site Control Profiles]] | [[BrowserWorkspaceService]], [[BrowserPageSafetyGuard]], [[MotionControlModeService]] | Do not build until blockers pass. |
 
-| Item | Status | Depends on | Blocks | Ready? | Do not build yet reason | Relevant notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| Stabilize correction/barge-in tests | partial | current tests | correction-driven profiles | yes | n/a | [[Correction Layer]] |
-| Surface-aware ambiguous media commands | partial | active surface | better browser media UX | yes | n/a | [[Voice Interruption System]] |
+## Linked Implementation Plans
 
-## Browser Workspace
-
-| Item | Status | Depends on | Blocks | Ready? | Do not build yet reason | Relevant notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| BrowserHost lifecycle reset | partial | BrowserWorkspaceService | reliable UI restoration | yes | n/a | [[Browser Workspace]] |
-| Raw motion click safety integration | planned | BrowserPageSafetyGuard, pointer profile | learned browser profiles | yes | n/a | [[Safety and Confirmation Architecture]] |
-| Site-specific YouTube controls | future | Control Profile DB, correction loop | rich media control | no | would clutter generic browser control | [[Control Profile DB]] |
-
-## Motion Control
-
-| Item | Status | Depends on | Blocks | Ready? | Do not build yet reason | Relevant notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| Region/pinch calibration polish | partial | vision sidecar | reliable motion | yes | n/a | [[Motion Control]] |
-| Per-profile sensitivity | planned | motion profiles | app/site profiles | yes | n/a | [[Motion Control Profile Layer]] |
-| App/site gesture profiles | future | Control Profile DB, active surface, safety | advanced control | no | learned profile layer missing | [[Control Profile DB]] |
-
-## Memory and Correction
-
-| Item | Status | Depends on | Blocks | Ready? | Do not build yet reason | Relevant notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| Correction stability | partial | tests | learning from mistakes | yes | n/a | [[Correction Layer]] |
-| Correction-driven profile learning | future | Control Profile DB | adaptive UI control | no | profile DB not built | [[Control Profile DB]] |
-
-## Widgets
-
-| Item | Status | Depends on | Blocks | Ready? | Do not build yet reason | Relevant notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| Spotify Widget | future | widget base, Spotify API/auth | music surface profile | no | auth/control not implemented | [[Spotify Widget]] |
-
-## External Apps
-
-| Item | Status | Depends on | Blocks | Ready? | Do not build yet reason | Relevant notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| External app active surfaces | future | focus detection, safety | app profiles | no | surface detection missing | [[External App Control]] |
-| File Browser | future | safety/confirmation, active surface | file workflows | no | destructive action risk | [[File Browser]] |
-
-## Learned Control Profiles
-
-| Item | Status | Depends on | Blocks | Ready? | Do not build yet reason | Relevant notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| Control Profile DB | future | active surface, browser page-aware control, correction, motion profiles | YouTube/Spotify/app profiles | no | foundation and safety need stabilization | [[Control Profile DB]] |
+- [[Always-On Interruption And Live Utterance Routing Plan]]
+- [[AskClarification Dead End Fix Plan]]
+- [[Browser Control Phases 2-5 Plan]]
+- [[Codex Mission Control Plan]]
+- [[External Open Overlay And Animation Plan]]
+- [[Fixes Enabled By Active Surface Context Layer Plan]]
+- [[Conversational Interruption Redesign V2 Plan]]
+- [[Responsive Feedback Migration V2 Plan]]
+- [[Conversational Interruption Redesign Original Plan]]
+- [[Responsive Feedback Migration Original Plan]]
+- [[Correction Classification And Semantic Rewrite Plan]]
+- [[Correction Regeneration Token And Short Stop Fix Plan]]
+- [[Echo Aware Self Speech Suppression Plan]]
+- [[Fast Near-End Ducking Path Plan]]
+- [[Instant Ducking And Natural Hard Stop Plan]]
+- [[Live Turn Correction Regeneration Plan]]
+- [[Playback Clock Aligned Reference Tap Plan]]
+- [[Playback Mic Correlation Self Echo Suppression Plan]]
+- [[Motion Control Profile Layer Plan]]
+- [[Spotify Music Widget Implementation Plan]]
+- [[Site Control Profiles Learning Plan]]
+- [[Active Surface Context Layer Plan]]
+- [[Universal UI Control Layer Design Plan]]
+- [[Voice Correction Learning Plan]]

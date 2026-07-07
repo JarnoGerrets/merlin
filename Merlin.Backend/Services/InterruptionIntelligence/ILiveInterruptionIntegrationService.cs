@@ -9,4 +9,8 @@ public interface ILiveInterruptionIntegrationService
     Task<InterruptionHandlingResult?> TryHandleLiveInterruptionAsync(
         LiveInterruptionContext context,
         CancellationToken cancellationToken = default);
+
+    Task<LiveInterruptionHandlingOutcome?> TryHandlePendingClarificationResponseAsync(
+        PendingInterruptionClarificationResponse response,
+        CancellationToken cancellationToken = default);
 }

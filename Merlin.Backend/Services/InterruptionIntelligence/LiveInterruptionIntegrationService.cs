@@ -1,4 +1,5 @@
 using Merlin.Backend.Configuration;
+using Merlin.Backend.Models;
 using Merlin.Backend.Services;
 using Microsoft.Extensions.Options;
 
@@ -15,6 +16,8 @@ public sealed class LiveInterruptionIntegrationService : ILiveInterruptionIntegr
     private readonly IInterruptionSpeechOutputPort? _speechOutputPort;
     private readonly ILiveSpokenAnswerTrackingService? _spokenAnswerTracking;
     private readonly IStopConfirmationPhraseSelector? _stopConfirmationPhraseSelector;
+    private readonly IPendingInterruptionClarificationService? _pendingClarifications;
+    private readonly AssistantUiStateBroadcaster? _assistantUiStateBroadcaster;
     private readonly InterruptionHandlingOptions _options;
     private readonly ILogger<LiveInterruptionIntegrationService> _logger;
 
@@ -30,7 +33,9 @@ public sealed class LiveInterruptionIntegrationService : ILiveInterruptionIntegr
         ILiveSpokenAnswerTrackingService? spokenAnswerTracking = null,
         IInterruptionModelPort? modelPort = null,
         IInterruptionSpeechOutputPort? speechOutputPort = null,
-        IStopConfirmationPhraseSelector? stopConfirmationPhraseSelector = null)
+        IStopConfirmationPhraseSelector? stopConfirmationPhraseSelector = null,
+        IPendingInterruptionClarificationService? pendingClarifications = null,
+        AssistantUiStateBroadcaster? assistantUiStateBroadcaster = null)
     {
         _candidateFactory = candidateFactory;
         _classifier = classifier;
@@ -40,6 +45,8 @@ public sealed class LiveInterruptionIntegrationService : ILiveInterruptionIntegr
         _modelPort = modelPort;
         _speechOutputPort = speechOutputPort;
         _stopConfirmationPhraseSelector = stopConfirmationPhraseSelector;
+        _pendingClarifications = pendingClarifications;
+        _assistantUiStateBroadcaster = assistantUiStateBroadcaster;
         _spokenAnswerTracking = spokenAnswerTracking;
         _ = requestRouterPort;
         _options = options.Value;
@@ -184,14 +191,159 @@ public sealed class LiveInterruptionIntegrationService : ILiveInterruptionIntegr
             ConversationalInterruptionHandlingStrategy.CancelAndRedirect =>
                 await HandleCorrectionRedirectAsync(candidate, utterance, decision, cancellationToken),
             ConversationalInterruptionHandlingStrategy.AskUserToClarifyInterruption =>
-                DeferToOldPath(candidate, decision, "Ask-user-to-clarify is not executed live in PR7."),
+                await HandleAskUserToClarifyInterruptionAsync(candidate, utterance, decision, cancellationToken),
             ConversationalInterruptionHandlingStrategy.ClarifyThenRecomposeFromCheckpoint =>
                 await HandleSequentialClarificationRecompositionAsync(candidate, utterance, decision, cancellationToken),
             ConversationalInterruptionHandlingStrategy.LocalBridgeAndRecomposeFromCheckpoint
                 or ConversationalInterruptionHandlingStrategy.QueueFollowUpAfterCurrent =>
-                DeferToOldPath(candidate, decision, $"Strategy {decision.Strategy} is deferred until recomposition PR."),
-            _ => DeferToOldPath(candidate, decision, $"Strategy {decision.Strategy} is not supported by PR8.")
+                await HandleTerminalFallbackAsync(
+                    candidate,
+                    utterance,
+                    decision,
+                    $"Strategy {decision.Strategy} has no executable live recomposition owner; resumed held playback instead of deferring.",
+                    cancellationToken),
+            _ => await HandleTerminalFallbackAsync(
+                candidate,
+                utterance,
+                decision,
+                $"Strategy {decision.Strategy} is not supported by the live interruption runtime; resumed held playback instead of deferring.",
+                cancellationToken)
         };
+    }
+
+    public async Task<LiveInterruptionHandlingOutcome?> TryHandlePendingClarificationResponseAsync(
+        PendingInterruptionClarificationResponse response,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+
+        var pending = response.Pending;
+        var decision = PendingClarificationDecision();
+        var candidate = new ConversationalInterruptionCandidate
+        {
+            Transcript = BuildResolvedPendingInterruptionText(pending, response),
+            ActiveTurnId = pending.ActiveTurnId,
+            CorrelationId = pending.CorrelationId,
+            TranscriptConfidence = 1.0,
+            OriginalUserQuestion = pending.OriginalUserQuestion,
+            CurrentAssistantSentence = pending.DiscardedPartialSentence,
+            LastCompletedAssistantSentence = pending.LastCompletedSentence,
+            StartedAtUtc = pending.CreatedAtUtc,
+            EndedAtUtc = response.ConsumedAtUtc
+        };
+
+        if (!_options.Enabled || !_options.EnableLiveBargeInIntegration || !_options.EnableLiveMinimalBehavior)
+        {
+            return await HandlePendingClarificationFailedAsync(
+                candidate,
+                decision,
+                "Pending clarification response could not run because live interruption integration is disabled.",
+                cancellationToken);
+        }
+
+        var disabledReason = GetSequentialRecompositionDisabledReason();
+        if (disabledReason is not null)
+        {
+            return await HandlePendingClarificationFailedAsync(
+                candidate,
+                decision,
+                $"Pending clarification response could not recompose: {disabledReason}",
+                cancellationToken);
+        }
+
+        var checkpoint = CreateCheckpointFromPending(pending);
+        if (!HasMinimumCheckpointInputs(checkpoint))
+        {
+            return await HandlePendingClarificationFailedAsync(
+                candidate,
+                decision,
+                "Pending clarification response could not recompose because the original interruption checkpoint was incomplete.",
+                cancellationToken);
+        }
+
+        await ResolvePendingProvisionalHoldAsync(pending, decision, cancellationToken);
+        await _playbackPort.FlushFinalAnswerSpeechForTurnAsync(
+            pending.ActiveTurnId,
+            "pending_interruption_clarification_recomposition",
+            cancellationToken);
+        await _feedbackPort.SuppressNormalProgressAsync(pending.ActiveTurnId, cancellationToken);
+        await _playbackPort.CancelCurrentAsync(
+            pending.ActiveTurnId,
+            decision.Reason,
+            cancellationToken);
+
+        try
+        {
+            var clarification = new ClarificationResult
+            {
+                ReplyText = response.ResponseText,
+                ClarificationContext = BuildPendingClarificationContext(pending, response),
+                ShouldRecomposeContinuation = true,
+                UserQuestionAnswered = true
+            };
+            var continuationRequest = BuildContinuationRequest(candidate, checkpoint!, clarification);
+            var continuation = await _modelPort!.GenerateContinuationAsync(continuationRequest, cancellationToken);
+            await _speechOutputPort!.SpeakInterruptionContentAsync(
+                pending.ActiveTurnId,
+                pending.CorrelationId,
+                continuation.ContinuationText,
+                "recomposed_continuation",
+                cancellationToken);
+            await EmitPendingClarificationResolvedAsync(
+                pending,
+                "pending_interruption_clarification_recomposition_completed",
+                "speaking",
+                "interruption_continuation",
+                audiblePlaybackActive: true,
+                cancellationToken);
+
+            var reason = "Pending clarification response recomposed continuation.";
+            _logger.LogInformation(
+                "pending_interruption_clarification_recomposed ClarificationId: {ClarificationId}. TurnId: {TurnId}. CorrelationId: {CorrelationId}. ResponseCaptureId: {ResponseCaptureId}. ResponseLength: {ResponseLength}.",
+                pending.ClarificationId,
+                pending.ActiveTurnId,
+                pending.CorrelationId,
+                response.CaptureId,
+                response.ResponseText.Length);
+            return new LiveInterruptionHandlingOutcome
+            {
+                WasEvaluatedByConversationalInterruption = true,
+                WasHandledByConversationalInterruption = true,
+                AllowLegacyCleanup = false,
+                AllowLegacySemanticRouting = false,
+                ShouldCancelPlayback = true,
+                ShouldCancelCurrentTurn = false,
+                PendingClarificationId = pending.ClarificationId,
+                Result = Result(
+                    InterruptionHandlingResultType.ClarificationAndRecompositionPrepared,
+                    decision,
+                    reason,
+                    playbackCancelled: true,
+                    normalProgressSuppressed: true,
+                    checkpoint: checkpoint,
+                    clarificationResult: clarification,
+                    continuationRequest: continuationRequest,
+                    continuationResult: continuation),
+                InterruptionType = decision.Type,
+                Strategy = decision.Strategy,
+                Reason = reason
+            };
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                exception,
+                "pending_interruption_clarification_recomposition_failed ClarificationId: {ClarificationId}. TurnId: {TurnId}. CorrelationId: {CorrelationId}.",
+                pending.ClarificationId,
+                pending.ActiveTurnId,
+                pending.CorrelationId);
+            return await HandlePendingClarificationFailedAsync(
+                candidate,
+                decision,
+                $"Pending clarification recomposition failed: {exception.Message}",
+                cancellationToken,
+                playbackCancelled: true);
+        }
     }
 
     private LiveInterruptionHandlingOutcome IdleRequestSkippedOutcome(YieldedInterruptionUtterance utterance)
@@ -525,6 +677,204 @@ public sealed class LiveInterruptionIntegrationService : ILiveInterruptionIntegr
         };
     }
 
+    private async Task<LiveInterruptionHandlingOutcome> HandleAskUserToClarifyInterruptionAsync(
+        ConversationalInterruptionCandidate candidate,
+        YieldedInterruptionUtterance utterance,
+        ConversationalInterruptionDecision decision,
+        CancellationToken cancellationToken)
+    {
+        if (IsLikelyShortFragment(candidate.Transcript))
+        {
+            return await HandleTerminalFallbackAsync(
+                candidate,
+                utterance,
+                decision,
+                "AskClarification live utterance looked like a short fragment; resumed held playback instead of asking a dead-end clarification.",
+                cancellationToken);
+        }
+
+        var disabledReason = GetSequentialRecompositionDisabledReason();
+        if (_options.EnablePendingInterruptionClarification && _pendingClarifications is not null)
+        {
+            if (string.IsNullOrWhiteSpace(candidate.ActiveTurnId) || string.IsNullOrWhiteSpace(candidate.CorrelationId))
+            {
+                return await HandleTerminalFallbackAsync(
+                    candidate,
+                    utterance,
+                    decision,
+                    $"AskClarification pending owner requires turn and correlation ids ({disabledReason}); resumed held playback instead of deferring.",
+                    cancellationToken);
+            }
+
+            return await HandlePendingAskClarificationOwnerAsync(
+                candidate,
+                utterance,
+                decision,
+                disabledReason ?? "pending clarification response will own recomposition",
+                cancellationToken);
+        }
+
+        if (disabledReason is null)
+        {
+            _logger.LogInformation(
+                "ask_clarification_live_mapped_to_sequential_recomposition TurnId: {TurnId}. CorrelationId: {CorrelationId}. DecisionType: {DecisionType}. Strategy: {Strategy}. TranscriptLength: {TranscriptLength}.",
+                candidate.ActiveTurnId,
+                candidate.CorrelationId,
+                decision.Type,
+                decision.Strategy,
+                candidate.Transcript?.Length ?? 0);
+            return await HandleSequentialClarificationRecompositionAsync(candidate, utterance, decision, cancellationToken);
+        }
+
+        return await HandleTerminalFallbackAsync(
+            candidate,
+            utterance,
+            decision,
+            $"AskClarification had no executable live clarification owner ({disabledReason}); resumed held playback instead of deferring.",
+            cancellationToken);
+    }
+
+    private async Task<LiveInterruptionHandlingOutcome> HandlePendingAskClarificationOwnerAsync(
+        ConversationalInterruptionCandidate candidate,
+        YieldedInterruptionUtterance utterance,
+        ConversationalInterruptionDecision decision,
+        string disabledReason,
+        CancellationToken cancellationToken)
+    {
+        var checkpoint = TryCreateLiveCheckpoint(utterance);
+        if (!HasMinimumCheckpointInputs(checkpoint))
+        {
+            return await HandleTerminalFallbackAsync(
+                candidate,
+                utterance,
+                decision,
+                "AskClarification pending owner requires a checkpoint with the original question; resumed held playback instead of creating an incomplete owner.",
+                cancellationToken);
+        }
+
+        var pending = _pendingClarifications!.CreatePending(
+            new PendingInterruptionClarificationCreateRequest
+            {
+                ActiveTurnId = candidate.ActiveTurnId,
+                CorrelationId = candidate.CorrelationId,
+                CaptureId = utterance.CaptureId,
+                OriginalTranscript = candidate.Transcript ?? string.Empty,
+                NormalizedTranscript = ConversationalInterruptionTextNormalizer.Normalize(candidate.Transcript),
+                RouteKind = utterance.RouteKind,
+                RouteAction = utterance.RouteAction,
+                Layer1Decision = utterance.Layer1Decision,
+                ProvisionalAudioHoldId = utterance.ProvisionalAudioHoldId,
+                WasHeldByProvisionalAudioHold = utterance.WasHeldByProvisionalAudioHold,
+                OriginalUserQuestion = checkpoint!.OriginalUserQuestion,
+                SafeSpokenPrefix = checkpoint.SafeSpokenPrefix,
+                LastCompletedSentence = checkpoint.LastCompletedSentence,
+                DiscardedPartialSentence = checkpoint.DiscardedPartialSentence,
+                CurrentTopicLabel = checkpoint.CurrentTopicLabel,
+                OriginalPlanOrIntent = checkpoint.OriginalPlanOrIntent
+            });
+
+        await ResolveProvisionalAudioHoldAsync(
+            candidate,
+            utterance,
+            decision,
+            ProvisionalAudioHoldResolutionAction.Resume,
+            "pending_interruption_clarification_created",
+            cancellationToken);
+        await EmitAwaitingClarificationAsync(candidate, pending, cancellationToken);
+
+        var reason = $"AskClarification pending owner created; full recomposition is still disabled ({disabledReason}).";
+        _logger.LogInformation(
+            "ask_clarification_pending_owner_created TurnId: {TurnId}. CorrelationId: {CorrelationId}. ClarificationId: {ClarificationId}. DecisionType: {DecisionType}. Strategy: {Strategy}. AllowLegacyCleanup: {AllowLegacyCleanup}. AllowLegacySemanticRouting: {AllowLegacySemanticRouting}. Reason: {Reason}.",
+            candidate.ActiveTurnId,
+            candidate.CorrelationId,
+            pending.ClarificationId,
+            decision.Type,
+            decision.Strategy,
+            true,
+            false,
+            reason);
+
+        return new LiveInterruptionHandlingOutcome
+        {
+            WasEvaluatedByConversationalInterruption = true,
+            WasHandledByConversationalInterruption = true,
+            AllowLegacyCleanup = true,
+            AllowLegacySemanticRouting = false,
+            ShouldResumeOrContinuePlaybackIfPossible = true,
+            PendingClarificationId = pending.ClarificationId,
+            Result = Result(InterruptionHandlingResultType.AskedUserToClarify, decision, reason),
+            InterruptionType = decision.Type,
+            Strategy = decision.Strategy,
+            Reason = reason
+        };
+    }
+
+    private Task EmitAwaitingClarificationAsync(
+        ConversationalInterruptionCandidate candidate,
+        PendingInterruptionClarification pending,
+        CancellationToken cancellationToken)
+    {
+        if (_assistantUiStateBroadcaster is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return _assistantUiStateBroadcaster.EmitImmediateAsync(
+            AssistantUiStateEvent.Create(
+                "listening",
+                "pending_interruption_clarification_awaiting_response",
+                pending.CorrelationId,
+                pending.ActiveTurnId,
+                speechItemType: "interruption_clarification",
+                audiblePlaybackActive: false,
+                interruptionState: AssistantUiStateEvent.InterruptionStateAwaitingClarification,
+                timestampUtc: candidate.EndedAtUtc == default
+                    ? DateTimeOffset.UtcNow
+                    : candidate.EndedAtUtc),
+            nameof(LiveInterruptionIntegrationService),
+            cancellationToken);
+    }
+
+    private async Task<LiveInterruptionHandlingOutcome> HandleTerminalFallbackAsync(
+        ConversationalInterruptionCandidate candidate,
+        YieldedInterruptionUtterance utterance,
+        ConversationalInterruptionDecision decision,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        await ResolveProvisionalAudioHoldAsync(
+            candidate,
+            utterance,
+            decision,
+            ProvisionalAudioHoldResolutionAction.Resume,
+            "conversational_interruption_terminal_fallback",
+            cancellationToken);
+
+        _logger.LogInformation(
+            "conversational_interruption_terminal_fallback_resolved TurnId: {TurnId}. CorrelationId: {CorrelationId}. DecisionType: {DecisionType}. Strategy: {Strategy}. AllowLegacyCleanup: {AllowLegacyCleanup}. AllowLegacySemanticRouting: {AllowLegacySemanticRouting}. ShouldResume: {ShouldResume}. Reason: {Reason}.",
+            candidate.ActiveTurnId,
+            candidate.CorrelationId,
+            decision.Type,
+            decision.Strategy,
+            true,
+            false,
+            true,
+            reason);
+
+        return new LiveInterruptionHandlingOutcome
+        {
+            WasEvaluatedByConversationalInterruption = true,
+            WasHandledByConversationalInterruption = true,
+            AllowLegacyCleanup = true,
+            AllowLegacySemanticRouting = false,
+            ShouldResumeOrContinuePlaybackIfPossible = true,
+            Result = Result(InterruptionHandlingResultType.Ignored, decision, reason),
+            InterruptionType = decision.Type,
+            Strategy = decision.Strategy,
+            Reason = reason
+        };
+    }
+
     private async Task<LiveInterruptionHandlingOutcome> HandleSequentialClarificationRecompositionAsync(
         ConversationalInterruptionCandidate candidate,
         YieldedInterruptionUtterance utterance,
@@ -534,7 +884,12 @@ public sealed class LiveInterruptionIntegrationService : ILiveInterruptionIntegr
         var disabledReason = GetSequentialRecompositionDisabledReason();
         if (disabledReason is not null)
         {
-            return DeferToOldPath(candidate, decision, disabledReason);
+            return await HandleTerminalFallbackAsync(
+                candidate,
+                utterance,
+                decision,
+                $"{disabledReason} Resumed held playback instead of deferring.",
+                cancellationToken);
         }
 
         var checkpoint = TryCreateLiveCheckpoint(utterance);
@@ -671,6 +1026,93 @@ public sealed class LiveInterruptionIntegrationService : ILiveInterruptionIntegr
         return result;
     }
 
+    private async Task ResolvePendingProvisionalHoldAsync(
+        PendingInterruptionClarification pending,
+        ConversationalInterruptionDecision decision,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(pending.ProvisionalAudioHoldId))
+        {
+            return;
+        }
+
+        var result = await _playbackPort.FlushProvisionalAudioHoldAsync(
+            pending.ProvisionalAudioHoldId,
+            "pending_interruption_clarification_recomposition",
+            cancellationToken);
+        _logger.LogInformation(
+            "pending_interruption_clarification_hold_flush_attempted ClarificationId: {ClarificationId}. TurnId: {TurnId}. CorrelationId: {CorrelationId}. HoldId: {HoldId}. DecisionType: {DecisionType}. Strategy: {Strategy}. Success: {Success}. FailureReason: {FailureReason}.",
+            pending.ClarificationId,
+            pending.ActiveTurnId,
+            pending.CorrelationId,
+            result.HoldId ?? pending.ProvisionalAudioHoldId,
+            decision.Type,
+            decision.Strategy,
+            result.Success,
+            result.FailureReason);
+    }
+
+    private async Task<LiveInterruptionHandlingOutcome> HandlePendingClarificationFailedAsync(
+        ConversationalInterruptionCandidate candidate,
+        ConversationalInterruptionDecision decision,
+        string reason,
+        CancellationToken cancellationToken,
+        bool playbackCancelled = false)
+    {
+        await EmitPendingClarificationResolvedAsync(
+            candidate.ActiveTurnId,
+            candidate.CorrelationId,
+            "pending_interruption_clarification_recomposition_failed",
+            "idle",
+            "none",
+            audiblePlaybackActive: false,
+            cancellationToken);
+        return FailedHandledOutcome(candidate, decision, reason, playbackCancelled);
+    }
+
+    private Task EmitPendingClarificationResolvedAsync(
+        PendingInterruptionClarification pending,
+        string reason,
+        string baseState,
+        string speechItemType,
+        bool audiblePlaybackActive,
+        CancellationToken cancellationToken) =>
+        EmitPendingClarificationResolvedAsync(
+            pending.ActiveTurnId,
+            pending.CorrelationId,
+            reason,
+            baseState,
+            speechItemType,
+            audiblePlaybackActive,
+            cancellationToken);
+
+    private Task EmitPendingClarificationResolvedAsync(
+        string turnId,
+        string correlationId,
+        string reason,
+        string baseState,
+        string speechItemType,
+        bool audiblePlaybackActive,
+        CancellationToken cancellationToken)
+    {
+        if (_assistantUiStateBroadcaster is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return _assistantUiStateBroadcaster.EmitImmediateAsync(
+            AssistantUiStateEvent.Create(
+                baseState,
+                reason,
+                correlationId,
+                turnId,
+                speechItemType: speechItemType,
+                audiblePlaybackActive: audiblePlaybackActive,
+                interruptionState: AssistantUiStateEvent.InterruptionStateNone),
+            nameof(LiveInterruptionIntegrationService),
+            cancellationToken);
+    }
+
     private void LogHoldResolution(
         string eventName,
         ConversationalInterruptionCandidate candidate,
@@ -744,6 +1186,52 @@ public sealed class LiveInterruptionIntegrationService : ILiveInterruptionIntegr
         return null;
     }
 
+    private static bool IsLikelyShortFragment(string? transcript)
+    {
+        var normalized = NormalizeForFragmentDetection(transcript);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return true;
+        }
+
+        if (HasDirectedInterruptionMarker(normalized))
+        {
+            return false;
+        }
+
+        var words = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return words.Length <= 4;
+    }
+
+    private static bool HasDirectedInterruptionMarker(string normalized)
+    {
+        return normalized.StartsWith("no ", StringComparison.Ordinal)
+            || normalized.StartsWith("wait", StringComparison.Ordinal)
+            || normalized.StartsWith("actually", StringComparison.Ordinal)
+            || normalized.StartsWith("hang on", StringComparison.Ordinal)
+            || normalized.StartsWith("hold on", StringComparison.Ordinal)
+            || normalized.StartsWith("stop", StringComparison.Ordinal)
+            || normalized.StartsWith("i mean ", StringComparison.Ordinal)
+            || normalized.StartsWith("i meant ", StringComparison.Ordinal)
+            || normalized.Contains(" i mean ", StringComparison.Ordinal)
+            || normalized.Contains(" i meant ", StringComparison.Ordinal)
+            || normalized.Contains(" what i mean", StringComparison.Ordinal);
+    }
+
+    private static string NormalizeForFragmentDetection(string? transcript)
+    {
+        if (string.IsNullOrWhiteSpace(transcript))
+        {
+            return string.Empty;
+        }
+
+        var chars = transcript.Trim().ToLowerInvariant().Select(character =>
+            char.IsLetterOrDigit(character) || char.IsWhiteSpace(character)
+                ? character
+                : ' ');
+        return string.Join(' ', new string(chars.ToArray()).Split(' ', StringSplitOptions.RemoveEmptyEntries));
+    }
+
     private SpokenAnswerCheckpoint? TryCreateLiveCheckpoint(YieldedInterruptionUtterance utterance)
     {
         var checkpoint = _spokenAnswerTracking?.TryCreateCheckpoint(
@@ -776,6 +1264,26 @@ public sealed class LiveInterruptionIntegrationService : ILiveInterruptionIntegr
     {
         return checkpoint is not null
             && !string.IsNullOrWhiteSpace(checkpoint.OriginalUserQuestion);
+    }
+
+    private static SpokenAnswerCheckpoint? CreateCheckpointFromPending(PendingInterruptionClarification pending)
+    {
+        if (string.IsNullOrWhiteSpace(pending.OriginalUserQuestion))
+        {
+            return null;
+        }
+
+        return new SpokenAnswerCheckpoint
+        {
+            TurnId = pending.ActiveTurnId,
+            CorrelationId = pending.CorrelationId,
+            OriginalUserQuestion = pending.OriginalUserQuestion,
+            SafeSpokenPrefix = pending.SafeSpokenPrefix ?? string.Empty,
+            LastCompletedSentence = pending.LastCompletedSentence ?? string.Empty,
+            DiscardedPartialSentence = pending.DiscardedPartialSentence ?? string.Empty,
+            CurrentTopicLabel = pending.CurrentTopicLabel,
+            OriginalPlanOrIntent = pending.OriginalPlanOrIntent
+        };
     }
 
     private ClarificationRequest BuildClarificationRequest(
@@ -812,6 +1320,40 @@ public sealed class LiveInterruptionIntegrationService : ILiveInterruptionIntegr
             OriginalPlanOrIntent = checkpoint.OriginalPlanOrIntent,
             MaxTokens = _options.ContinuationMaxTokens
         };
+    }
+
+    private static ConversationalInterruptionDecision PendingClarificationDecision() => new()
+    {
+        Type = ConversationalInterruptionType.RelatedFollowUpQuestion,
+        Strategy = ConversationalInterruptionHandlingStrategy.ClarifyThenRecomposeFromCheckpoint,
+        RequiresDeepInfraClarification = false,
+        RequiresContinuationRecomposition = true,
+        DiscardCurrentPartialSentence = true,
+        Reason = "Pending interruption clarification response captured."
+    };
+
+    private static string BuildResolvedPendingInterruptionText(
+        PendingInterruptionClarification pending,
+        PendingInterruptionClarificationResponse response)
+    {
+        if (string.IsNullOrWhiteSpace(pending.OriginalTranscript))
+        {
+            return response.ResponseText;
+        }
+
+        return $"{pending.OriginalTranscript} Clarification answer: {response.ResponseText}";
+    }
+
+    private static string BuildPendingClarificationContext(
+        PendingInterruptionClarification pending,
+        PendingInterruptionClarificationResponse response)
+    {
+        if (string.IsNullOrWhiteSpace(pending.OriginalTranscript))
+        {
+            return $"The user clarified: {response.ResponseText}";
+        }
+
+        return $"The unclear interruption was '{pending.OriginalTranscript}'. The user clarified: {response.ResponseText}";
     }
 
     private LiveInterruptionHandlingOutcome FailedHandledOutcome(

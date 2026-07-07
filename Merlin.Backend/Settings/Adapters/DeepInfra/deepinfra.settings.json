@@ -1,0 +1,15 @@
+{
+  "Llm": {
+    "Provider": "deepinfra",
+    "DeepInfraApiKey": "",
+    "DeepInfraBaseUrl": "https://api.deepinfra.com/v1/openai",
+    "DeepInfraModel": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+    "UseLocalFallback": true,
+    "DeepInfraMaxAttempts": 20,
+    "DeepInfraRetryDelayMs": 5,
+    "DeepInfraRetryWindowMs": 3000,
+    "DeepInfraRequestTimeoutSeconds": 60,
+    "DeepInfraCircuitBreakerFailures": 3,
+    "DeepInfraCircuitBreakerCooldownSeconds": 60
+  }
+}

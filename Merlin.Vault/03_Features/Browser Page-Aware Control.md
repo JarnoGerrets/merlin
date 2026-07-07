@@ -1,81 +1,122 @@
 ---
 type: feature
 status: partial
-area: browserhost
+area: cross-cutting
 tags:
   - merlin
   - feature
   - status/partial
+  - layer/cross-cutting
 ---
 
 # Browser Page-Aware Control
 
 ## Summary
 
-Uses page snapshots and DOM scripts to click/search/control visible browser page elements.
+DOM/snapshot-based browser actions with safety guard and confirmation.
 
 ## Status
 
 partial
 
+## Verified Against Code
+
+Status verified: yes
+
+Evidence:
+- BrowserPageSnapshotService interface and BrowserWorkspaceService snapshot implementation exist.
+- `Merlin.BrowserHost/PageSnapshotScript.cs, ClickElementScript.cs, SearchFieldScript.cs, CommonActionScript.cs exist.`
+- BrowserPageSafetyGuard.cs and tests exist.
+
 ## What Exists Today
 
-- Page snapshot script exists.
-- Click visible element command exists.
-- Search field script exists.
-- CommonActionScript includes media/common controls and Dutch `overslaan` support.
-- BrowserPageSafetyGuard exists.
-
-## Code Map
-
-| File | Role | Notes |
-| --- | --- | --- |
-| `Merlin.BrowserHost/PageSnapshotScript.cs` | Snapshot extractor | Captures elements and metadata. |
-| `Merlin.BrowserHost/ClickElementScript.cs` | DOM click | Dispatches pointer/mouse/click events. |
-| `Merlin.BrowserHost/CommonActionScript.cs` | Generic page actions | pause/play/skip/fullscreen/cookies. |
-| `Merlin.Backend/Services/BrowserWorkspace/Snapshot/*` | Models | Backend representation. |
-
-## Related Systems
-
-- [[System Architecture Overview]]
-- [[Command Routing Architecture]]
-- [[Active Surface Architecture]]
-
-
-## Dependencies
-
-Dependencies are listed here and in [[Master Roadmap]]. Planned/future work must not start until dependencies are ready.
-
-## Dependents
-
-See linked roadmap notes.
+Page snapshot, visible elements, click/search/action scripts, and safety guard exist; robust site-specific behavior remains partial.
 
 ## Current Behavior
 
-Page-aware commands can inspect or act on DOM state, subject to safety.
+Can target visible links/buttons/inputs in limited cases and classify risky page actions for confirmation.
 
 ## Planned Behavior
 
-Learned site profiles should store selectors and corrections after full motion control exists.
+Reliable generic page action layer first, learned site profiles later.
+
+## Code Map
+
+| File | Class / Function | Role | Notes |
+| --- | --- | --- | --- |
+| `Merlin.Backend/Services/BrowserWorkspace/Snapshot/BrowserPageSnapshot.cs` | BrowserPageSnapshot | Snapshot model | Visible page elements. |
+| `Merlin.BrowserHost/PageSnapshotScript.cs` | PageSnapshotScript | DOM extractor | Runs in WebView2. |
+| `Merlin.Backend/Services/BrowserWorkspace/PageControl/Safety/BrowserPageSafetyGuard.cs` | BrowserPageSafetyGuard | Safety classifier | Risk/confirmation decisions. |
+
+## Code Atlas
+
+- [[BrowserWorkspaceService]]
+- [[BrowserPageSafetyGuard]]
+- [[PageSnapshotScript]]
+- [[CommonActionScript]]
+- [[Browser Page Action Safety Flow]]
+
+## Related Systems
+
+- [[Browser Workspace]]
+- [[Control Profile DB]]
+- [[Safety and Confirmation]]
+- [[Site Control Profiles]]
+
+## Dependencies
+
+- [[Browser Workspace]]
+- [[Safety and Confirmation]]
+
+## Dependents
+
+- [[Control Profile DB]]
+- [[Site Control Profiles]]
+
+## Readiness
+
+Ready for implementation: yes
+
+Reason:
+Generic safety and snapshot hardening is ready.
+
+Blocked by:
+- Learned/site control depends on motion control and correction stability.
+
+Next safe action:
+Improve generic element selection/revalidation; do not add app-specific shortcuts.
 
 ## Non-Goals / Do Not Build Yet
 
-Do not build app/site-specific V2 behavior unless the relevant roadmap item is explicitly requested and marked ready.
+- Do not build YouTube profile here.
+- Do not skip confirmation for risky actions.
 
 ## Known Bugs / Fragility
 
-- Dynamic sites change metadata quickly.
-- Accessibility labels are language-dependent.
-- Wrong-click correction workflow is not mature.
+- Click target resolution can drift after page changes.
+- Some media buttons are icon/data-title based, not plain text.
 
 ## Tests
 
-See [[Current Test Coverage]].
+| Test File | Coverage | Gaps |
+| --- | --- | --- |
+| `Merlin.Backend.Tests/BrowserPageSafetyGuardTests.cs` | Safety rules | DOM extraction is mostly host/runtime validation. |
 
-## Relevant Docs / Reports / Prompts
+## Relevant Implementation Plans
 
-See [[07_Agent_Reports/Index|Agent Reports Index]] and [[08_Implementation_Prompts/Index|Implementation Prompts Index]].
+- [[Site Control Profiles Learning Plan]]
 
-## Next Actions
+## Relevant Reports
 
-Improve generic snapshot scoring before site DB.
+- See [[Agent Reports Index]] for cross-cutting reports.
+
+## Relevant Prompts
+
+- [[Implementation Prompts Index]]
+
+## Source Material
+
+- [[Imported Merlin.ToDo Index]] (1 imported source item(s) mapped to this feature).
+## Open Questions
+
+- Which runtime observations should be added after the next live validation?

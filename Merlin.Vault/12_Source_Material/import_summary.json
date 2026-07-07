@@ -1,0 +1,16 @@
+{
+  "imported": 73,
+  "plans_promoted": 24,
+  "execution_prompts": 0,
+  "reports": 2,
+  "bug_reports": 2,
+  "implemented_or_historical": 34,
+  "feature_updates": 18,
+  "by_classification": {
+    "implementation-plan": 57,
+    "agent-report": 2,
+    "architecture-plan": 11,
+    "bug-report": 2,
+    "raw-planning": 1
+  }
+}

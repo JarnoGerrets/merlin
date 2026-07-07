@@ -1,0 +1,11 @@
+{
+  "LocalAI": {
+    "Enabled": true,
+    "Provider": "Ollama",
+    "Endpoint": "http://localhost:11434/api/generate",
+    "Model": "llama3.1:8b",
+    "MinimumConfidence": 0.7,
+    "KeepAlive": "10m",
+    "WarmupOnStartup": false
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "StreamingResponses": {
+    "Enabled": true,
+    "UseDeepInfraStreaming": true,
+    "UseSegmentedTts": true,
+    "FallbackToFullResponse": true,
+    "FirstSegmentMinWords": 8,
+    "LaterSegmentMinWords": 5,
+    "PreferredSentenceMaxChars": 220,
+    "HardBufferMaxChars": 320,
+    "AllowClauseBoundaries": true,
+    "MergeTinyFinalTail": true,
+    "TinyFinalTailMaxWords": 4,
+    "MaxPendingTtsSegments": 2,
+    "PrebufferSegments": 1,
+    "MaxReadyAudioSegments": 2,
+    "SkipCodeBlocksInSpeech": true,
+    "DebugLogSegmentBoundaries": true
+  }
+}

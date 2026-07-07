@@ -6,75 +6,126 @@ tags:
   - merlin
   - feature
   - status/partial
+  - layer/cross-cutting
 ---
 
 # Motion Control
 
 ## Summary
 
-Camera-based hand tracking for dashboard UI and browser workspace.
+Voice-driven hand tracking control for dashboard and browser surfaces.
 
 ## Status
 
 partial
 
+## Verified Against Code
+
+Status verified: yes
+
+Evidence:
+- `CommandRouter.cs routes eyes open/closed and browser pointer commands.`
+- `VisionSidecarHost.cs starts/stops Python tracking.`
+- Main.gd owns dashboard gesture behavior.
+- BrowserMotionOverlayModeService.cs, BrowserPinchClickController.cs, and BrowserScrollCommandService.cs own browser motion behavior.
+
 ## What Exists Today
 
-- Vision sidecar uses OpenCV/MediaPipe style worker and calibration.
-- Gesture events route through backend.
-- Dashboard UI control exists.
-- Browser pointer overlay, pinch click, and scroll gestures exist.
-
-## Code Map
-
-| File | Role | Notes |
-| --- | --- | --- |
-| `Merlin.Backend/VisionScripts/vision_worker.py` | Vision worker | Camera capture, gestures, calibration. |
-| `Merlin.Backend/Services/Vision/VisionSidecarHost.cs` | Backend host | Starts/stops worker and parses events. |
-| `Merlin.Backend/Services/Vision/VisionGestureEventRouter.cs` | Router | Delegates to motion service. |
-| `Merlin.Backend/Services/BrowserWorkspace/Motion/BrowserPointerMapper.cs` | Mapping | Normalized hand to overlay. |
-
-## Related Systems
-
-- [[System Architecture Overview]]
-- [[Command Routing Architecture]]
-- [[Active Surface Architecture]]
-
-
-## Dependencies
-
-Dependencies are listed here and in [[Master Roadmap]]. Planned/future work must not start until dependencies are ready.
-
-## Dependents
-
-See linked roadmap notes.
+Motion works for dashboard UI control and BrowserWorkspace pointer/click/scroll, but behavior is split across Python, backend, Godot, and BrowserHost.
 
 ## Current Behavior
 
-Commands include `eyes open`, `eyes closed`, `open your eyes`, `close your eyes`, `start ui control`, `stop ui control`, `start browser pointer`, `stop browser pointer`, `enable browser motion`, `disable browser motion`.
+`eyes open`, `open your eyes`, `start ui control`, and `start browser pointer` start tracking paths. `eyes closed` stops normal motion. Browser pointer stop remains an active context/routing concern.
 
 ## Planned Behavior
 
-Add learned target profiles only after motion profiles, page-aware browser control, and active surface are stable.
+Unify configuration, diagnostics, and safety for profile-specific motion.
+
+## Code Map
+
+| File | Class / Function | Role | Notes |
+| --- | --- | --- | --- |
+| `Merlin.Backend/Services/CommandRouter.cs` | CommandRouter | Voice command entry | Routes motion commands. |
+| `Merlin.Backend/Services/Vision/VisionSidecarHost.cs` | VisionSidecarHost | Tracking lifecycle | Starts Python worker tracking. |
+| `Merlin.Frontend/Scripts/Main.gd` | Main.gd gesture functions | Dashboard consumer | Hover/select/drag/resize/crumple. |
+
+## Code Atlas
+
+- [[MotionControlModeService]]
+- [[VisionSidecarHost]]
+- [[VisionGestureEventRouter]]
+- [[Main.gd]]
+- [[BrowserMotionOverlayModeService]]
+- [[Motion Control Enable Flow]]
+- [[Motion Gesture Dispatch Flow]]
+
+## Related Systems
+
+- [[Browser Pinch Click]]
+- [[Browser Pointer Overlay]]
+- [[Browser Scroll Gestures]]
+- [[Dashboard UI Control]]
+- [[Motion Control Profile Layer]]
+- [[Vision Sidecar]]
+
+## Dependencies
+
+- [[Vision Sidecar]]
+- [[Motion Control Profile Layer]]
+
+## Dependents
+
+- [[Dashboard UI Control]]
+- [[Browser Pointer Overlay]]
+- [[Browser Pinch Click]]
+- [[Browser Scroll Gestures]]
+
+## Readiness
+
+Ready for implementation: yes
+
+Reason:
+Partial system exists; hardening work is ready when scoped to current profiles.
+
+Blocked by:
+- New app profiles are blocked by [[Control Profile DB]].
+
+Next safe action:
+Tune profile-specific config and keep raw clicks behind safety policy.
 
 ## Non-Goals / Do Not Build Yet
 
-Do not build app/site-specific V2 behavior unless the relevant roadmap item is explicitly requested and marked ready.
+- Do not build full learned motion control yet.
+- Do not move all Godot dashboard logic in one pass.
 
 ## Known Bugs / Fragility
 
-- Camera angle can make lower corners hard to reach.
-- Pinch calibration can be too sensitive/insensitive.
-- Browser raw click path can bypass safety.
+- Lower-left corner physical reach issue.
+- Duplicated smoothing/config thresholds.
+- DPI/multi-monitor click uncertainty.
 
 ## Tests
 
-See [[Current Test Coverage]].
+| Test File | Coverage | Gaps |
+| --- | --- | --- |
+| `Merlin.Backend.Tests/VisionGestureEventRouterTests.cs` | Backend routing | No end-to-end camera/Godot automation. |
+| `Merlin.Backend.Tests/BrowserMotionOverlayModeServiceTests.cs` | Browser overlay mode | Native overlay visual validation is manual. |
 
-## Relevant Docs / Reports / Prompts
+## Relevant Implementation Plans
 
-See [[07_Agent_Reports/Index|Agent Reports Index]] and [[08_Implementation_Prompts/Index|Implementation Prompts Index]].
+- [[Motion Control Profile Layer Plan]]
 
-## Next Actions
+## Relevant Reports
 
-Keep calibration and profile dispatch separate.
+- `Merlin.Vault/12_Source_Material/Imported_Merlin_ToDo/motion_control/report/current_motion_structure_report.md`
+
+## Relevant Prompts
+
+- [[Implementation Prompts Index]]
+
+## Source Material
+
+- [[Imported Merlin.ToDo Index]] (3 imported source item(s) mapped to this feature).
+## Open Questions
+
+- Which runtime observations should be added after the next live validation?

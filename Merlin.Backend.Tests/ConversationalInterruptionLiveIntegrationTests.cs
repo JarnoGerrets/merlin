@@ -1,4 +1,5 @@
 using Merlin.Backend.Configuration;
+using Merlin.Backend.Models;
 using Merlin.Backend.Services;
 using Merlin.Backend.Services.InterruptionIntelligence;
 using Microsoft.Extensions.Logging;
@@ -446,7 +447,7 @@ public sealed class ConversationalInterruptionLiveIntegrationTests
     [Theory]
     [InlineData("but the water itself too right", ConversationalInterruptionHandlingStrategy.ClarifyThenRecomposeFromCheckpoint)]
     [InlineData("well yeah but sunlight too", ConversationalInterruptionHandlingStrategy.LocalBridgeAndRecomposeFromCheckpoint)]
-    public async Task TryHandleYieldedInterruptionAsync_UnsupportedMinimalStrategies_DeferToOldPath(
+    public async Task TryHandleYieldedInterruptionAsync_UnsupportedMinimalStrategies_FallbackResumeWithoutSemanticRouting(
         string transcript,
         ConversationalInterruptionHandlingStrategy expectedStrategy)
     {
@@ -463,11 +464,12 @@ public sealed class ConversationalInterruptionLiveIntegrationTests
         var outcome = await service.TryHandleYieldedInterruptionAsync(YieldedUtterance(transcript));
 
         Assert.NotNull(outcome);
-        Assert.False(outcome.WasHandledByConversationalInterruption);
+        Assert.True(outcome.WasHandledByConversationalInterruption);
         Assert.True(outcome.AllowLegacyCleanup);
-        Assert.True(outcome.AllowLegacySemanticRouting);
+        Assert.False(outcome.AllowLegacySemanticRouting);
+        Assert.True(outcome.ShouldResumeOrContinuePlaybackIfPossible);
         Assert.True(
-            outcome.Reason.Contains("deferred", StringComparison.OrdinalIgnoreCase)
+            outcome.Reason.Contains("resumed", StringComparison.OrdinalIgnoreCase)
             || outcome.Reason.Contains("disabled", StringComparison.OrdinalIgnoreCase),
             $"Unexpected reason: {outcome.Reason}");
         Assert.Equal(expectedStrategy, outcome.Result?.Decision.Strategy);
@@ -511,8 +513,9 @@ public sealed class ConversationalInterruptionLiveIntegrationTests
     }
 
     [Fact]
-    public async Task TryHandleYieldedInterruptionAsync_SequentialRecompositionDisabled_DefersWithoutModelOrSpeech()
+    public async Task TryHandleYieldedInterruptionAsync_SequentialRecompositionDisabled_FallbackResumesWithoutModelOrSpeech()
     {
+        var playback = new FakePlaybackPort();
         var model = new FakeInterruptionModelPort();
         var speech = new FakeInterruptionSpeechOutputPort();
         var service = CreateService(
@@ -522,6 +525,7 @@ public sealed class ConversationalInterruptionLiveIntegrationTests
             },
             new FakeOrchestrator(),
             MinimalOptions(enableSpokenTracking: true),
+            playback,
             modelPort: model,
             speechOutputPort: speech);
 
@@ -531,8 +535,11 @@ public sealed class ConversationalInterruptionLiveIntegrationTests
             wasHeldByProvisionalAudioHold: true));
 
         Assert.NotNull(outcome);
-        Assert.False(outcome.WasHandledByConversationalInterruption);
-        Assert.True(outcome.AllowLegacySemanticRouting);
+        Assert.True(outcome.WasHandledByConversationalInterruption);
+        Assert.False(outcome.AllowLegacySemanticRouting);
+        Assert.True(outcome.ShouldResumeOrContinuePlaybackIfPossible);
+        Assert.Equal(1, playback.ResumeHoldCount);
+        Assert.Equal(0, playback.FlushHoldCount);
         Assert.Equal(0, model.ClarificationCount);
         Assert.Equal(0, speech.SpeakCount);
     }
@@ -707,14 +714,267 @@ public sealed class ConversationalInterruptionLiveIntegrationTests
             layer1Decision: "AskClarification"));
 
         Assert.NotNull(outcome);
-        Assert.False(outcome.WasHandledByConversationalInterruption);
+        Assert.True(outcome.WasHandledByConversationalInterruption);
         Assert.True(outcome.AllowLegacyCleanup);
-        Assert.True(outcome.AllowLegacySemanticRouting);
+        Assert.False(outcome.AllowLegacySemanticRouting);
+        Assert.True(outcome.ShouldResumeOrContinuePlaybackIfPossible);
         Assert.Equal(ConversationalInterruptionType.Unknown, outcome.InterruptionType);
         Assert.Equal(ConversationalInterruptionHandlingStrategy.AskUserToClarifyInterruption, outcome.Strategy);
         Assert.Equal(1, classifier.CallCount);
         Assert.Equal(0, playback.StopCount);
         Assert.Empty(speech.ContentKinds);
+    }
+
+    [Fact]
+    public async Task TryHandleYieldedInterruptionAsync_AskClarificationCreatesPendingOwnerWhenEnabled()
+    {
+        var classifier = new FakeClassifier
+        {
+            Decision = new ConversationalInterruptionDecision
+            {
+                Type = ConversationalInterruptionType.Unknown,
+                Strategy = ConversationalInterruptionHandlingStrategy.AskUserToClarifyInterruption,
+                Reason = "fake unclear utterance"
+            }
+        };
+        var playback = new FakePlaybackPort();
+        var pendingClarifications = new PendingInterruptionClarificationService(
+            Options.Create(new InterruptionHandlingOptions { PendingInterruptionClarificationTimeoutMs = 15000 }),
+            NullLogger<PendingInterruptionClarificationService>.Instance);
+        var ui = new RecordingUiStateSink();
+        var service = CreateService(
+            classifier,
+            new FakeOrchestrator(),
+            MinimalOptions(enableSpokenTracking: true, enablePendingClarification: true),
+            playback,
+            new FakeFeedbackPort(),
+            new FakeRouterPort(),
+            spokenTracking: StartedTrackingService(),
+            pendingClarifications: pendingClarifications,
+            assistantUiStateBroadcaster: ui.Broadcaster);
+
+        var outcome = await service.TryHandleYieldedInterruptionAsync(YieldedUtterance(
+            "as well as the meaning of life",
+            routeKind: "PauseAndClarify",
+            routeAction: "AskClarification",
+            layer1Decision: "AskClarification",
+            provisionalAudioHoldId: "hold-pending",
+            wasHeldByProvisionalAudioHold: true));
+
+        Assert.NotNull(outcome);
+        Assert.True(outcome.WasHandledByConversationalInterruption);
+        Assert.True(outcome.AllowLegacyCleanup);
+        Assert.False(outcome.AllowLegacySemanticRouting);
+        Assert.True(outcome.ShouldResumeOrContinuePlaybackIfPossible);
+        Assert.Equal(InterruptionHandlingResultType.AskedUserToClarify, outcome.Result?.Type);
+        Assert.False(string.IsNullOrWhiteSpace(outcome.PendingClarificationId));
+        Assert.Equal(1, playback.ResumeHoldCount);
+        Assert.Equal("hold-pending", playback.LastHoldId);
+
+        var pending = pendingClarifications.TryGetLatestPending();
+        Assert.NotNull(pending);
+        Assert.Equal(outcome.PendingClarificationId, pending.ClarificationId);
+        Assert.Equal("turn-1", pending.ActiveTurnId);
+        Assert.Equal("correlation-1", pending.CorrelationId);
+        Assert.Equal("as well as the meaning of life", pending.OriginalTranscript);
+        Assert.Equal("as well as the meaning of life", pending.NormalizedTranscript);
+        Assert.Equal("PauseAndClarify", pending.RouteKind);
+        Assert.Equal("AskClarification", pending.RouteAction);
+        Assert.Contains(ui.Events, state =>
+            state.BaseState == "listening"
+            && state.Reason == "pending_interruption_clarification_awaiting_response"
+            && state.TurnId == "turn-1"
+            && state.CorrelationId == "correlation-1"
+            && state.InterruptionState == AssistantUiStateEvent.InterruptionStateAwaitingClarification);
+    }
+
+    [Fact]
+    public async Task TryHandleYieldedInterruptionAsync_AskClarificationPendingDisabled_DoesNotEmitAwaitingState()
+    {
+        var classifier = new FakeClassifier
+        {
+            Decision = new ConversationalInterruptionDecision
+            {
+                Type = ConversationalInterruptionType.Unknown,
+                Strategy = ConversationalInterruptionHandlingStrategy.AskUserToClarifyInterruption,
+                Reason = "fake unclear utterance"
+            }
+        };
+        var playback = new FakePlaybackPort();
+        var pendingClarifications = new PendingInterruptionClarificationService(
+            Options.Create(new InterruptionHandlingOptions { PendingInterruptionClarificationTimeoutMs = 15000 }),
+            NullLogger<PendingInterruptionClarificationService>.Instance);
+        var ui = new RecordingUiStateSink();
+        var service = CreateService(
+            classifier,
+            new FakeOrchestrator(),
+            MinimalOptions(enableSpokenTracking: true, enablePendingClarification: false),
+            playback,
+            new FakeFeedbackPort(),
+            new FakeRouterPort(),
+            pendingClarifications: pendingClarifications,
+            assistantUiStateBroadcaster: ui.Broadcaster);
+
+        var outcome = await service.TryHandleYieldedInterruptionAsync(YieldedUtterance(
+            "as well as the meaning of life",
+            routeKind: "PauseAndClarify",
+            routeAction: "AskClarification",
+            layer1Decision: "AskClarification"));
+
+        Assert.NotNull(outcome);
+        Assert.True(outcome.WasHandledByConversationalInterruption);
+        Assert.Null(outcome.PendingClarificationId);
+        Assert.Null(pendingClarifications.TryGetLatestPending());
+        Assert.DoesNotContain(ui.Events, state =>
+            state.InterruptionState == AssistantUiStateEvent.InterruptionStateAwaitingClarification);
+    }
+
+    [Fact]
+    public async Task TryHandlePendingClarificationResponseAsync_RecomposesContinuationFromStoredCheckpoint()
+    {
+        var order = new List<string>();
+        var playback = new FakePlaybackPort(order);
+        var feedback = new FakeFeedbackPort(order);
+        var model = new FakeInterruptionModelPort(order);
+        var speech = new FakeInterruptionSpeechOutputPort(order);
+        var ui = new RecordingUiStateSink();
+        var service = CreateService(
+            new FakeClassifier(),
+            new FakeOrchestrator(),
+            MinimalOptions(enableSpokenTracking: true, enableSequentialRecomposition: true, enableModelCalls: true),
+            playback,
+            feedback,
+            new FakeRouterPort(),
+            modelPort: model,
+            speechOutputPort: speech,
+            assistantUiStateBroadcaster: ui.Broadcaster);
+        var response = CreatePendingResponse();
+
+        var outcome = await service.TryHandlePendingClarificationResponseAsync(response);
+
+        Assert.NotNull(outcome);
+        Assert.True(outcome.WasHandledByConversationalInterruption);
+        Assert.False(outcome.AllowLegacyCleanup);
+        Assert.False(outcome.AllowLegacySemanticRouting);
+        Assert.True(outcome.ShouldCancelPlayback);
+        Assert.Equal(InterruptionHandlingResultType.ClarificationAndRecompositionPrepared, outcome.Result?.Type);
+        Assert.Equal(0, model.ClarificationCount);
+        Assert.Equal(1, model.ContinuationCount);
+        Assert.Equal(1, speech.SpeakCount);
+        Assert.Equal(["recomposed_continuation"], speech.ContentKinds);
+        Assert.Equal("Why does pool water look blue?", model.LastContinuationRequest?.OriginalUserQuestion);
+        Assert.Contains("Clarification answer: the actual water itself", model.LastContinuationRequest?.UserInterruption);
+        Assert.Contains("The user clarified: the actual water itself", model.LastContinuationRequest?.ClarificationContext);
+        Assert.Equal(["hold-flush", "flush", "suppress", "cancel", "continuation-model", "speak:recomposed_continuation"], order);
+        Assert.Contains(ui.Events, state =>
+            state.Reason == "pending_interruption_clarification_recomposition_completed"
+            && state.InterruptionState == AssistantUiStateEvent.InterruptionStateNone);
+    }
+
+    [Fact]
+    public async Task TryHandlePendingClarificationResponseAsync_FailedContinuationClearsStateWithoutLegacyRouting()
+    {
+        var model = new FakeInterruptionModelPort
+        {
+            ThrowOnContinuation = true
+        };
+        var speech = new FakeInterruptionSpeechOutputPort();
+        var ui = new RecordingUiStateSink();
+        var service = CreateService(
+            new FakeClassifier(),
+            new FakeOrchestrator(),
+            MinimalOptions(enableSpokenTracking: true, enableSequentialRecomposition: true, enableModelCalls: true),
+            modelPort: model,
+            speechOutputPort: speech,
+            assistantUiStateBroadcaster: ui.Broadcaster);
+
+        var outcome = await service.TryHandlePendingClarificationResponseAsync(CreatePendingResponse());
+
+        Assert.NotNull(outcome);
+        Assert.True(outcome.WasHandledByConversationalInterruption);
+        Assert.False(outcome.AllowLegacySemanticRouting);
+        Assert.Equal(InterruptionHandlingResultType.Failed, outcome.Result?.Type);
+        Assert.Equal(1, model.ContinuationCount);
+        Assert.Equal(0, speech.SpeakCount);
+        Assert.Contains(ui.Events, state =>
+            state.Reason == "pending_interruption_clarification_recomposition_failed"
+            && state.BaseState == "idle"
+            && state.InterruptionState == AssistantUiStateEvent.InterruptionStateNone);
+    }
+
+    [Fact]
+    public async Task TryHandlePendingClarificationResponseAsync_IncompleteCheckpointFailsSafelyWithoutModelOrSpeech()
+    {
+        var model = new FakeInterruptionModelPort();
+        var speech = new FakeInterruptionSpeechOutputPort();
+        var service = CreateService(
+            new FakeClassifier(),
+            new FakeOrchestrator(),
+            MinimalOptions(enableSpokenTracking: true, enableSequentialRecomposition: true, enableModelCalls: true),
+            modelPort: model,
+            speechOutputPort: speech);
+        var response = CreatePendingResponse(originalUserQuestion: null);
+
+        var outcome = await service.TryHandlePendingClarificationResponseAsync(response);
+
+        Assert.NotNull(outcome);
+        Assert.True(outcome.WasHandledByConversationalInterruption);
+        Assert.False(outcome.AllowLegacySemanticRouting);
+        Assert.Equal(InterruptionHandlingResultType.Failed, outcome.Result?.Type);
+        Assert.Equal(0, model.ContinuationCount);
+        Assert.Equal(0, speech.SpeakCount);
+    }
+
+    [Fact]
+    public async Task TryHandleYieldedInterruptionAsync_AskClarificationShortFragmentInThePool_ResumesHoldAndSuppressesSemanticRouting()
+    {
+        var logger = new RecordingLogger<LiveInterruptionIntegrationService>();
+        var classifier = new FakeClassifier
+        {
+            Decision = new ConversationalInterruptionDecision
+            {
+                Type = ConversationalInterruptionType.Unknown,
+                Strategy = ConversationalInterruptionHandlingStrategy.AskUserToClarifyInterruption,
+                Reason = "fake unclear short fragment"
+            }
+        };
+        var playback = new FakePlaybackPort();
+        var model = new FakeInterruptionModelPort();
+        var speech = new FakeInterruptionSpeechOutputPort();
+        var service = CreateService(
+            classifier,
+            new FakeOrchestrator(),
+            MinimalOptions(enableSpokenTracking: true, enableSequentialRecomposition: true, enableModelCalls: true),
+            playback,
+            new FakeFeedbackPort(),
+            new FakeRouterPort(),
+            spokenTracking: StartedTrackingService(),
+            modelPort: model,
+            speechOutputPort: speech,
+            logger: logger);
+
+        var outcome = await service.TryHandleYieldedInterruptionAsync(YieldedUtterance(
+            "in the pool",
+            routeKind: "PauseAndClarify",
+            routeAction: "AskClarification",
+            layer1Decision: "AskClarification",
+            provisionalAudioHoldId: "hold-in-pool",
+            wasHeldByProvisionalAudioHold: true));
+
+        Assert.NotNull(outcome);
+        Assert.True(outcome.WasEvaluatedByConversationalInterruption);
+        Assert.True(outcome.WasHandledByConversationalInterruption);
+        Assert.True(outcome.AllowLegacyCleanup);
+        Assert.False(outcome.AllowLegacySemanticRouting);
+        Assert.True(outcome.ShouldResumeOrContinuePlaybackIfPossible);
+        Assert.Equal(InterruptionHandlingResultType.Ignored, outcome.Result?.Type);
+        Assert.Equal(1, playback.ResumeHoldCount);
+        Assert.Equal(0, playback.FlushHoldCount);
+        Assert.Equal("hold-in-pool", playback.LastHoldId);
+        Assert.Equal(0, model.ClarificationCount);
+        Assert.Equal(0, model.ContinuationCount);
+        Assert.Equal(0, speech.SpeakCount);
+        Assert.DoesNotContain(logger.Messages, message => message.Contains("Ask-user-to-clarify is not executed live in PR7", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -964,7 +1224,9 @@ public sealed class ConversationalInterruptionLiveIntegrationTests
         IInterruptionModelPort? modelPort = null,
         IInterruptionSpeechOutputPort? speechOutputPort = null,
         IStopConfirmationPhraseSelector? stopConfirmationPhraseSelector = null,
-        ILogger<LiveInterruptionIntegrationService>? logger = null) =>
+        ILogger<LiveInterruptionIntegrationService>? logger = null,
+        IPendingInterruptionClarificationService? pendingClarifications = null,
+        AssistantUiStateBroadcaster? assistantUiStateBroadcaster = null) =>
         new(
             new ConversationalInterruptionCandidateFactory(),
             classifier,
@@ -977,14 +1239,17 @@ public sealed class ConversationalInterruptionLiveIntegrationTests
             spokenTracking,
             modelPort,
             speechOutputPort,
-            stopConfirmationPhraseSelector);
+            stopConfirmationPhraseSelector,
+            pendingClarifications,
+            assistantUiStateBroadcaster);
 
     private static InterruptionHandlingOptions MinimalOptions(
         bool enableRedirectRouting = true,
         bool enableFeedbackBridge = false,
         bool enableSpokenTracking = false,
         bool enableSequentialRecomposition = false,
-        bool enableModelCalls = false) => new()
+        bool enableModelCalls = false,
+        bool enablePendingClarification = false) => new()
     {
         Enabled = true,
         EnableLiveBargeInIntegration = true,
@@ -998,7 +1263,8 @@ public sealed class ConversationalInterruptionLiveIntegrationTests
         EnableSpokenAnswerTrackingDiagnostics = true,
         EnableClarificationCalls = enableModelCalls,
         EnableContinuationRecomposition = enableModelCalls,
-        EnableSequentialRecomposition = enableSequentialRecomposition
+        EnableSequentialRecomposition = enableSequentialRecomposition,
+        EnablePendingInterruptionClarification = enablePendingClarification
     };
 
     private static YieldedInterruptionUtterance YieldedUtterance(
@@ -1049,6 +1315,37 @@ public sealed class ConversationalInterruptionLiveIntegrationTests
         RequiresContinuationRecomposition = true,
         DiscardCurrentPartialSentence = true,
         Reason = "test clarification"
+    };
+
+    private static PendingInterruptionClarificationResponse CreatePendingResponse(
+        string? originalUserQuestion = "Why does pool water look blue?") => new()
+    {
+        Pending = new PendingInterruptionClarification
+        {
+            ClarificationId = "clarification-1",
+            ActiveTurnId = "turn-1",
+            CorrelationId = "correlation-1",
+            CaptureId = "capture-original",
+            OriginalTranscript = "as well as the meaning of life",
+            NormalizedTranscript = "as well as the meaning of life",
+            RouteKind = "PauseAndClarify",
+            RouteAction = "AskClarification",
+            Layer1Decision = "AskClarification",
+            ProvisionalAudioHoldId = "hold-pending",
+            WasHeldByProvisionalAudioHold = true,
+            OriginalUserQuestion = originalUserQuestion,
+            SafeSpokenPrefix = "Pool water can look blue for several reasons.",
+            LastCompletedSentence = "Pool water can look blue for several reasons.",
+            DiscardedPartialSentence = "Due to the color of the pool li",
+            OriginalPlanOrIntent = "Due to the color of the pool liner",
+            CreatedAtUtc = DateTimeOffset.UtcNow.AddSeconds(-2),
+            ExpiresAtUtc = DateTimeOffset.UtcNow.AddSeconds(15)
+        },
+        ResponseText = "the actual water itself",
+        NormalizedResponseText = "the actual water itself",
+        CaptureId = "capture-response",
+        CorrelationId = "correlation-response",
+        ConsumedAtUtc = DateTimeOffset.UtcNow
     };
 
     private static LiveSpokenAnswerTrackingService StartedTrackingService()
@@ -1243,6 +1540,7 @@ public sealed class ConversationalInterruptionLiveIntegrationTests
         public int ContinuationCount { get; private set; }
         public bool ThrowOnContinuation { get; set; }
         public ClarificationRequest? LastClarificationRequest { get; private set; }
+        public ContinuationRecompositionRequest? LastContinuationRequest { get; private set; }
         public ClarificationResult ClarificationResult { get; set; } = new()
         {
             ReplyText = "Yes, exactly. The water itself can affect the color too.",
@@ -1266,6 +1564,7 @@ public sealed class ConversationalInterruptionLiveIntegrationTests
             CancellationToken cancellationToken = default)
         {
             ContinuationCount++;
+            LastContinuationRequest = request;
             _order?.Add("continuation-model");
             if (ThrowOnContinuation)
             {
@@ -1355,6 +1654,39 @@ public sealed class ConversationalInterruptionLiveIntegrationTests
             lock (_sync)
             {
                 _messages.Add(formatter(state, exception));
+            }
+        }
+    }
+
+    private sealed class RecordingUiStateSink
+    {
+        private readonly object _sync = new();
+        private readonly List<AssistantUiStateEvent> _events = [];
+
+        public RecordingUiStateSink()
+        {
+            Broadcaster = new AssistantUiStateBroadcaster(NullLogger<AssistantUiStateBroadcaster>.Instance);
+            Broadcaster.StateChanged += (uiState, _, _) =>
+            {
+                lock (_sync)
+                {
+                    _events.Add(uiState);
+                }
+
+                return Task.CompletedTask;
+            };
+        }
+
+        public AssistantUiStateBroadcaster Broadcaster { get; }
+
+        public IReadOnlyList<AssistantUiStateEvent> Events
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _events.ToArray();
+                }
             }
         }
     }

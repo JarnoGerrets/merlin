@@ -1,66 +1,83 @@
 ---
 type: architecture
-status: mixed
+status: current
 area: frontend
 tags:
   - merlin
   - architecture
+  - layer/frontend
 ---
 
 # Frontend Architecture
 
 ## Purpose
 
-Map Godot UI responsibilities.
+Godot frontend owns orb/UI visuals, dashboard windows, local voice capture, and dashboard gesture interpretation.
 
 ## Current Design
 
-Godot frontend renders the orb, chat/log overlays, windows, dashboard UI, and receives backend events over WebSocket.
+Current implementation is distributed across the files in the component table. The vault treats code as source of truth and separates implemented behavior from plans.
 
 ## Planned Design
 
-Future work should keep reusable windows/widgets structured and avoid embedding all gesture behavior in `Main.gd`.
+Future design should build on verified foundations only: active surface first, safety before execution, and profiles before app-specific behavior.
 
 ## Main Components
 
-- `Main.gd`
-- `MerlinWebSocketClient.gd`
-- `CoreOrb3D.gd`
-- `UI/Windows/*`
+| Component | File / Class | Responsibility |
+| --- | --- | --- |
+| Godot main | `Merlin.Frontend/Scripts/Main.gd` | UI, gesture cursor, window interactions, visual events. |
+| WebSocket client | `Merlin.Frontend/Scripts/MerlinWebSocketClient.gd` | Backend messaging and visual event routing. |
+| Window scripts | `Merlin.Frontend/Scripts/MerlinWindow*.gd` | Dashboard window capabilities/constants. |
 
 ## Data / Event Flow
 
-Backend sends JSON events; frontend updates UI state and dashboard windows.
+See linked flow notes for exact call/message paths. In short, user voice and visual/motion inputs enter backend routing, which dispatches to services or emits frontend/BrowserHost messages.
+
+## State Ownership
+
+| State | Owner | Readers | Writers | Reset Conditions |
+| --- | --- | --- | --- | --- |
+| Active surface | `ActiveSurfaceService` | CommandRouter, LiveUtteranceGate, motion registry | BrowserWorkspaceService and future surface producers | Browser close/reset to Dashboard |
+| Motion enabled/profile | `MotionControlModeService` | VisionGestureEventRouter, tests | CommandRouter/profile switch | `eyes closed`, profile activation failure |
+| Browser host lifecycle | `BrowserWorkspaceService` | browser motion/page services | open/close/host-exit handlers | host exit/close |
+| Playback state | `AssistantSpeechPlaybackService` | UI broadcaster, interruption services | playback start/pause/resume/stop | final answer completed/cancelled |
+
+## Safety Boundaries
+
+Routing decides where a command goes. Safety decides whether it may execute. ActiveSurface and motion profiles must never bypass BrowserPageSafetyGuard or confirmation for risky actions.
 
 ## Mermaid Diagram
 
 ```mermaid
 flowchart TD
-    WS[WebSocket] --> Client[MerlinWebSocketClient.gd]
-    Client --> Main[Main.gd]
-    Main --> Orb[CoreOrb3D]
-    Main --> Windows[MerlinWindowManager]
+    U[User voice/gesture] --> R[Routing or Vision pipeline]
+    R --> S[Active surface context]
+    S --> C[Command/service/profile]
+    C --> F[Frontend, BrowserHost, Memory, Tools]
+    C --> G[Safety/confirmation when needed]
+    G --> F
 ```
-
-## Code Map
-
-| File | Role |
-| --- | --- |
-| `Merlin.Frontend/Scripts/Main.gd` | Main UI orchestration. |
-| `Merlin.Frontend/Scripts/MerlinWebSocketClient.gd` | Backend connection. |
 
 ## Important Decisions
 
-- Dashboard motion and browser motion should remain separate.
+- [[ADR-0002 Active Surface Before App-Specific Routing]]
+- [[ADR-0003 Motion Profiles Over One Global Motion Mode]]
+- [[ADR-0005 Safety Does Not Get Bypassed By Routing Context]]
 
-## Risks
+## Known Fragility
 
-- Dashboard gesture logic is still centralized.
+- Some behavior is still centralized in large scripts/services.
+- BrowserHost/native overlay lifecycle and DPI behavior need live validation.
+- Voice correction/barge-in tests currently fail and should be treated as blockers for learning features.
 
 ## Open Questions
 
-- Should frontend publish granular active surfaces?
+- Which runtime observations should be promoted into permanent code atlas notes after the next validation session?
 
 ## Related Notes
 
-- [[Dashboard UI Control]]
+- [[Code Atlas Index]]
+- [[Voice Command Flow]]
+- [[Motion Gesture Dispatch Flow]]
+- [[Browser Workspace Flow]]

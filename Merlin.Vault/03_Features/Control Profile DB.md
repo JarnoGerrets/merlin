@@ -1,82 +1,122 @@
 ---
 type: feature
 status: future
-area: cross-cutting
+area: backend
 tags:
   - merlin
   - feature
   - status/future
+  - layer/backend
 ---
 
 # Control Profile DB
 
 ## Summary
 
-Planned learned app/site/action controls with selectors, corrections, and surface-scoped behavior.
+Future learned database of surface/site/app control mappings.
 
 ## Status
 
 future
 
+## Verified Against Code
+
+Status verified: yes
+
+Evidence:
+- No production Control Profile DB implementation found.
+- `Merlin.ToDo/site_control_profiles/merlin_site_control_profiles_learning_v1.md is a future plan.`
+
 ## What Exists Today
 
-- Site control profile learning plan exists.
-- No production control profile database confirmed.
-
-## Code Map
-
-| File | Role | Notes |
-| --- | --- | --- |
-| `Merlin.ToDo/site_control_profiles/merlin_site_control_profiles_learning_v1.md` | Plan | Learning/profile design. |
-| `Merlin.Backend/Services/Context/ActiveSurface/*` | Dependency | Surface scoping. |
-| `Merlin.Backend/Services/BrowserWorkspace/PageControl/*` | Dependency | Page-aware actions. |
-
-## Related Systems
-
-- [[System Architecture Overview]]
-- [[Command Routing Architecture]]
-- [[Active Surface Architecture]]
-
-## Dependencies
-
-- [[Active Surface Layer]]
-- [[Browser Page-Aware Control]]
-- [[Correction Layer]]
-- [[Motion Control Profile Layer]]
-
-
-## Dependencies
-
-Dependencies are listed here and in [[Master Roadmap]]. Planned/future work must not start until dependencies are ready.
-
-## Dependents
-
-See linked roadmap notes.
+No durable learned profile database exists.
 
 ## Current Behavior
 
-Not implemented.
+Not implemented. Current profiles are code-based motion profiles only.
 
 ## Planned Behavior
 
-Store learned selectors/actions per surface/site/app; use corrections to improve mappings.
+Store learned site/app/action selectors after full motion control and correction stability.
+
+## Code Map
+
+| File | Class / Function | Role | Notes |
+| --- | --- | --- | --- |
+| Missing | Missing | Not implemented | Future/unknown. |
+
+## Code Atlas
+
+- [[Site Control Profiles]]
+
+## Related Systems
+
+- [[Browser Page-Aware Control]]
+- [[Correction Layer]]
+- [[Motion Control Profile Layer]]
+- [[Safety and Confirmation]]
+- [[Site Control Profiles]]
+- future app-specific motion profiles
+
+## Dependencies
+
+- [[Motion Control Profile Layer]]
+- [[Browser Page-Aware Control]]
+- [[Correction Layer]]
+- [[Safety and Confirmation]]
+
+## Dependents
+
+- [[Site Control Profiles]]
+- future app-specific motion profiles
+
+## Readiness
+
+Ready for implementation: no
+
+Reason:
+Foundations exist, but learning/correction/safety are not stable enough.
+
+Blocked by:
+- [[Correction Layer]]
+- [[Browser Page-Aware Control]]
+- [[Safety and Confirmation]]
+
+Next safe action:
+Finish generic motion/browser safety before schema design.
 
 ## Non-Goals / Do Not Build Yet
 
-Do not build app/site-specific V2 behavior unless the relevant roadmap item is explicitly requested and marked ready.
+- Do not build learning DB now.
+- Do not add per-site hacks as a substitute.
 
 ## Known Bugs / Fragility
 
-- Dangerous if built before safety and correction are stable.
+- N/A - future only.
 
 ## Tests
 
-See [[Current Test Coverage]].
+| Test File | Coverage | Gaps |
+| --- | --- | --- |
+| `Missing` | No implementation | All tests future. |
 
-## Relevant Docs / Reports / Prompts
+## Relevant Implementation Plans
 
-See [[07_Agent_Reports/Index|Agent Reports Index]] and [[08_Implementation_Prompts/Index|Implementation Prompts Index]].
+- [[Motion Control Profile Layer Plan]]
+- [[Site Control Profiles Learning Plan]]
+- [[Voice Correction Learning Plan]]
 
-## Next Actions
+## Relevant Reports
 
-Wait until motion, page-aware control, correction, and safety are stable.
+- See [[Agent Reports Index]] for cross-cutting reports.
+
+## Relevant Prompts
+
+- [[Implementation Prompts Index]]
+
+## Source Material
+
+- [[Imported Merlin.ToDo Index]] (3 imported source item(s) mapped to this feature).
+## Open Questions
+
+- Which runtime observations should be added after the next live validation?

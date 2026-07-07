@@ -1,0 +1,6 @@
+{
+  "CoreMemory": {
+    "IncludeRetrievalNotesInPrompt": false,
+    "RequireCoreMemoryForConversation": true
+  }
+}

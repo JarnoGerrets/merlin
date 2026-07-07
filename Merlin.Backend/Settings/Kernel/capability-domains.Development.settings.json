@@ -1,0 +1,166 @@
+{
+  "CapabilityDomains": [
+    {
+      "id": "application_launch",
+      "name": "Application Launch",
+      "description": "Open configured, trusted, or confirmed local applications.",
+      "isImplemented": true,
+      "implementedIntent": "open_application",
+      "missingMessage": null,
+      "safetyLevel": "confirmation_required"
+    },
+    {
+      "id": "url_opening",
+      "name": "URL Opening",
+      "description": "Open safe HTTP or HTTPS URLs.",
+      "isImplemented": true,
+      "implementedIntent": "open_url",
+      "missingMessage": null,
+      "safetyLevel": "safe"
+    },
+    {
+      "id": "tool_discovery",
+      "name": "Tool Discovery",
+      "description": "List implemented tools and their examples.",
+      "isImplemented": true,
+      "implementedIntent": "tool_discovery",
+      "missingMessage": null,
+      "safetyLevel": "safe"
+    },
+    {
+      "id": "diagnostics",
+      "name": "Diagnostics",
+      "description": "Report Merlin backend health, status, and runtime diagnostics.",
+      "isImplemented": true,
+      "implementedIntent": "diagnostics",
+      "missingMessage": null,
+      "safetyLevel": "safe"
+    },
+    {
+      "id": "confirmation",
+      "name": "Confirmation",
+      "description": "Confirm and execute pending safe actions.",
+      "isImplemented": true,
+      "implementedIntent": "confirmation",
+      "missingMessage": null,
+      "safetyLevel": "confirmation_required"
+    },
+    {
+      "id": "general_conversation",
+      "name": "General Conversation",
+      "description": "Handle safe conversational interaction using the local AI model.",
+      "isImplemented": true,
+      "implementedIntent": "general_conversation",
+      "missingMessage": null,
+      "safetyLevel": "safe"
+    },
+    {
+      "id": "system_timezone",
+      "name": "System Timezone",
+      "description": "Read the local system timezone.",
+      "isImplemented": true,
+      "implementedIntent": "system_resource_query",
+      "missingMessage": null,
+      "safetyLevel": "safe"
+    },
+    {
+      "id": "system_date",
+      "name": "System Date",
+      "description": "Read the current local system date.",
+      "isImplemented": true,
+      "implementedIntent": "system_resource_query",
+      "missingMessage": null,
+      "safetyLevel": "safe"
+    },
+    {
+      "id": "system_time",
+      "name": "System Time",
+      "description": "Read the current local system time.",
+      "isImplemented": true,
+      "implementedIntent": "system_resource_query",
+      "missingMessage": null,
+      "safetyLevel": "safe"
+    },
+    {
+      "id": "time",
+      "name": "Time",
+      "description": "Tell the current time, date, or timezone-aware time.",
+      "isImplemented": false,
+      "implementedIntent": null,
+      "missingMessage": "I understand you're asking for the current time, but I don't currently have a dedicated TimeTool for that request.",
+      "safetyLevel": "missing"
+    },
+    {
+      "id": "news",
+      "name": "News",
+      "description": "Retrieve current news, headlines, or news feeds.",
+      "isImplemented": false,
+      "implementedIntent": null,
+      "missingMessage": "I understand you're looking for news, but I don't currently have a News capability implemented. To make this possible, Merlin would need a NewsTool or WebSearch capability.",
+      "safetyLevel": "missing"
+    },
+    {
+      "id": "web_search",
+      "name": "Web Search",
+      "description": "Search the web or retrieve live/current information from the internet.",
+      "isImplemented": false,
+      "implementedIntent": null,
+      "missingMessage": "I understand you want web search, but I don't currently have a WebSearch capability implemented.",
+      "safetyLevel": "missing"
+    },
+    {
+      "id": "email",
+      "name": "Email",
+      "description": "Read, search, or send email.",
+      "isImplemented": false,
+      "implementedIntent": null,
+      "missingMessage": "I understand you want email access, but I don't currently have an Email capability implemented.",
+      "safetyLevel": "missing"
+    },
+    {
+      "id": "calendar",
+      "name": "Calendar",
+      "description": "Read or manage calendar events.",
+      "isImplemented": false,
+      "implementedIntent": null,
+      "missingMessage": "I understand you want calendar access, but I don't currently have a Calendar capability implemented.",
+      "safetyLevel": "missing"
+    },
+    {
+      "id": "file_access",
+      "name": "File Access",
+      "description": "Inspect folders, files, drives, desktop, downloads, or documents.",
+      "isImplemented": false,
+      "implementedIntent": null,
+      "missingMessage": "I understand you're asking me to inspect folders, but I don't currently have a file access capability implemented.",
+      "safetyLevel": "missing"
+    },
+    {
+      "id": "system_settings",
+      "name": "System Settings",
+      "description": "Change operating system settings or security configuration.",
+      "isImplemented": false,
+      "implementedIntent": null,
+      "missingMessage": "I understand you're asking for system settings control, but Merlin does not currently support changing system settings.",
+      "safetyLevel": "unsupported"
+    },
+    {
+      "id": "software_installation",
+      "name": "Software Installation",
+      "description": "Install, download, update, or remove software.",
+      "isImplemented": false,
+      "implementedIntent": null,
+      "missingMessage": "I understand you're asking to install or update software, but Merlin does not support software installation.",
+      "safetyLevel": "unsupported"
+    },
+    {
+      "id": "destructive_file_action",
+      "name": "Destructive File Action",
+      "description": "Delete, wipe, format, or destructively modify files or drives.",
+      "isImplemented": false,
+      "implementedIntent": null,
+      "missingMessage": "I understand you're asking me to delete files, but Merlin does not support destructive file actions. This protects your data from accidental or unsafe changes.",
+      "safetyLevel": "unsupported"
+    }
+  ]
+}

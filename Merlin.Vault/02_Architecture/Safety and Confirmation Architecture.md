@@ -5,66 +5,80 @@ area: cross-cutting
 tags:
   - merlin
   - architecture
+  - layer/cross-cutting
 ---
 
 # Safety and Confirmation Architecture
 
 ## Purpose
 
-Document action safety and confirmation boundaries.
+Safety/confirmation gates risky operations and must not be bypassed by context or motion routing.
 
 ## Current Design
 
-BrowserPageSafetyGuard exists for page-aware browser clicks/actions. ConfirmationService and pending confirmation models support explicit confirmations.
+Current implementation is distributed across the files in the component table. The vault treats code as source of truth and separates implemented behavior from plans.
 
 ## Planned Design
 
-Future external app, file browser, messaging, and learned profile actions need stronger safety policies.
+Future design should build on verified foundations only: active surface first, safety before execution, and profiles before app-specific behavior.
 
 ## Main Components
 
-- `BrowserPageSafetyGuard`
-- `ConfirmationService`
-- pending confirmation models
-- stop/cancel command handling
+| Component | File / Class | Responsibility |
+| --- | --- | --- |
+| CommandRouter | `Merlin.Backend/Services/CommandRouter.cs` | Routes commands where relevant. |
+| ActiveSurfaceService | `Merlin.Backend/Services/Context/ActiveSurface/ActiveSurfaceService.cs` | Current surface context. |
+| BrowserWorkspaceService | `Merlin.Backend/Services/BrowserWorkspace/BrowserWorkspaceService.cs` | Browser host and page actions where relevant. |
+| MotionControlModeService | `Merlin.Backend/Services/Motion/MotionControlModeService.cs` | Motion profile owner where relevant. |
 
 ## Data / Event Flow
 
-Route selects target; safety classifies risk; confirmation may hold pending action; confirmed action executes.
+See linked flow notes for exact call/message paths. In short, user voice and visual/motion inputs enter backend routing, which dispatches to services or emits frontend/BrowserHost messages.
+
+## State Ownership
+
+| State | Owner | Readers | Writers | Reset Conditions |
+| --- | --- | --- | --- | --- |
+| Active surface | `ActiveSurfaceService` | CommandRouter, LiveUtteranceGate, motion registry | BrowserWorkspaceService and future surface producers | Browser close/reset to Dashboard |
+| Motion enabled/profile | `MotionControlModeService` | VisionGestureEventRouter, tests | CommandRouter/profile switch | `eyes closed`, profile activation failure |
+| Browser host lifecycle | `BrowserWorkspaceService` | browser motion/page services | open/close/host-exit handlers | host exit/close |
+| Playback state | `AssistantSpeechPlaybackService` | UI broadcaster, interruption services | playback start/pause/resume/stop | final answer completed/cancelled |
+
+## Safety Boundaries
+
+Routing decides where a command goes. Safety decides whether it may execute. ActiveSurface and motion profiles must never bypass BrowserPageSafetyGuard or confirmation for risky actions.
 
 ## Mermaid Diagram
 
 ```mermaid
 flowchart TD
-    Command[Command] --> Route[Routing context]
-    Route --> Candidate[Candidate action]
-    Candidate --> Safety[Safety guard]
-    Safety -->|safe| Execute[Execute]
-    Safety -->|confirm| Pending[Pending confirmation]
-    Pending --> Confirm[I confirm]
-    Confirm --> Execute
-    Safety -->|blocked| Reject[Reject]
+    U[User voice/gesture] --> R[Routing or Vision pipeline]
+    R --> S[Active surface context]
+    S --> C[Command/service/profile]
+    C --> F[Frontend, BrowserHost, Memory, Tools]
+    C --> G[Safety/confirmation when needed]
+    G --> F
 ```
-
-## Code Map
-
-| File | Role |
-| --- | --- |
-| `Merlin.Backend/Services/BrowserWorkspace/PageControl/Safety/BrowserPageSafetyGuard.cs` | Browser action safety. |
-| `Merlin.Backend/Services/ConfirmationService.cs` | Pending confirmation. |
 
 ## Important Decisions
 
-- Never bypass safety/confirmation systems.
+- [[ADR-0002 Active Surface Before App-Specific Routing]]
+- [[ADR-0003 Motion Profiles Over One Global Motion Mode]]
+- [[ADR-0005 Safety Does Not Get Bypassed By Routing Context]]
 
-## Risks
+## Known Fragility
 
-- Raw motion clicks can bypass BrowserPageSafetyGuard.
+- Some behavior is still centralized in large scripts/services.
+- BrowserHost/native overlay lifecycle and DPI behavior need live validation.
+- Voice correction/barge-in tests currently fail and should be treated as blockers for learning features.
 
 ## Open Questions
 
-- How to apply safety to learned profiles and pointer clicks?
+- Which runtime observations should be promoted into permanent code atlas notes after the next validation session?
 
 ## Related Notes
 
-- [[Browser Page-Aware Control]]
+- [[Code Atlas Index]]
+- [[Voice Command Flow]]
+- [[Motion Gesture Dispatch Flow]]
+- [[Browser Workspace Flow]]

@@ -4,17 +4,21 @@
     "type": "split",
     "children": [
       {
-        "id": "d86c799691557cd3",
+        "id": "d03f75159e5bebf6",
         "type": "tabs",
         "children": [
           {
-            "id": "9e5accae0becb02d",
+            "id": "32e54d736874d3a6",
             "type": "leaf",
             "state": {
-              "type": "graph",
-              "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Grafiek weergave"
+              "type": "markdown",
+              "state": {
+                "file": "08_Implementation_Prompts/PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes"
             }
           }
         ]
@@ -90,6 +94,7 @@
             "state": {
               "type": "backlink",
               "state": {
+                "file": "08_Implementation_Prompts/PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -99,7 +104,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "Terugverwijzing"
+              "title": "Terugverwijzingen voor PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes"
             }
           },
           {
@@ -108,11 +113,12 @@
             "state": {
               "type": "outgoing-link",
               "state": {
+                "file": "08_Implementation_Prompts/PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "Uitgaande verwijzingen"
+              "title": "Uitgaande verwijzingen van PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes"
             }
           },
           {
@@ -150,12 +156,13 @@
             "state": {
               "type": "outline",
               "state": {
+                "file": "08_Implementation_Prompts/PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "Overzicht"
+              "title": "Overzicht van PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes"
             }
           }
         ]
@@ -176,8 +183,44 @@
       "bases:Nieuwe basis maken": false
     }
   },
-  "active": "9e5accae0becb02d",
+  "active": "32e54d736874d3a6",
   "lastOpenFiles": [
-    "01_Project/Build and Test Commands.md"
+    "08_Implementation_Prompts/PROMPT-2026-07-07-010 Review Modular Runtime Refactor Master Plan.md",
+    "14_Agent_Runs/2026/RUN-2026-07-07-013 Modular Runtime Master Plan Review.md",
+    "13_Implementation_Plans/Architecture_Refactor/PLAN-2026-07-07-010 Modular Runtime Refactor Master Plan.md",
+    "13_Implementation_Plans/Architecture_Refactor/PLAN-2026-07-07-011 Feature-Owned Settings Migration Plan.md",
+    "08_Implementation_Prompts/PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes.md",
+    "08_Implementation_Prompts/PROMPT-2026-07-07-011 Implement Feature-Owned Settings Migration.md",
+    "14_Agent_Runs/2026/RUN-2026-07-07-012 Feature-Owned Settings Migration.md",
+    "11_Code_Atlas/Backend/MerlinConfigurationBuilderExtensions.md",
+    "14_Agent_Runs/2026/RUN-2026-07-07-011 AskClarification PR10.4 Closure Review.md",
+    "09_Bugs/Correction Regeneration Test Failures.md",
+    "09_Bugs/BargeIn Idle Capture Test Failures.md",
+    "08_Implementation_Prompts/PROMPT-2026-07-07-023 Fix Correction Regeneration Test Failures.md",
+    "13_Implementation_Plans/Correction/PLAN-2026-07-07-023 Correction Regeneration Test Failures Plan.md",
+    "08_Implementation_Prompts/PROMPT-2026-07-07-022 Fix BargeIn Idle Capture Test Failures.md",
+    "13_Implementation_Plans/Voice/PLAN-2026-07-07-022 BargeIn Idle Capture Test Failures Plan.md",
+    "04_Current_State/AskClarification PR10.4 Live UX Validation Checklist.md",
+    "14_Agent_Runs/2026/RUN-2026-07-07-010 AskClarification PR10.4e Full Recomposition Ownership.md",
+    "AGENT.md",
+    "15_Progress_Reports/Modular Runtime Refactor Progress.md",
+    "13_Implementation_Plans/Architecture_Refactor/PLAN-2026-07-07-021 Validation Regression Harness Plan.md",
+    "13_Implementation_Plans/Architecture_Refactor/PLAN-2026-07-07-020 Voice Module Migration Plan.md",
+    "13_Implementation_Plans/Architecture_Refactor/PLAN-2026-07-07-019 Browser Module Migration Plan.md",
+    "13_Implementation_Plans/Architecture_Refactor/PLAN-2026-07-07-018 Adapter Boundary Migration Plan.md",
+    "13_Implementation_Plans/Architecture_Refactor/PLAN-2026-07-07-017 CommandRouter Strangler Pipeline Plan.md",
+    "13_Implementation_Plans/Architecture_Refactor/PLAN-2026-07-07-016 Dynamic Surface Registry Plan.md",
+    "13_Implementation_Plans/Architecture_Refactor/PLAN-2026-07-07-015 Capability Routing And Module Registration Plan.md",
+    "13_Implementation_Plans/Architecture_Refactor",
+    "Naamloos.canvas",
+    "17_Prompt_Extensions/Bundles",
+    "12_Source_Material/Imported_Merlin_ToDo/fixes_after_context_layer",
+    "17_Prompt_Extensions/Task_Types",
+    "17_Prompt_Extensions/Core",
+    "17_Prompt_Extensions/Areas",
+    "17_Prompt_Extensions/agent_os_summary.json",
+    "17_Prompt_Extensions",
+    "16_Change_Log/2026",
+    "16_Change_Log"
   ]
 }

@@ -6,89 +6,128 @@ tags:
   - merlin
   - feature
   - status/implemented
+  - layer/backend
 ---
 
 # Motion Control Profile Layer
 
 ## Summary
 
-Uses `eyes open` to enable motion and select one active profile from Active Surface.
+Profile dispatcher that chooses Dashboard, BrowserWorkspace, or Neutral motion behavior from ActiveSurface.
 
 ## Status
 
 implemented
 
+## Verified Against Code
+
+Status verified: yes
+
+Evidence:
+- `Merlin.Backend/Services/Motion/MotionControlModeService.cs exists and owns enable/disable/profile switching.`
+- `Merlin.Backend/Services/Motion/MotionControlProfileRegistry.cs resolves profiles.`
+- DashboardMotionProfile.cs, BrowserWorkspaceMotionProfile.cs, and NeutralMotionProfile.cs exist.
+- `Merlin.Backend.Tests/MotionControlModeServiceTests.cs and MotionControlProfileRegistryTests.cs cover profile behavior.`
+
 ## What Exists Today
 
-- Implemented backend profile service and registry.
-- Profiles: Dashboard, BrowserWorkspace, Neutral.
-- `eyes open` / `eyes closed` and existing aliases route through CommandRouter.
-- VisionGestureEventRouter delegates to MotionControlModeService.
+`eyes open` enables motion through MotionControlModeService. The service resolves a profile from ActiveSurface and starts the vision sidecar unless the Neutral profile is selected.
+
+## Current Behavior
+
+Dashboard gestures are forwarded to Godot. BrowserWorkspace profile delegates pointer, pinch click, and scroll to browser motion services. ActiveSurface changes can switch profiles while enabled.
+
+## Planned Behavior
+
+Add profile-specific sensitivity, safety-aware pointer click policy, and better observability before app/site profiles.
 
 ## Code Map
 
-| File | Role | Notes |
-| --- | --- | --- |
-| `Merlin.Backend/Services/Motion/MotionControlModeService.cs` | Mode service | Enables/disables and switches profile. |
-| `Merlin.Backend/Services/Motion/MotionControlProfileRegistry.cs` | Registry | Resolves by surface or override. |
-| `Merlin.Backend/Services/Motion/Profiles/DashboardMotionProfile.cs` | Dashboard profile | Starts dashboard UI control. |
-| `Merlin.Backend/Services/Motion/Profiles/BrowserWorkspaceMotionProfile.cs` | Browser profile | Uses pointer, pinch click, scroll. |
-| `Merlin.Backend/Services/Motion/Profiles/NeutralMotionProfile.cs` | Neutral profile | Safe no-op. |
+| File | Class / Function | Role | Notes |
+| --- | --- | --- | --- |
+| `Merlin.Backend/Services/Motion/MotionControlModeService.cs` | MotionControlModeService | Mode/profile state owner | EnableAsync, DisableAsync, HandleGestureAsync, OnActiveSurfaceChangedAsync. |
+| `Merlin.Backend/Services/Motion/MotionControlProfileRegistry.cs` | MotionControlProfileRegistry | Profile resolver | Resolves explicit overrides and active surface. |
+| `Merlin.Backend/Services/Motion/Profiles/BrowserWorkspaceMotionProfile.cs` | BrowserWorkspaceMotionProfile | Browser motion adapter | Pointer/click/scroll delegation. |
+
+## Code Atlas
+
+- [[MotionControlModeService]]
+- [[MotionControlProfileRegistry]]
+- [[DashboardMotionProfile]]
+- [[BrowserWorkspaceMotionProfile]]
+- [[Motion Profile Selection Flow]]
+- [[Motion Profile Switch Flow]]
 
 ## Related Systems
 
-- [[System Architecture Overview]]
-- [[Command Routing Architecture]]
-- [[Active Surface Architecture]]
+- [[Active Surface Layer]]
+- [[Browser Workspace]]
+- [[Control Profile DB]]
+- [[Dashboard UI Control]]
+- [[File Browser]]
+- [[Site Control Profiles]]
+- [[Spotify Widget]]
+- [[Vision Sidecar]]
 
-## Explicit Dependencies
+## Dependencies
 
 - [[Active Surface Layer]]
 - [[Vision Sidecar]]
 - [[Dashboard UI Control]]
 - [[Browser Workspace]]
 
-## Explicit Non-Goals
-
-- YouTube profile
-- Spotify profile
-- FileBrowser profile
-- learned control DB
-
-
-## Dependencies
-
-Dependencies are listed here and in [[Master Roadmap]]. Planned/future work must not start until dependencies are ready.
-
 ## Dependents
 
-See linked roadmap notes.
+- [[Control Profile DB]]
+- [[Site Control Profiles]]
+- [[Spotify Widget]]
+- [[File Browser]]
 
-## Current Behavior
+## Readiness
 
-Motion starts once, then active profile consumes gestures according to current active surface.
+Ready for implementation: yes
 
-## Planned Behavior
+Reason:
+V1 exists; next work can harden safety and diagnostics.
 
-Later profiles can represent app/site/widget controls after Control Profile DB and site learning exist.
+Blocked by:
+- App/site profiles are blocked by [[Control Profile DB]] and safety policy.
+
+Next safe action:
+Add a safety-aware browser pointer click adapter before any learned profile.
 
 ## Non-Goals / Do Not Build Yet
 
-Do not build app/site-specific V2 behavior unless the relevant roadmap item is explicitly requested and marked ready.
+- Do not create YouTube/Spotify/site-specific profiles yet.
+- Do not duplicate pinch logic per profile.
 
 ## Known Bugs / Fragility
 
-- Browser profile still relies on raw pointer click safety gap.
-- Surface reset/lifecycle bugs can select wrong profile.
+- Legacy fallback paths still exist in VisionGestureEventRouter for compatibility.
+- Profile correctness depends on accurate ActiveSurface state.
 
 ## Tests
 
-See [[Current Test Coverage]].
+| Test File | Coverage | Gaps |
+| --- | --- | --- |
+| `Merlin.Backend.Tests/MotionControlModeServiceTests.cs` | Enable/disable/profile switch/forwarding | Live camera behavior is manual. |
+| `Merlin.Backend.Tests/MotionControlProfileRegistryTests.cs` | Resolution rules | No app/site profile coverage yet. |
 
-## Relevant Docs / Reports / Prompts
+## Relevant Implementation Plans
 
-See [[07_Agent_Reports/Index|Agent Reports Index]] and [[08_Implementation_Prompts/Index|Implementation Prompts Index]].
+- [[Motion Control Profile Layer Plan]]
 
-## Next Actions
+## Relevant Reports
 
-Live-test dashboard/browser switching and add report.
+- See [[Agent Reports Index]] for cross-cutting reports.
+
+## Relevant Prompts
+
+- [[Implementation Prompts Index]]
+
+## Source Material
+
+- [[Imported Merlin.ToDo Index]] (1 imported source item(s) mapped to this feature).
+## Open Questions
+
+- Which runtime observations should be added after the next live validation?

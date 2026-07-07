@@ -1,81 +1,112 @@
 ---
 type: feature
 status: future
-area: cross-cutting
+area: frontend
 tags:
   - merlin
   - feature
   - status/future
+  - layer/frontend
 ---
 
 # Spotify Widget
 
 ## Summary
 
-Planned music widget and Spotify control surface.
+Future Spotify music widget.
 
 ## Status
 
 future
 
+## Verified Against Code
+
+Status verified: yes
+
+Evidence:
+- `Merlin.ToDo/music_widget/merlin_spotify_music_widget_implementation_plan.md exists.`
+- No Spotify widget production code found.
+
 ## What Exists Today
 
-- Implementation plan exists in `Merlin.ToDo/music_widget/merlin_spotify_music_widget_implementation_plan.md`.
-- No confirmed production Spotify API/auth widget implementation found.
-
-## Code Map
-
-| File | Role | Notes |
-| --- | --- | --- |
-| `Merlin.ToDo/music_widget/merlin_spotify_music_widget_implementation_plan.md` | Plan | Source planning doc. |
-| `Merlin.Frontend/Scripts/UI/Windows/*` | Future UI substrate | Window/widget base. |
-
-## Related Systems
-
-- [[System Architecture Overview]]
-- [[Command Routing Architecture]]
-- [[Active Surface Architecture]]
-
-## Dependencies
-
-- Spotify API/auth/control
-- future widget UI
-- [[Motion Control Profile Layer]] for future gesture profile
-
-
-## Dependencies
-
-Dependencies are listed here and in [[Master Roadmap]]. Planned/future work must not start until dependencies are ready.
-
-## Dependents
-
-See linked roadmap notes.
+Not implemented.
 
 ## Current Behavior
 
-Not built as a production feature yet.
+No widget/API/auth runtime.
 
 ## Planned Behavior
 
-Requires Spotify API/auth/control, widget UI, and future motion profile.
+Spotify auth/API + widget shell before any motion profile.
+
+## Code Map
+
+| File | Class / Function | Role | Notes |
+| --- | --- | --- | --- |
+| Missing | Missing | Not implemented | Future/unknown. |
+
+## Code Atlas
+
+- None yet.
+
+## Related Systems
+
+- Future Spotify motion/site profile
+- Spotify API/auth
+- [[UI and Widgets Roadmap]]
+
+## Dependencies
+
+- Spotify API/auth
+- [[UI and Widgets Roadmap]]
+
+## Dependents
+
+- Future Spotify motion/site profile
+
+## Readiness
+
+Ready for implementation: no
+
+Reason:
+Auth/API/widget foundation is missing.
+
+Blocked by:
+- Spotify auth/API decisions
+- widget shell
+
+Next safe action:
+Implement non-motion widget foundation when explicitly requested.
 
 ## Non-Goals / Do Not Build Yet
 
-Do not build app/site-specific V2 behavior unless the relevant roadmap item is explicitly requested and marked ready.
+- Do not build Spotify motion profile first.
 
 ## Known Bugs / Fragility
 
-- Should not be built until base widget/control exists.
-- Needs safety around account actions.
+- N/A - future only.
 
 ## Tests
 
-See [[Current Test Coverage]].
+| Test File | Coverage | Gaps |
+| --- | --- | --- |
+| `Missing` | No implementation | All tests future. |
 
-## Relevant Docs / Reports / Prompts
+## Relevant Implementation Plans
 
-See [[07_Agent_Reports/Index|Agent Reports Index]] and [[08_Implementation_Prompts/Index|Implementation Prompts Index]].
+- [[Spotify Music Widget Implementation Plan]]
 
-## Next Actions
+## Relevant Reports
 
-Keep future/blocked until explicitly requested.
+- See [[Agent Reports Index]] for cross-cutting reports.
+
+## Relevant Prompts
+
+- [[Implementation Prompts Index]]
+
+## Source Material
+
+- [[Imported Merlin.ToDo Index]] (1 imported source item(s) mapped to this feature).
+## Open Questions
+
+- Which runtime observations should be added after the next live validation?

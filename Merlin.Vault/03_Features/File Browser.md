@@ -6,6 +6,7 @@ tags:
   - merlin
   - feature
   - status/future
+  - layer/cross-cutting
 ---
 
 # File Browser
@@ -18,58 +19,94 @@ Future file browsing/control surface.
 
 future
 
+## Verified Against Code
+
+Status verified: yes
+
+Evidence:
+- No FileBrowser production feature found from required search.
+- `Capability docs mention file access/destructive actions as future/unknown.`
+
 ## What Exists Today
 
-- Capability specs mention file access.
-- No production FileBrowser surface confirmed.
-
-## Code Map
-
-| File | Role | Notes |
-| --- | --- | --- |
-| `Merlin.ToDo/merlin_capability_specs/05_FileAccessCapability.md` | Capability plan | File access scope. |
-| `Merlin.ToDo/merlin_capability_specs/08_DestructiveFileActionsCapability.md` | Safety plan | Destructive action constraints. |
-
-## Related Systems
-
-- [[System Architecture Overview]]
-- [[Command Routing Architecture]]
-- [[Active Surface Architecture]]
-
-
-## Dependencies
-
-Dependencies are listed here and in [[Master Roadmap]]. Planned/future work must not start until dependencies are ready.
-
-## Dependents
-
-See linked roadmap notes.
+Not implemented as a UI/browser feature.
 
 ## Current Behavior
 
-Not implemented as a dedicated surface.
+No dedicated file browser surface.
 
 ## Planned Behavior
 
-Build after active surface, safety, and confirmation policies are strong enough.
+Needs safety policy for file reads/writes/deletes before UI work.
+
+## Code Map
+
+| File | Class / Function | Role | Notes |
+| --- | --- | --- | --- |
+| Missing | Missing | Not implemented | Future/unknown. |
+
+## Code Atlas
+
+- None yet.
+
+## Related Systems
+
+- Future file motion profile
+- [[Safety and Confirmation]]
+- file access capability policy
+
+## Dependencies
+
+- [[Safety and Confirmation]]
+- file access capability policy
+
+## Dependents
+
+- Future file motion profile
+
+## Readiness
+
+Ready for implementation: no
+
+Reason:
+High-risk file actions need safety and scope policy first.
+
+Blocked by:
+- Safety policy
+- capability design
+
+Next safe action:
+Define safe read-only file browsing contract.
 
 ## Non-Goals / Do Not Build Yet
 
-Do not build app/site-specific V2 behavior unless the relevant roadmap item is explicitly requested and marked ready.
+- Do not add destructive file control without confirmation/undo policy.
 
 ## Known Bugs / Fragility
 
-- High-risk destructive actions.
-- Needs explicit confirmation and path boundaries.
+- N/A - future only.
 
 ## Tests
 
-See [[Current Test Coverage]].
+| Test File | Coverage | Gaps |
+| --- | --- | --- |
+| `Missing` | No implementation | All tests future. |
 
-## Relevant Docs / Reports / Prompts
+## Relevant Implementation Plans
 
-See [[07_Agent_Reports/Index|Agent Reports Index]] and [[08_Implementation_Prompts/Index|Implementation Prompts Index]].
+- None currently promoted for this feature.
 
-## Next Actions
+## Relevant Reports
 
-Do not build until requested and safety design is accepted.
+- See [[Agent Reports Index]] for cross-cutting reports.
+
+## Relevant Prompts
+
+- [[Implementation Prompts Index]]
+
+## Source Material
+
+- [[Imported Merlin.ToDo Index]] (1 imported source item(s) mapped to this feature).
+## Open Questions
+
+- Which runtime observations should be added after the next live validation?

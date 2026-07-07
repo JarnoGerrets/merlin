@@ -1,0 +1,13 @@
+{
+  "AcknowledgementSpeech": {
+    "Enabled": true,
+    "VoiceModeOnly": true,
+    "MinimumExpectedLatencyMs": 1500,
+    "FirstProgressAfterMs": 6000,
+    "SecondProgressAfterMs": 14000,
+    "LongWaitProgressAfterMs": 25000,
+    "MaxProgressUpdates": 3,
+    "PhraseCooldownSeconds": 600,
+    "UseCachedAudioOnlyForAcknowledgements": true
+  }
+}

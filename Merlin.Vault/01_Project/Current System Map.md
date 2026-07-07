@@ -3,59 +3,22 @@ type: project
 status: current
 tags:
   - merlin
-  - system-map
 ---
 
 # Current System Map
 
-## Voice Runtime
+## User Voice
 
-```mermaid
-flowchart TD
-    A[User voice] --> B[Voice capture / STT]
-    B --> C[LiveUtteranceGate]
-    C --> D[BargeInCoordinator]
-    D --> E[CommandRouter]
-    E --> F[Tools and services]
-    F --> G[Backend state]
-    G --> H[WebSocketHandler]
-    H --> I[Godot frontend]
-    E --> J[TTS / speech playback]
-    J --> K[AssistantUiStateBroadcaster]
-    K --> H
-```
+User voice -> STT -> [[LiveUtteranceGate]] / interruption routing -> [[ActiveSurfaceService]] when surface context matters -> [[CommandRouter]] -> tools/services -> assistant response / TTS -> [[AssistantSpeechPlaybackService]] -> frontend visual events handled by [[MerlinWebSocketClient.gd]] and [[Main.gd]].
 
-## Motion Runtime
+## Camera / Vision Sidecar
 
-```mermaid
-flowchart TD
-    A[Camera] --> B[Python vision sidecar]
-    B --> C[VisionGestureEvent]
-    C --> D[VisionGestureEventRouter]
-    D --> E[MotionControlModeService]
-    E --> F{Active surface}
-    F --> G[DashboardMotionProfile]
-    F --> H[BrowserWorkspaceMotionProfile]
-    F --> I[NeutralMotionProfile]
-    G --> J[Godot dashboard UI]
-    H --> K[BrowserHost pointer overlay]
-```
+Camera -> [[vision_worker.py]] -> `VisionGestureEvent` JSON -> [[VisionSidecarHost]] -> [[VisionGestureEventRouter]] -> [[MotionControlModeService]] profile layer -> [[DashboardMotionProfile]] or [[BrowserWorkspaceMotionProfile]] -> Godot dashboard or BrowserHost overlay/click/scroll.
 
-## Browser Runtime
+## Browser Workspace
 
-```mermaid
-flowchart TD
-    A[Voice command] --> B[WebDestinationParser]
-    B --> C[CommandRouter]
-    C --> D[BrowserWorkspaceService]
-    D --> E[Merlin.BrowserHost process]
-    E --> F[WebView2]
-    E --> G[Native pointer overlay]
-    F --> H[Page snapshot / DOM action scripts]
-```
+[[BrowserWorkspaceService]] -> `Merlin.BrowserHost` -> [[BrowserWorkspaceForm]] / WebView2 -> page snapshot, pointer overlay, click, scroll -> BrowserHost stdout events -> backend state and [[ActiveSurfaceService]] updates.
 
-## Notes
+## Not Current
 
-- Active Surface is implemented and currently covers dashboard, browser workspace, and unknown surfaces.
-- Motion profiles are implemented in backend services and selected by active surface.
-- BrowserHost controls final screen click location for the browser pointer.
+[[Control Profile DB]], [[Site Control Profiles]], [[Spotify Widget]], and [[File Browser]] are not current runtime systems.

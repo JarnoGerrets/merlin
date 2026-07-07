@@ -1,0 +1,26 @@
+{
+  "SpeechPresence": {
+    "Enabled": true,
+    "EnableFloorYield": true,
+    "FloorYieldRequiresOfficialDecision": true,
+    "FloorYieldMinSustainedMs": 30,
+    "FloorYieldLogEvidence": true,
+    "MaybeConfidenceThreshold": 0.55,
+    "YesConfidenceThreshold": 0.75,
+    "MinVadConfidence": 0.35,
+    "MinEchoReducedRms": 0.006,
+    "MinRawMicRms": 0.008,
+    "StrongSelfEchoCorrelationThreshold": 0.7,
+    "SelfEchoContaminatedCorrelationThreshold": 0.55,
+    "ClearNearEndVadConfidence": 0.8,
+    "ClearNearEndEchoReducedRms": 0.03,
+    "ClearNearEndRawMicRms": 0.05,
+    "LogDecisions": true,
+    "LogDecisionsToLogger": false,
+    "LogDecisionsToFile": true,
+    "DecisionLogFilePath": "speech-presence.tmp.log",
+    "DecisionLogFlushIntervalMs": 500,
+    "DecisionLogMaxQueueEntries": 5000,
+    "DecisionLogSampleEveryNFrames": 1
+  }
+}

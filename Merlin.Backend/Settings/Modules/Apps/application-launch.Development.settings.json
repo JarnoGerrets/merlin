@@ -1,0 +1,30 @@
+{
+  "ApplicationLaunch": {
+    "Applications": {
+      "notepad": {
+        "displayName": "Notepad",
+        "executableOrUrl": "notepad.exe",
+        "aliases": [
+          "notepad"
+        ]
+      },
+      "calculator": {
+        "displayName": "Calculator",
+        "executableOrUrl": "calc.exe",
+        "aliases": [
+          "calculator",
+          "calc"
+        ]
+      },
+      "vscode": {
+        "displayName": "VS Code",
+        "executableOrUrl": "code",
+        "aliases": [
+          "vscode",
+          "vs code",
+          "visual studio code"
+        ]
+      }
+    }
+  }
+}

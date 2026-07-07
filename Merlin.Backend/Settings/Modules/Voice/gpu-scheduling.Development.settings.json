@@ -1,0 +1,5 @@
+{
+  "GpuScheduling": {
+    "EnableConcurrentInterruptionSttDuringTts": true
+  }
+}

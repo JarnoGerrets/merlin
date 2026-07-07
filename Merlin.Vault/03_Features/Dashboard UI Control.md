@@ -6,74 +6,113 @@ tags:
   - merlin
   - feature
   - status/partial
+  - layer/frontend
 ---
 
 # Dashboard UI Control
 
 ## Summary
 
-Motion control for Merlin dashboard windows and UI.
+Godot dashboard gesture cursor and window manipulation.
 
 ## Status
 
 partial
 
+## Verified Against Code
+
+Status verified: yes
+
+Evidence:
+- `Merlin.Frontend/Scripts/Main.gd handles UI_CONTROL_MODE_STARTED/STOPPED and GESTURE_* events.`
+- Main.gd owns _gesture_pointer_move, _gesture_pinch_start, _gesture_pinch_end, resize, drag, crumple logic.
+- DashboardMotionProfile.cs forwards dashboard profile gestures to frontend.
+
 ## What Exists Today
 
-- UiControlModeController exists.
-- Frontend receives dashboard gesture events.
-- Godot window manager and window capabilities exist.
-- Dashboard profile starts/stops controller.
-
-## Code Map
-
-| File | Role | Notes |
-| --- | --- | --- |
-| `Merlin.Backend/Services/UiControlModeController.cs` | Backend mode | Command matching and state. |
-| `Merlin.Backend/WebSocket/WebSocketHandler.cs` | Gesture forwarding | Sends dashboard gestures. |
-| `Merlin.Frontend/Scripts/Main.gd` | Gesture consumer | Dashboard interactions. |
-| `Merlin.Frontend/Scripts/UI/Windows/*` | Windows | Drag/resize/dismiss. |
-
-## Related Systems
-
-- [[System Architecture Overview]]
-- [[Command Routing Architecture]]
-- [[Active Surface Architecture]]
-
-
-## Dependencies
-
-Dependencies are listed here and in [[Master Roadmap]]. Planned/future work must not start until dependencies are ready.
-
-## Dependents
-
-See linked roadmap notes.
+Dashboard gesture behavior works but is centralized in a large Godot script.
 
 ## Current Behavior
 
-Dashboard control is active when dashboard motion profile is selected.
+Pointer move updates a gesture cursor. Pinch can grab, drag, resize, select, and crumple/dismiss dashboard surfaces.
 
 ## Planned Behavior
 
-Move more gesture semantics out of `Main.gd` later.
+Extract focused frontend gesture helpers and profile-specific sensitivity after behavior is stable.
+
+## Code Map
+
+| File | Class / Function | Role | Notes |
+| --- | --- | --- | --- |
+| `Merlin.Frontend/Scripts/Main.gd` | Main.gd | Dashboard gesture owner | Gesture cursor and window interactions. |
+| `Merlin.Backend/Services/Motion/Profiles/DashboardMotionProfile.cs` | DashboardMotionProfile | Backend adapter | Forwards gestures to frontend path. |
+
+## Code Atlas
+
+- [[Main.gd]]
+- [[DashboardMotionProfile]]
+- [[Dashboard Motion Profile Flow]]
+- [[Frontend Gesture Constants]]
+
+## Related Systems
+
+- Future widget motion control
+- [[Motion Control Profile Layer]]
+- [[Vision Sidecar]]
+
+## Dependencies
+
+- [[Vision Sidecar]]
+- [[Motion Control Profile Layer]]
+
+## Dependents
+
+- Future widget motion control
+
+## Readiness
+
+Ready for implementation: yes
+
+Reason:
+Hardening and extraction can happen incrementally.
+
+Blocked by:
+- Big refactors should wait until baseline behavior is documented/testable.
+
+Next safe action:
+Document/extract one gesture behavior at a time, starting with resize sensitivity.
 
 ## Non-Goals / Do Not Build Yet
 
-Do not build app/site-specific V2 behavior unless the relevant roadmap item is explicitly requested and marked ready.
+- Do not rewrite dashboard motion in backend.
+- Do not add widget-specific gestures before widget behavior exists.
 
 ## Known Bugs / Fragility
 
-- Gesture logic centralized in frontend.
-- Sensitivity differs from browser pointer needs.
+- Centralized Main.gd gesture logic is hard to reason about.
+- Camera reach can make screen edges inaccessible.
 
 ## Tests
 
-See [[Current Test Coverage]].
+| Test File | Coverage | Gaps |
+| --- | --- | --- |
+| `Manual validation` | Dashboard gestures | No Godot automated gesture tests discovered. |
 
-## Relevant Docs / Reports / Prompts
+## Relevant Implementation Plans
 
-See [[07_Agent_Reports/Index|Agent Reports Index]] and [[08_Implementation_Prompts/Index|Implementation Prompts Index]].
+- [[Universal UI Control Layer Design Plan]]
 
-## Next Actions
+## Relevant Reports
 
-Use profile layer as boundary before frontend refactor.
+- `Merlin.Vault/12_Source_Material/Imported_Merlin_ToDo/done/DONE frontend_ui/merlin_frontend_ui_current_architecture_report.md`
+
+## Relevant Prompts
+
+- [[Implementation Prompts Index]]
+
+## Source Material
+
+- [[Imported Merlin.ToDo Index]] (5 imported source item(s) mapped to this feature).
+## Open Questions
+
+- Which runtime observations should be added after the next live validation?

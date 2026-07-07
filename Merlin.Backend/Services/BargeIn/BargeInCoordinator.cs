@@ -44,6 +44,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     private readonly ISpeechPresenceDecisionLogSink? _speechPresenceDecisionLogSink;
     private readonly IFloorYieldController? _floorYieldController;
     private readonly IActiveSurfaceService? _activeSurfaceService;
+    private readonly IPendingInterruptionClarificationService? _pendingInterruptionClarifications;
     private readonly MerlinAwakeStateService _merlinAwakeState;
     private readonly object _syncRoot = new();
     private long _analysisFrameSequence;
@@ -64,6 +65,11 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     private DateTimeOffset? _fastNearEndFirstSpeechAt;
     private int _sustainedUserSpeechScoreMs;
     private bool _playbackYieldedForRollingUserSpeechEvidence;
+    private long _interruptionHandlingWatchdogGeneration;
+    private DateTimeOffset? _interruptionHandlingStateStartedAtUtc;
+    private string? _interruptionHandlingTurnId;
+    private string? _interruptionHandlingCorrelationId;
+    private string? _interruptionHandlingReason;
     private readonly RollingUserSpeechEvidenceTracker _rollingUserSpeechEvidence = new();
     private readonly BurstCaptureCandidateState _burstCaptureCandidate = new();
     private readonly Dictionary<string, DateTimeOffset> _lastRepeatedDiagnosticAt = new(StringComparer.Ordinal);
@@ -101,7 +107,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         ILiveInterruptionIntegrationService? liveInterruptionIntegrationService = null,
         IActiveSpokenTurnResolver? activeSpokenTurnResolver = null,
         AssistantUiStateBroadcaster? assistantUiStateBroadcaster = null,
-        IActiveSurfaceService? activeSurfaceService = null)
+        IActiveSurfaceService? activeSurfaceService = null,
+        IPendingInterruptionClarificationService? pendingInterruptionClarifications = null)
     {
         _playbackReferenceTap = playbackReferenceTap;
         _assistantPlaybackMonitor = assistantPlaybackMonitor;
@@ -130,6 +137,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         _floorYieldController = floorYieldController;
         _activeSurfaceService = activeSurfaceService;
         _activeSpokenTurnResolver = activeSpokenTurnResolver;
+        _pendingInterruptionClarifications = pendingInterruptionClarifications;
 
         _playbackReferenceTap.SpeechStarted += OnSpeechStarted;
         _playbackReferenceTap.SpeechStopped += OnSpeechStopped;
@@ -628,7 +636,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                     context.CorrelationId,
                     context.AssistantTurnId,
                     audiblePlaybackActive: false,
-                    interruptionState: "capturing"),
+                    interruptionState: AssistantUiStateEvent.InterruptionStateCapturing),
                 nameof(BargeInCoordinator),
                 cancellationToken);
         }
@@ -1981,6 +1989,14 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
 
         var normalized = InterruptionClassifier.Normalize(stt.Transcript);
         var utterance = CreateUserUtterance(context, stt.Transcript, vad.Confidence, timeline.CaptureId);
+        if (await TryConsumePendingInterruptionClarificationAsync(context, utterance, cancellationToken))
+        {
+            timeline.ToolResult = "pending_interruption_clarification_response";
+            LogVoiceCaptureTimelineCompleted(timeline);
+            _vadService.Reset();
+            return;
+        }
+
         if (IsLiveMonitorContext(context) && !utterance.AssistantWasSpeaking)
         {
             var awakeResult = _merlinAwakeState.EvaluateVoiceActivity(
@@ -2051,7 +2067,9 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
                     : "backend_idle_voice_request_accepted",
                 utterance.CorrelationId,
                 utterance.ActiveTurnId,
-                interruptionState: utterance.AssistantWasSpeaking ? "handling" : "none"),
+                interruptionState: utterance.AssistantWasSpeaking
+                    ? AssistantUiStateEvent.InterruptionStateHandling
+                    : AssistantUiStateEvent.InterruptionStateNone),
             nameof(BargeInCoordinator),
             cancellationToken);
         var gateResult = _liveUtteranceGate?.Evaluate(CreateLiveUtteranceGateInput(utterance, vad.Confidence));
@@ -3557,6 +3575,78 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             AudioSpeechConfidence = vadConfidence,
             ActiveSurface = _activeSurfaceService?.Current
         };
+    }
+
+    private async Task<bool> TryConsumePendingInterruptionClarificationAsync(
+        BargeInSpeechContext context,
+        UserUtterance utterance,
+        CancellationToken cancellationToken)
+    {
+        if (_pendingInterruptionClarifications is null)
+        {
+            return false;
+        }
+
+        var response = _pendingInterruptionClarifications.TryConsumeResponse(
+            utterance.Text,
+            utterance.CaptureId,
+            utterance.CorrelationId);
+        if (response is null)
+        {
+            return false;
+        }
+
+        await EmitAssistantUiStateImmediateAsync(
+            AssistantUiStateEvent.Create(
+                "thinking",
+                "pending_interruption_clarification_response_captured",
+                utterance.CorrelationId,
+                response.Pending.ActiveTurnId,
+                interruptionState: AssistantUiStateEvent.InterruptionStateHandling),
+            nameof(BargeInCoordinator),
+            cancellationToken);
+
+        var routeDecision = Decision(
+            UtteranceRouteKind.AddToActiveTurn,
+            0.97,
+            "Matched pending interruption clarification response.",
+            "PendingInterruptionClarificationResponse");
+        _logger.LogInformation(
+            "PendingInterruptionClarificationResponseCaptured ClarificationId: {ClarificationId}. OriginalTurnId: {OriginalTurnId}. OriginalCorrelationId: {OriginalCorrelationId}. ResponseCaptureId: {ResponseCaptureId}. ResponseCorrelationId: {ResponseCorrelationId}. ResponseLength: {ResponseLength}.",
+            response.Pending.ClarificationId,
+            response.Pending.ActiveTurnId,
+            response.Pending.CorrelationId,
+            response.CaptureId,
+            response.CorrelationId,
+            response.ResponseText.Length);
+
+        if (_liveInterruptionIntegrationService is not null)
+        {
+            var outcome = await _liveInterruptionIntegrationService.TryHandlePendingClarificationResponseAsync(
+                response,
+                cancellationToken);
+            if (outcome is not null)
+            {
+                _logger.LogInformation(
+                    "PendingInterruptionClarificationResponseOwnerResult ClarificationId: {ClarificationId}. TurnId: {TurnId}. CorrelationId: {CorrelationId}. WasHandled: {WasHandled}. AllowLegacyCleanup: {AllowLegacyCleanup}. AllowLegacySemanticRouting: {AllowLegacySemanticRouting}. ShouldCancelPlayback: {ShouldCancelPlayback}. ResultType: {ResultType}. Reason: {Reason}.",
+                    response.Pending.ClarificationId,
+                    response.Pending.ActiveTurnId,
+                    response.Pending.CorrelationId,
+                    outcome.WasHandledByConversationalInterruption,
+                    outcome.AllowLegacyCleanup,
+                    outcome.AllowLegacySemanticRouting,
+                    outcome.ShouldCancelPlayback,
+                    outcome.Result?.Type,
+                    outcome.Reason);
+                if (outcome.WasHandledByConversationalInterruption || !outcome.AllowLegacySemanticRouting)
+                {
+                    return true;
+                }
+            }
+        }
+
+        await RaiseLiveUserUtteranceRoutedAsync(utterance, routeDecision, cancellationToken);
+        return true;
     }
 
     private async Task<bool> TryHandleConversationalInterruptionLiveSeamAsync(
@@ -5476,6 +5566,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         string source,
         CancellationToken cancellationToken)
     {
+        ObserveInterruptionHandlingState(uiState, source);
+
         return _assistantUiStateBroadcaster?.EmitImmediateAsync(uiState, source, cancellationToken)
             ?? Task.CompletedTask;
     }
@@ -5485,7 +5577,199 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         string source,
         CancellationToken cancellationToken)
     {
+        ObserveInterruptionHandlingState(uiState, source);
+
         return _assistantUiStateBroadcaster?.RequestCoalescedStateAsync(uiState, source, cancellationToken)
             ?? Task.CompletedTask;
+    }
+
+    internal Task EmitAssistantUiStateForDiagnosticsAsync(
+        AssistantUiStateEvent uiState,
+        CancellationToken cancellationToken = default)
+    {
+        return EmitAssistantUiStateImmediateAsync(uiState, nameof(BargeInCoordinator), cancellationToken);
+    }
+
+    private void ObserveInterruptionHandlingState(AssistantUiStateEvent uiState, string source)
+    {
+        if (_assistantUiStateBroadcaster is null)
+        {
+            return;
+        }
+
+        if (string.Equals(uiState.InterruptionState, AssistantUiStateEvent.InterruptionStateHandling, StringComparison.Ordinal))
+        {
+            StartInterruptionHandlingWatchdog(uiState, source);
+            return;
+        }
+
+        if (string.Equals(uiState.InterruptionState, AssistantUiStateEvent.InterruptionStateNone, StringComparison.Ordinal)
+            || string.Equals(uiState.InterruptionState, AssistantUiStateEvent.InterruptionStateAwaitingClarification, StringComparison.Ordinal)
+            || string.Equals(uiState.InterruptionState, AssistantUiStateEvent.InterruptionStateHeldForUserSpeech, StringComparison.Ordinal))
+        {
+            ClearInterruptionHandlingWatchdog();
+        }
+    }
+
+    private void StartInterruptionHandlingWatchdog(AssistantUiStateEvent uiState, string source)
+    {
+        var options = _options.CurrentValue;
+        if (!options.EnableInterruptionHandlingWatchdog || options.InterruptionHandlingWatchdogTimeoutMs <= 0)
+        {
+            return;
+        }
+
+        long generation;
+        lock (_syncRoot)
+        {
+            generation = ++_interruptionHandlingWatchdogGeneration;
+            _interruptionHandlingStateStartedAtUtc = uiState.TimestampUtc;
+            _interruptionHandlingTurnId = uiState.TurnId;
+            _interruptionHandlingCorrelationId = uiState.CorrelationId;
+            _interruptionHandlingReason = uiState.Reason;
+        }
+
+        _logger.LogInformation(
+            "InterruptionHandlingWatchdogStarted Generation: {Generation}. TurnId: {TurnId}. CorrelationId: {CorrelationId}. Reason: {Reason}. Source: {Source}. TimeoutMs: {TimeoutMs}.",
+            generation,
+            uiState.TurnId,
+            uiState.CorrelationId,
+            uiState.Reason,
+            source,
+            options.InterruptionHandlingWatchdogTimeoutMs);
+        ScheduleInterruptionHandlingWatchdogCheck(generation, options.InterruptionHandlingWatchdogTimeoutMs);
+    }
+
+    private void ClearInterruptionHandlingWatchdog()
+    {
+        lock (_syncRoot)
+        {
+            _interruptionHandlingWatchdogGeneration++;
+            _interruptionHandlingStateStartedAtUtc = null;
+            _interruptionHandlingTurnId = null;
+            _interruptionHandlingCorrelationId = null;
+            _interruptionHandlingReason = null;
+        }
+    }
+
+    private void ScheduleInterruptionHandlingWatchdogCheck(long generation, int timeoutMs)
+    {
+        _ = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(Math.Max(1, timeoutMs)), CancellationToken.None);
+                    await TryRecoverStaleInterruptionHandlingAsync(generation, timeoutMs);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "InterruptionHandlingWatchdogFailed Generation: {Generation}.", generation);
+                }
+            },
+            CancellationToken.None);
+    }
+
+    private async Task TryRecoverStaleInterruptionHandlingAsync(long generation, int timeoutMs)
+    {
+        DateTimeOffset? startedAtUtc;
+        string? turnId;
+        string? correlationId;
+        string? reason;
+        bool activeCapture;
+        lock (_syncRoot)
+        {
+            if (generation != _interruptionHandlingWatchdogGeneration
+                || _interruptionHandlingStateStartedAtUtc is null)
+            {
+                return;
+            }
+
+            startedAtUtc = _interruptionHandlingStateStartedAtUtc;
+            turnId = _interruptionHandlingTurnId;
+            correlationId = _interruptionHandlingCorrelationId;
+            reason = _interruptionHandlingReason;
+            activeCapture = IsInterruptionCaptureActiveLocked();
+        }
+
+        var pendingClarification = !string.IsNullOrWhiteSpace(turnId)
+            && _pendingInterruptionClarifications?.HasActivePendingForTurn(turnId) == true;
+        var playbackSnapshot = _playbackService.GetActivePlaybackSnapshot();
+        var playbackOwner = IsInterruptionHandlingPlaybackOwner(playbackSnapshot, turnId);
+        if (activeCapture || pendingClarification || playbackOwner)
+        {
+            _logger.LogInformation(
+                "InterruptionHandlingWatchdogDeferred Generation: {Generation}. TurnId: {TurnId}. CorrelationId: {CorrelationId}. Reason: {Reason}. ActiveCapture: {ActiveCapture}. PendingClarification: {PendingClarification}. PlaybackOwner: {PlaybackOwner}.",
+                generation,
+                turnId,
+                correlationId,
+                reason,
+                activeCapture,
+                pendingClarification,
+                playbackOwner);
+            ScheduleInterruptionHandlingWatchdogCheck(generation, timeoutMs);
+            return;
+        }
+
+        var ageMs = startedAtUtc is null
+            ? null
+            : (double?)Math.Max(0, (DateTimeOffset.UtcNow - startedAtUtc.Value).TotalMilliseconds);
+        lock (_syncRoot)
+        {
+            if (generation != _interruptionHandlingWatchdogGeneration
+                || _interruptionHandlingStateStartedAtUtc != startedAtUtc)
+            {
+                return;
+            }
+
+            _interruptionHandlingWatchdogGeneration++;
+            _interruptionHandlingStateStartedAtUtc = null;
+            _interruptionHandlingTurnId = null;
+            _interruptionHandlingCorrelationId = null;
+            _interruptionHandlingReason = null;
+        }
+
+        _logger.LogWarning(
+            "InterruptionHandlingWatchdogRecovered Generation: {Generation}. TurnId: {TurnId}. CorrelationId: {CorrelationId}. Reason: {Reason}. AgeMs: {AgeMs}. TimeoutMs: {TimeoutMs}.",
+            generation,
+            turnId,
+            correlationId,
+            reason,
+            ageMs,
+            timeoutMs);
+        await EmitAssistantUiStateImmediateAsync(
+            AssistantUiStateEvent.Create(
+                "idle",
+                "stale_interruption_handling_watchdog_recovered",
+                correlationId,
+                turnId,
+                interruptionState: AssistantUiStateEvent.InterruptionStateNone),
+            nameof(BargeInCoordinator),
+            CancellationToken.None);
+    }
+
+    private static bool IsInterruptionHandlingPlaybackOwner(
+        ActiveSpeechPlaybackSnapshot? snapshot,
+        string? turnId)
+    {
+        if (snapshot is null)
+        {
+            return false;
+        }
+
+        if (snapshot.IsHeld
+            && (string.IsNullOrWhiteSpace(turnId)
+                || string.Equals(snapshot.AssistantTurnId, turnId, StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        if (!snapshot.IsActive)
+        {
+            return false;
+        }
+
+        return string.Equals(snapshot.ItemType, SpeechPlaybackItemType.InterruptionClarification.ToString(), StringComparison.OrdinalIgnoreCase)
+            || string.Equals(snapshot.ItemType, SpeechPlaybackItemType.InterruptionContinuation.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -6,86 +6,126 @@ tags:
   - merlin
   - feature
   - status/partial
+  - layer/cross-cutting
 ---
 
 # Browser Control
 
 ## Summary
 
-Voice and motion control of Browser Workspace, implemented in phases.
+Spoken and motion control over BrowserWorkspace across navigation, pointer, click, scroll, and page-aware phases.
 
 ## Status
 
 partial
 
+## Verified Against Code
+
+Status verified: yes
+
+Evidence:
+- CommandRouter.cs routes browser commands.
+- BrowserWorkspaceService.cs implements host actions.
+- BrowserMotionOverlayModeService.cs, BrowserPinchClickController.cs, and BrowserScrollCommandService.cs implement motion phases.
+- BrowserPageSafetyGuard.cs and BrowserHost scripts implement parts of page-aware control.
+
 ## What Exists Today
 
-- Phase 1 spoken navigation exists.
-- Phase 2 pointer overlay exists.
-- Phase 3 pinch click exists.
-- Phase 4 scroll gesture exists.
-- Phase 5 page-aware control/safety exists partially.
-
-## Code Map
-
-| File | Role | Notes |
-| --- | --- | --- |
-| `Merlin.Backend/Services/Web/WebDestinationParser.cs` | Spoken browser parser | Navigation/control phrases. |
-| `Merlin.Backend/Services/CommandRouter.cs` | Execution | Browser action switch. |
-| `Merlin.Backend/Services/BrowserWorkspace/Motion/*` | Pointer/click/scroll | Motion control. |
-| `Merlin.BrowserHost/ClickElementScript.cs` | DOM click | Click visible element. |
-
-## Related Systems
-
-- [[System Architecture Overview]]
-- [[Command Routing Architecture]]
-- [[Active Surface Architecture]]
-
-## Phase Status
-
-| Phase | Status | Implemented files | Known bugs | Future work |
-| --- | --- | --- | --- | --- |
-| Phase 1 spoken navigation | implemented | `WebDestinationParser`, `CommandRouter`, `BrowserWorkspaceService` | phrase ambiguity | surface-aware expansion |
-| Phase 2 pointer overlay | implemented | `BrowserMotionOverlayModeService`, `NativeBrowserPointerOverlayWindow` | z-order/DPI | safety integration |
-| Phase 3 pinch click | implemented | `BrowserPinchClickController`, host click command | raw click safety gap | safe click abstraction |
-| Phase 4 scroll gesture | implemented | `BrowserScrollCommandService`, pinch state machine | gesture tuning | per-profile sensitivity |
-| Phase 5 page-aware control | partial | snapshot/click/common action/safety guard | dynamic pages, Dutch variants | site profiles later |
-
-
-## Dependencies
-
-Dependencies are listed here and in [[Master Roadmap]]. Planned/future work must not start until dependencies are ready.
-
-## Dependents
-
-See linked roadmap notes.
+Phase 1 navigation, Phase 2 pointer, Phase 3 pinch click, Phase 4 scroll, and Phase 5 page-aware primitives exist, but the combined UX remains partial.
 
 ## Current Behavior
 
-Generic browser control works for navigation, common actions, pointer/click/scroll, and page-aware actions.
+Can open/close browser, navigate/search, start pointer overlay, use pinch click/scroll, click/read/search page elements in limited forms.
 
 ## Planned Behavior
 
-After profile and page-aware foundations stabilize, add Control Profile DB and site learning.
+Motion-first generic control, reliable page actions, then site control profiles after full motion control.
+
+Near-term media-control prompt:
+- [[YouTube Site Control Profile Media Commands]] covers correct fullscreen confirmations and a small YouTube-only 10-second seek profile.
+
+## Code Map
+
+| File | Class / Function | Role | Notes |
+| --- | --- | --- | --- |
+| `Merlin.Backend/Services/CommandRouter.cs` | CommandRouter | Routes spoken browser commands | Open/close/navigation/page actions. |
+| `Merlin.Backend/Services/BrowserWorkspace/Motion/BrowserMotionOverlayModeService.cs` | BrowserMotionOverlayModeService | Pointer overlay mode | Maps vision pointer to overlay state. |
+| `Merlin.Backend/Services/BrowserWorkspace/PageControl/Safety/BrowserPageSafetyGuard.cs` | BrowserPageSafetyGuard | Page action safety | Classifies risky actions. |
+
+## Code Atlas
+
+- [[CommandRouter]]
+- [[BrowserWorkspaceService]]
+- [[BrowserMotionOverlayModeService]]
+- [[BrowserPinchClickController]]
+- [[BrowserScrollCommandService]]
+- [[Browser Page Action Safety Flow]]
+
+## Related Systems
+
+- [[Active Surface Layer]]
+- [[Browser Workspace]]
+- [[Control Profile DB]]
+- [[Site Control Profiles]]
+- [[Vision Sidecar]]
+
+## Dependencies
+
+- [[Browser Workspace]]
+- [[Active Surface Layer]]
+- [[Vision Sidecar]]
+
+## Dependents
+
+- [[Site Control Profiles]]
+- [[Control Profile DB]]
+
+## Readiness
+
+Ready for implementation: yes
+
+Reason:
+Generic browser control hardening is ready; site-specific behavior is not.
+
+Blocked by:
+- Learned/site controls need [[Control Profile DB]] and correction stability.
+
+Next safe action:
+Fix generic lifecycle/safety and avoid adding site-specific command clutter.
 
 ## Non-Goals / Do Not Build Yet
 
-Do not build app/site-specific V2 behavior unless the relevant roadmap item is explicitly requested and marked ready.
+- Do not add YouTube-specific command routing into generic browser control.
 
 ## Known Bugs / Fragility
 
-- YouTube/media controls expose language/selector edge cases.
-- Generic action routing can feel like guessing.
-- Confirmation UX can be too heavy for search-result opening.
+- Pause/play/stop ambiguity.
+- Dutch STT variants need central handling.
+- Click target resolution can be unreliable.
 
 ## Tests
 
-See [[Current Test Coverage]].
+| Test File | Coverage | Gaps |
+| --- | --- | --- |
+| `Merlin.Backend.Tests/BrowserMediaCommandNormalizerTests.cs` | Media phrase variants | Does not verify actual DOM click. |
+| `Merlin.Backend.Tests/BrowserMotionOverlayModeServiceTests.cs` | Pointer mode | No WebView2 end-to-end coverage. |
 
-## Relevant Docs / Reports / Prompts
+## Relevant Implementation Plans
 
-See [[07_Agent_Reports/Index|Agent Reports Index]] and [[08_Implementation_Prompts/Index|Implementation Prompts Index]].
+- [[Browser Control Phases 2-5 Plan]]
+- [[Site Control Profiles Learning Plan]]
 
-## Next Actions
+## Relevant Reports
 
-Do not add YouTube-specific profile before profile DB foundations.
+- See [[Agent Reports Index]] for cross-cutting reports.
+
+## Relevant Prompts
+
+- [[Implementation Prompts Index]]
+
+## Source Material
+
+- [[Imported Merlin.ToDo Index]] (4 imported source item(s) mapped to this feature).
+## Open Questions
+
+- Which runtime observations should be added after the next live validation?
