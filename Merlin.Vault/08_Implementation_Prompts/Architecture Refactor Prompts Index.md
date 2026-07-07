@@ -14,8 +14,6 @@ tags:
 | Prompt | Use For |
 | --- | --- |
 | [[PROMPT-2026-07-07-010 Review Modular Runtime Refactor Master Plan]] | Review sequencing without runtime changes. |
-| [[PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes]] | Add inert Next runtime skeleton. |
-| [[PROMPT-2026-07-07-013 Implement Kernel Contracts Shadow Bridge]] | Add read-only shadow bridge. |
 | [[PROMPT-2026-07-07-014 Implement First Vertical Slice Apps AppOpen]] | First hybrid capability. |
 | [[PROMPT-2026-07-07-021 Implement Validation Regression Harness]] | Add support tests/traces/checklists. |
 
@@ -35,3 +33,5 @@ tags:
 | Prompt | Implemented By |
 | --- | --- |
 | [[PROMPT-2026-07-07-011 Implement Feature-Owned Settings Migration]] | [[RUN-2026-07-07-012 Feature-Owned Settings Migration]] |
+| [[PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes]] | [[RUN-2026-07-07-014 Merlin Next Skeleton And Runtime Modes]] |
+| [[PROMPT-2026-07-07-013 Implement Kernel Contracts Shadow Bridge]] | [[RUN-2026-07-07-015 Kernel Contracts Shadow Bridge]] |

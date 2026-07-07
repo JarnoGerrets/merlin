@@ -17,6 +17,7 @@ Environment-specific settings files should contain overrides only. During the fi
 | Setting concern | JSON file | Section name | Option class | Owner module | Environment override file | Validation status |
 | --- | --- | --- | --- | --- | --- | --- |
 | Capability domains | `Settings/Kernel/capability-domains.settings.json` | `CapabilityDomains` | `CapabilityOptions` | Kernel | `Settings/Kernel/capability-domains.Development.settings.json` | Loaded by focused configuration test |
+| Merlin Next runtime mode | `Settings/Kernel/merlin-next.settings.json` | `MerlinNext` | `MerlinNextRuntimeOptions` | Host / Kernel | none currently | Loaded by focused configuration test |
 | Application launch | `Settings/Modules/Apps/application-launch.settings.json` | `ApplicationLaunch` | `ApplicationLaunchOptions` | Apps | `Settings/Modules/Apps/application-launch.Development.settings.json` | Loaded by focused configuration test |
 | Trusted registry | `Settings/Modules/Apps/trusted-registry.settings.json` | `TrustedRegistry` | `TrustedRegistryOptions` | Apps policy / Memory persistence | none currently | Loaded by focused configuration test |
 | Memory database | `Settings/Modules/Memory/memory.settings.json` | `MerlinDatabase` | `MerlinDbOptions` | Memory | none currently | Loaded by focused configuration test |

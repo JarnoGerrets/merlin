@@ -2,7 +2,7 @@
 type: implementation-plan
 plan_id: PLAN-2026-07-07-013
 derived_work_id:
-status: ready
+status: implemented
 task_type: refactor
 derived_work_type: refactor
 origin_run:
@@ -30,9 +30,9 @@ required_prompt_extensions:
   - PE-0260
   - PE-0100
 risk_level: high
-ready_for_agent: true
+ready_for_agent: false
 created_prompt: PROMPT-2026-07-07-013
-implemented_by:
+implemented_by: RUN-2026-07-07-015
 superseded_by:
 ---
 
@@ -40,9 +40,9 @@ superseded_by:
 
 ## Plan Status
 
-Status: ready
-Ready for agent use: true
-Reason: Adds read-only shadow contracts and trace path; must not execute side effects.
+Status: implemented
+Ready for agent use: false
+Reason: Implemented in [[RUN-2026-07-07-015 Kernel Contracts Shadow Bridge]].
 Related architecture:
 - [[Kernel Brainstem Architecture]]
 - [[Strangler Migration Architecture]]
@@ -238,3 +238,17 @@ dotnet test Merlin.Backend.Tests\Merlin.Backend.Tests.csproj --no-restore -p:Use
 ```
 
 If the change touches frontend, BrowserHost, or live-only systems, add the relevant manual validation checklist from the plan.
+
+## Implementation Result
+
+Implemented in [[RUN-2026-07-07-015 Kernel Contracts Shadow Bridge]].
+
+Runtime behavior impact:
+
+- Added minimal kernel contracts under `Merlin.Backend/Next/Kernel`.
+- Added `IMerlinNextRuntime` and `MerlinNextShadowRuntime`.
+- Added `LegacyMerlinRequestAdapter` for `AssistantRequest` to `MerlinRequest`.
+- Added `MerlinNextShadowBridge`.
+- `CommandRouter` starts the optional bridge after normalization, but catches bridge failures and continues legacy routing.
+- Production shadow work only runs when `MerlinNext.Enabled=true`, `MerlinNext.ShadowEnabled=true`, and `MerlinNext.Mode=Shadow`.
+- Shadow runtime only logs a `NoDecision` trace with `disabled_shadow_mode`; it does not execute capabilities, mutate pending state, publish UI events, speak, open apps/browser, write memory, or call tools.

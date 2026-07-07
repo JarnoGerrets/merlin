@@ -69,6 +69,8 @@ tags:
 
 - [[MemoryOrchestrator]]
 
+- [[MerlinNextShadowBridge]]
+
 - [[MotionControlGestureContext]]
 
 - [[MotionControlModeService]]
@@ -238,6 +240,8 @@ tags:
 - [[Frontend Gesture Constants]]
 
 - [[Memory Config]]
+
+- [[MerlinNextRuntimeOptions]]
 
 - [[Speech and TTS Config]]
 

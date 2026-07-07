@@ -14,9 +14,9 @@ tags:
 
 Active.
 
-The refactor has started with the feature-owned settings migration. The next safe runtime step is `Merlin.Next` skeleton/runtime modes, then a read-only shadow bridge.
+The refactor has completed feature-owned settings, inert `Merlin.Next` skeleton/runtime modes, and the first read-only shadow bridge. The next safe runtime step is the first controlled vertical slice.
 
-Master plan review completed in [[RUN-2026-07-07-013 Modular Runtime Master Plan Review]]: direct implementation of the master plan is No-Go because it is governance-only and `ready_for_agent: false`; the next executable child plan remains [[PLAN-2026-07-07-012 Merlin Next Skeleton And Runtime Modes Plan]].
+Master plan review completed in [[RUN-2026-07-07-013 Modular Runtime Master Plan Review]]: direct implementation of the master plan is No-Go because it is governance-only and `ready_for_agent: false`. After [[RUN-2026-07-07-015 Kernel Contracts Shadow Bridge]], the next executable child plan is [[PLAN-2026-07-07-014 First Vertical Slice Apps AppOpen Plan]].
 
 ## Migration Stage
 
@@ -24,8 +24,8 @@ Master plan review completed in [[RUN-2026-07-07-013 Modular Runtime Master Plan
 | --- | --- | --- |
 | Documentation pack | drafted | Copy docs into vault before agent execution. |
 | Feature-owned settings | implemented | Implemented in [[RUN-2026-07-07-012 Feature-Owned Settings Migration]]. |
-| Next skeleton | not started | Second implementation plan. |
-| Kernel contracts/shadow bridge | not started | Third implementation plan. |
+| Next skeleton | implemented | Implemented in [[RUN-2026-07-07-014 Merlin Next Skeleton And Runtime Modes]]. |
+| Kernel contracts/shadow bridge | implemented | Implemented in [[RUN-2026-07-07-015 Kernel Contracts Shadow Bridge]]. |
 | First hybrid capability | not started | `app.open` candidate. |
 | Capability registry | future | Requires initial vertical slice. |
 | Surface registry | future | Needed before browser/media/site modules. |
@@ -37,6 +37,8 @@ Master plan review completed in [[RUN-2026-07-07-013 Modular Runtime Master Plan
 | Capability / Feature | Legacy Path | Next Path | Owner Mode | Status |
 | --- | --- | --- | --- | --- |
 | Settings | active | feature-owned files | Legacy | Plan 011 implemented; section names preserved. |
+| runtime mode config | active | inert options only | Legacy | Plan 012 implemented; default `MerlinNext.Enabled=false`, `Mode=Legacy`. |
+| shadow request trace | active | read-only trace only | Shadow | Plan 013 implemented; no capabilities execute. |
 | `app.open` | active | planned | Legacy | Plan 014. |
 | `app.focus` | active | future | Legacy | After app.open. |
 | `url.open` | active | future | Legacy | Early candidate. |
@@ -51,7 +53,7 @@ Master plan review completed in [[RUN-2026-07-07-013 Modular Runtime Master Plan
 Use:
 
 ```text
-Merlin.Vault/08_Implementation_Prompts/PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes.md
+Merlin.Vault/08_Implementation_Prompts/PROMPT-2026-07-07-014 Implement First Vertical Slice Apps AppOpen.md
 ```
 
 ## Risks
@@ -68,4 +70,6 @@ Merlin.Vault/08_Implementation_Prompts/PROMPT-2026-07-07-012 Implement Merlin Ne
 
 | Date | Run | Result |
 | --- | --- | --- |
+| 2026-07-07 | [[RUN-2026-07-07-015 Kernel Contracts Shadow Bridge]] | Backend build passed; focused Next shadow tests passed 11/11; full backend test suite has 9 known pre-existing failures in correction and BargeIn areas. |
+| 2026-07-07 | [[RUN-2026-07-07-014 Merlin Next Skeleton And Runtime Modes]] | Backend build passed; focused MerlinNext/settings tests passed 6/6; full backend test suite has 9 known pre-existing failures in correction and BargeIn areas. |
 | 2026-07-07 | [[RUN-2026-07-07-013 Modular Runtime Master Plan Review]] | Backend build passed; settings configuration tests passed 2/2; full backend test suite has 10 pre-existing/separate failures in correction, BargeIn, and one pending clarification timeout that passed in isolation. |

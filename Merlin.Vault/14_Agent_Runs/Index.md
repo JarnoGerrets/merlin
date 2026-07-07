@@ -13,6 +13,9 @@ This folder records what agents actually did during implementation, investigatio
 
 | Date | Run | Type | Related Feature | Result | Notes |
 | --- | --- | --- | --- | --- | --- |
+| 2026-07-07 | [[RUN-2026-07-07-015 Kernel Contracts Shadow Bridge]] | refactor | Modular Runtime Refactor | completed | Added kernel contracts and read-only shadow bridge; legacy remains sole executor. |
+| 2026-07-07 | [[RUN-2026-07-07-014 Merlin Next Skeleton And Runtime Modes]] | refactor | Modular Runtime Refactor | completed | Added inert `Next` skeleton and runtime mode options; default remains Legacy. |
+| 2026-07-07 | [[RUN-2026-07-07-013 Modular Runtime Master Plan Review]] | investigation | Modular Runtime Refactor | completed | Confirmed master plan is governance-only and Plan 012 was next executable child plan. |
 | 2026-07-07 | [[RUN-2026-07-07-012 Feature-Owned Settings Migration]] | refactor | Modular Runtime Refactor | completed | Split backend settings into feature-owned files while preserving section names and load order. |
 | 2026-07-07 | [[RUN-2026-07-07-011 AskClarification PR10.4 Closure Review]] | investigation | [[Voice Interruption System]] | completed | Confirmed PR10.4 implementation-complete and created live validation checklist plus separate bugfix derived work. |
 | 2026-07-07 | [[RUN-2026-07-07-010 AskClarification PR10.4e Full Recomposition Ownership]] | implementation | [[Voice Interruption System]] | completed | Added executable pending clarification response recomposition owner. |

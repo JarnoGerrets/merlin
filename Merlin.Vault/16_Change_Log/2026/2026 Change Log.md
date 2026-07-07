@@ -8,6 +8,24 @@ year: 2026
 
 ## 2026-07-07
 
+- Implemented Kernel Contracts Shadow Bridge:
+  - added minimal `Merlin.Backend/Next/Kernel` request, turn, routing, capability, surface, safety, presentation, and event contracts
+  - added `IMerlinNextRuntime`, `MerlinNextShadowRuntime`, `LegacyMerlinRequestAdapter`, and `MerlinNextShadowBridge`
+  - hooked `CommandRouter` to start an optional read-only shadow trace after normalization
+  - shadow work only runs with `MerlinNext.Enabled=true`, `ShadowEnabled=true`, and `Mode=Shadow`
+  - legacy remains the only executor; no tools, browser, memory, speech, UI, or pending state is touched by shadow
+  - focused Next shadow tests passed; full backend tests still have known correction and BargeIn failures
+  - related run: [[RUN-2026-07-07-015 Kernel Contracts Shadow Bridge]]
+
+- Implemented Merlin Next skeleton and runtime modes:
+  - added inert `Merlin.Backend/Next/{Host,Kernel,Modules,Adapters}` structure
+  - added `MerlinNextRuntimeOptions`, `MerlinNextRuntimeMode`, and `AddMerlinNext`
+  - added `Settings/Kernel/merlin-next.settings.json` with Legacy/disabled defaults
+  - registered Next options in `Program.cs` without routing, shadow traffic, handlers, or side effects
+  - added focused tests for defaults, binding, invalid mode handling, and enabled `NextOnly` rejection
+  - full backend tests still have known pre-existing correction and BargeIn failures
+  - related run: [[RUN-2026-07-07-014 Merlin Next Skeleton And Runtime Modes]]
+
 - Reviewed Modular Runtime Refactor Master Plan readiness:
   - confirmed the master plan is governance-only and not directly executable
   - kept runtime implementation No-Go for the master plan itself

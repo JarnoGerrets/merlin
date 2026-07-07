@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "08_Implementation_Prompts/PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes.md",
+                "file": "08_Implementation_Prompts/PROMPT-2026-07-07-014 Implement First Vertical Slice Apps AppOpen.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes"
+              "title": "PROMPT-2026-07-07-014 Implement First Vertical Slice Apps AppOpen"
             }
           }
         ]
@@ -94,7 +94,7 @@
             "state": {
               "type": "backlink",
               "state": {
-                "file": "08_Implementation_Prompts/PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes.md",
+                "file": "08_Implementation_Prompts/PROMPT-2026-07-07-014 Implement First Vertical Slice Apps AppOpen.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -104,7 +104,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "Terugverwijzingen voor PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes"
+              "title": "Terugverwijzingen voor PROMPT-2026-07-07-014 Implement First Vertical Slice Apps AppOpen"
             }
           },
           {
@@ -113,12 +113,12 @@
             "state": {
               "type": "outgoing-link",
               "state": {
-                "file": "08_Implementation_Prompts/PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes.md",
+                "file": "08_Implementation_Prompts/PROMPT-2026-07-07-014 Implement First Vertical Slice Apps AppOpen.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
               "icon": "links-going-out",
-              "title": "Uitgaande verwijzingen van PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes"
+              "title": "Uitgaande verwijzingen van PROMPT-2026-07-07-014 Implement First Vertical Slice Apps AppOpen"
             }
           },
           {
@@ -156,13 +156,13 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "08_Implementation_Prompts/PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes.md",
+                "file": "08_Implementation_Prompts/PROMPT-2026-07-07-014 Implement First Vertical Slice Apps AppOpen.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "Overzicht van PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes"
+              "title": "Overzicht van PROMPT-2026-07-07-014 Implement First Vertical Slice Apps AppOpen"
             }
           }
         ]
@@ -185,11 +185,16 @@
   },
   "active": "32e54d736874d3a6",
   "lastOpenFiles": [
+    "08_Implementation_Prompts/PROMPT-2026-07-07-013 Implement Kernel Contracts Shadow Bridge.md",
+    "14_Agent_Runs/2026/RUN-2026-07-07-015 Kernel Contracts Shadow Bridge.md",
+    "11_Code_Atlas/Backend/MerlinNextShadowBridge.md",
+    "08_Implementation_Prompts/PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes.md",
+    "14_Agent_Runs/2026/RUN-2026-07-07-014 Merlin Next Skeleton And Runtime Modes.md",
+    "11_Code_Atlas/Backend/MerlinNextRuntimeOptions.md",
     "08_Implementation_Prompts/PROMPT-2026-07-07-010 Review Modular Runtime Refactor Master Plan.md",
     "14_Agent_Runs/2026/RUN-2026-07-07-013 Modular Runtime Master Plan Review.md",
     "13_Implementation_Plans/Architecture_Refactor/PLAN-2026-07-07-010 Modular Runtime Refactor Master Plan.md",
     "13_Implementation_Plans/Architecture_Refactor/PLAN-2026-07-07-011 Feature-Owned Settings Migration Plan.md",
-    "08_Implementation_Prompts/PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes.md",
     "08_Implementation_Prompts/PROMPT-2026-07-07-011 Implement Feature-Owned Settings Migration.md",
     "14_Agent_Runs/2026/RUN-2026-07-07-012 Feature-Owned Settings Migration.md",
     "11_Code_Atlas/Backend/MerlinConfigurationBuilderExtensions.md",
@@ -206,11 +211,6 @@
     "15_Progress_Reports/Modular Runtime Refactor Progress.md",
     "13_Implementation_Plans/Architecture_Refactor/PLAN-2026-07-07-021 Validation Regression Harness Plan.md",
     "13_Implementation_Plans/Architecture_Refactor/PLAN-2026-07-07-020 Voice Module Migration Plan.md",
-    "13_Implementation_Plans/Architecture_Refactor/PLAN-2026-07-07-019 Browser Module Migration Plan.md",
-    "13_Implementation_Plans/Architecture_Refactor/PLAN-2026-07-07-018 Adapter Boundary Migration Plan.md",
-    "13_Implementation_Plans/Architecture_Refactor/PLAN-2026-07-07-017 CommandRouter Strangler Pipeline Plan.md",
-    "13_Implementation_Plans/Architecture_Refactor/PLAN-2026-07-07-016 Dynamic Surface Registry Plan.md",
-    "13_Implementation_Plans/Architecture_Refactor/PLAN-2026-07-07-015 Capability Routing And Module Registration Plan.md",
     "13_Implementation_Plans/Architecture_Refactor",
     "Naamloos.canvas",
     "17_Prompt_Extensions/Bundles",

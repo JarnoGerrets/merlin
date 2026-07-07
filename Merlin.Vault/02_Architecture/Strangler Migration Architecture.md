@@ -34,6 +34,8 @@ Current Merlin has fragile but valuable behavior around:
 
 The new architecture must be built beside the existing runtime and enabled gradually.
 
+Implementation status: Plan 012 added the inert `Merlin.Backend/Next` skeleton and `MerlinNext` options in [[RUN-2026-07-07-014 Merlin Next Skeleton And Runtime Modes]]. Plan 013 added read-only shadow contracts and trace bridge in [[RUN-2026-07-07-015 Kernel Contracts Shadow Bridge]]. Default mode remains Legacy; no hybrid or Next capability execution path exists yet.
+
 ## Runtime Modes
 
 Add a runtime mode model:

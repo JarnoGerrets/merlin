@@ -292,7 +292,9 @@ Update this table after each child plan.
 
 | Feature / Capability | Legacy Path | Next Path | Mode | Status |
 | --- | --- | --- | --- | --- |
-| settings load | active | planned | Legacy | Start with Plan 011. |
+| settings load | active | feature-owned files | Legacy | Plan 011 implemented. |
+| runtime mode config | active | inert options | Legacy | Plan 012 implemented; default Legacy/disabled. |
+| shadow request trace | active | read-only trace | Shadow | Plan 013 implemented; disabled unless `Enabled=true`, `ShadowEnabled=true`, `Mode=Shadow`. |
 | `app.open` | active | planned | Legacy | First hybrid candidate. |
 | `app.focus` | active | planned | Legacy | After app.open. |
 | `url.open` | active | planned | Legacy | Safe early candidate. |

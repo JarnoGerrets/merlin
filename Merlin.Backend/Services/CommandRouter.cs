@@ -1,5 +1,6 @@
 using Merlin.Backend.Models;
 using Merlin.Backend.Configuration;
+using Merlin.Backend.Next.Host;
 using Merlin.Backend.Services.Acknowledgement;
 using Merlin.Backend.Services.BrowserWorkspace;
 using Merlin.Backend.Services.BrowserWorkspace.Motion;
@@ -39,6 +40,8 @@ public sealed class CommandRouter
     private readonly IWebDestinationParser? _webDestinationParser;
     private readonly IActiveSurfaceService? _activeSurfaceService;
     private readonly IMotionControlModeService? _motionControlModeService;
+    private readonly ILegacyMerlinRequestAdapter? _merlinNextRequestAdapter;
+    private readonly IMerlinNextShadowBridge? _merlinNextShadowBridge;
 
     public CommandRouter(
         IIntentParser intentParser,
@@ -62,7 +65,9 @@ public sealed class CommandRouter
         BrowserMotionOverlayModeService? browserMotionOverlayModeService = null,
         IWebDestinationParser? webDestinationParser = null,
         IActiveSurfaceService? activeSurfaceService = null,
-        IMotionControlModeService? motionControlModeService = null)
+        IMotionControlModeService? motionControlModeService = null,
+        ILegacyMerlinRequestAdapter? merlinNextRequestAdapter = null,
+        IMerlinNextShadowBridge? merlinNextShadowBridge = null)
     {
         _acknowledgementPolicy = acknowledgementPolicy;
         _acknowledgementSpeechService = acknowledgementSpeechService;
@@ -86,6 +91,8 @@ public sealed class CommandRouter
         _webDestinationParser = webDestinationParser;
         _activeSurfaceService = activeSurfaceService;
         _motionControlModeService = motionControlModeService;
+        _merlinNextRequestAdapter = merlinNextRequestAdapter;
+        _merlinNextShadowBridge = merlinNextShadowBridge;
     }
 
     public async Task<AssistantResponse> RouteAsync(string message, CancellationToken cancellationToken = default)
@@ -141,6 +148,13 @@ public sealed class CommandRouter
                 correlationId,
                 request.InteractionSource);
         }
+
+        TryStartMerlinNextShadow(
+            request,
+            requestId,
+            message,
+            activeSurface,
+            receivedAtUtc);
 
         SetTurnState(correlationId, LiveAssistantTurnState.Interpreting);
         var feedbackContext = _feedbackContextFactory?.CreateInitial(
@@ -1987,6 +2001,38 @@ public sealed class CommandRouter
         return string.IsNullOrWhiteSpace(correlationId)
             ? Guid.NewGuid().ToString("N")
             : correlationId;
+    }
+
+    private void TryStartMerlinNextShadow(
+        AssistantRequest request,
+        string requestId,
+        string normalizedMessage,
+        ActiveSurfaceSnapshot activeSurface,
+        DateTimeOffset receivedAtUtc)
+    {
+        if (_merlinNextRequestAdapter is null || _merlinNextShadowBridge is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var merlinRequest = _merlinNextRequestAdapter.FromAssistantRequest(
+                request,
+                requestId,
+                normalizedMessage,
+                activeSurface,
+                receivedAtUtc);
+
+            _merlinNextShadowBridge.TryStartShadow(merlinRequest);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                exception,
+                "MerlinNextShadowBridgeStartFailed RequestId: {RequestId}.",
+                requestId);
+        }
     }
 
     private static bool ShouldNormalizeSpeech(AssistantRequest request)

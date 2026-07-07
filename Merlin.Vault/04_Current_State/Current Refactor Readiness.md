@@ -21,10 +21,10 @@ Merlin is not ready for a big-bang migration.
 | Area | Readiness | Safe Action |
 | --- | --- | --- |
 | Vault process | ready | Use `AGENT.md`, plans, prompts, Go/No-Go, writeback. |
-| Settings split | ready | Move config into feature-owned files with same section names. |
-| Runtime skeleton | ready after settings or with temporary root config | Add inert `Next` folders and runtime mode options. |
-| Shadow tracing | ready after skeleton | Add read-only bridge. |
-| First safe vertical slice | ready after shadow bridge | Use `app.open` only. |
+| Settings split | implemented | Feature-owned files preserve section names and load order. |
+| Runtime skeleton | implemented | Inert `Next` folders and runtime mode options exist. |
+| Shadow tracing | implemented | Read-only bridge logs disabled execution traces only. |
+| First safe vertical slice | ready | Use `app.open` only. |
 
 ## Not Ready Yet
 
@@ -40,5 +40,5 @@ Merlin is not ready for a big-bang migration.
 Implement:
 
 ```text
-PLAN-2026-07-07-011 Feature-Owned Settings Migration Plan
+PLAN-2026-07-07-014 First Vertical Slice Apps AppOpen Plan
 ```

@@ -2,10 +2,10 @@
 type: implementation-prompt
 prompt_id: PROMPT-2026-07-07-012
 derived_work_id:
-status: ready
+status: implemented
 related_plan: PLAN-2026-07-07-012
 related_plan_path: Merlin.Vault/13_Implementation_Plans/Architecture_Refactor/PLAN-2026-07-07-012 Merlin Next Skeleton And Runtime Modes Plan.md
-origin_run:
+origin_run: RUN-2026-07-07-014
 task_mode: refactor
 tags:
   - merlin
@@ -64,3 +64,7 @@ Final report:
 ## Notes
 
 Full plan. Runtime behavior must remain legacy by default.
+
+## Implementation Result
+
+Implemented in [[RUN-2026-07-07-014 Merlin Next Skeleton And Runtime Modes]].

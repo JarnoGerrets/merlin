@@ -1,5 +1,7 @@
 using Merlin.Backend.Models;
 using Merlin.Backend.Configuration;
+using Merlin.Backend.Next.Host;
+using Merlin.Backend.Next.Kernel.Requests;
 using Merlin.Backend.Services;
 using Merlin.Backend.Services.BrowserWorkspace;
 using Merlin.Backend.Services.BrowserWorkspace.Motion;
@@ -1679,6 +1681,75 @@ public sealed class CommandRouterTests
         Assert.True(tool.ObservedCancellation);
     }
 
+    [Fact]
+    public async Task RouteAsync_WhenShadowBridgeProvided_PassesNormalizedSnapshotAndKeepsLegacyExecution()
+    {
+        var tool = new FakeTool("open terminal.nl", new ToolResult
+        {
+            Success = true,
+            Message = "Opening terminal...",
+            ToolName = "Fake Tool",
+            Intent = "fake_intent"
+        });
+        var shadowBridge = new RecordingShadowBridge();
+        var router = new CommandRouter(
+            new PassthroughIntentParser(),
+            new ToolRegistry([tool]),
+            NullLogger<CommandRouter>.Instance,
+            new RuntimeStateService(),
+            new NoOpResponsePolisher(),
+            new SpeechCommandNormalizer(),
+            merlinNextRequestAdapter: new LegacyMerlinRequestAdapter(),
+            merlinNextShadowBridge: shadowBridge);
+
+        var response = await router.RouteAsync(new AssistantRequest
+        {
+            Message = "open terminal dot nl",
+            InteractionSource = "voice",
+            CorrelationId = "shadow-1",
+            CaptureId = "capture-1"
+        });
+
+        Assert.True(response.Success);
+        Assert.Equal("open terminal.nl", tool.ExecutedCommand);
+        var shadowRequest = Assert.Single(shadowBridge.Requests);
+        Assert.Equal("shadow-1", shadowRequest.RequestId);
+        Assert.Equal("open terminal.nl", shadowRequest.UserText);
+        Assert.Equal("voice", shadowRequest.Source);
+        Assert.Equal("capture-1", shadowRequest.SourceSessionId);
+        Assert.Equal("capture-1", shadowRequest.Metadata["capture_id"]);
+    }
+
+    [Fact]
+    public async Task RouteAsync_WhenShadowBridgeThrows_StillReturnsLegacyResponse()
+    {
+        var tool = new FakeTool("open test app", new ToolResult
+        {
+            Success = true,
+            Message = "Opening test app...",
+            ToolName = "Fake Tool",
+            Intent = "fake_intent"
+        });
+        var router = new CommandRouter(
+            new PassthroughIntentParser(),
+            new ToolRegistry([tool]),
+            NullLogger<CommandRouter>.Instance,
+            new RuntimeStateService(),
+            new NoOpResponsePolisher(),
+            merlinNextRequestAdapter: new LegacyMerlinRequestAdapter(),
+            merlinNextShadowBridge: new ThrowingShadowBridge());
+
+        var response = await router.RouteAsync(new AssistantRequest
+        {
+            Message = "open test app",
+            CorrelationId = "shadow-throw"
+        });
+
+        Assert.True(response.Success);
+        Assert.Equal("Opening test app...", response.Message);
+        Assert.Equal("open test app", tool.ExecutedCommand);
+    }
+
     private static CommandRouter CreateRouter(params ITool[] tools)
     {
         return new CommandRouter(
@@ -1967,6 +2038,24 @@ public sealed class CommandRouterTests
                 Message = "done",
                 ToolName = Name
             };
+        }
+    }
+
+    private sealed class RecordingShadowBridge : IMerlinNextShadowBridge
+    {
+        public List<MerlinRequest> Requests { get; } = [];
+
+        public void TryStartShadow(MerlinRequest request)
+        {
+            Requests.Add(request);
+        }
+    }
+
+    private sealed class ThrowingShadowBridge : IMerlinNextShadowBridge
+    {
+        public void TryStartShadow(MerlinRequest request)
+        {
+            throw new InvalidOperationException("shadow failed");
         }
     }
 

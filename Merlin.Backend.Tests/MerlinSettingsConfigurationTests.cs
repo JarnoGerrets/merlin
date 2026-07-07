@@ -27,6 +27,8 @@ public sealed class MerlinSettingsConfigurationTests
         Assert.Equal("chatterbox", configuration["Tts:Provider"]);
         Assert.Equal("https://www.youtube.com", configuration["WebDestinations:KnownDestinations:youtube"]);
         Assert.Equal("C:\\Users\\jarno\\anaconda3\\envs\\merlin-vision\\python.exe", configuration["Vision:PythonExecutable"]);
+        Assert.Equal("Legacy", configuration["MerlinNext:Mode"]);
+        Assert.Equal("False", configuration["MerlinNext:Enabled"]);
         Assert.True(configuration.GetSection("CapabilityDomains").GetChildren().Any());
     }
 
@@ -66,6 +68,7 @@ public sealed class MerlinSettingsConfigurationTests
             "Piper",
             "Tts",
             "CapabilityDomains",
+            "MerlinNext",
             "Vision"
         };
 

@@ -17,6 +17,8 @@ tags:
 
 It is not the assistant brain. It does not perform semantic reasoning itself. It is the brainstem: it receives signals, coordinates state, dispatches capability handlers, enforces safety gates, and delivers responses.
 
+Implementation status: initial kernel contracts and a read-only shadow bridge were added under `Merlin.Backend/Next/Kernel` in [[RUN-2026-07-07-015 Kernel Contracts Shadow Bridge]]. The shadow runtime only logs disabled-execution traces and does not execute capabilities or mutate real runtime state.
+
 ## Responsibilities
 
 The kernel owns cross-feature runtime concepts:

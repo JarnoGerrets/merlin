@@ -8,6 +8,7 @@ using Merlin.Backend.Infrastructure.Persistence.Repositories;
 using Merlin.Backend.Infrastructure.Persistence.Seeding;
 using Merlin.Backend.Infrastructure.TrustedRegistry;
 using Merlin.Backend.Infrastructure.TrustedRegistry.Repositories;
+using Merlin.Backend.Next.Host;
 using Merlin.Backend.Services;
 using Merlin.Backend.Services.Acknowledgement;
 using Merlin.Backend.Services.BargeIn;
@@ -36,6 +37,8 @@ EnvFileLoader.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.UseMerlinConfiguration(builder.Environment, args);
+
+builder.Services.AddMerlinNext(builder.Configuration);
 
 builder.Services.Configure<ApplicationLaunchOptions>(
     builder.Configuration.GetSection("ApplicationLaunch"));

@@ -7,6 +7,7 @@ public static class MerlinConfigurationBuilderExtensions
     private static readonly string[] SettingsFileBases =
     [
         "Settings/Kernel/capability-domains",
+        "Settings/Kernel/merlin-next",
         "Settings/Modules/Apps/application-launch",
         "Settings/Modules/Apps/trusted-registry",
         "Settings/Modules/Memory/memory",

@@ -19,6 +19,8 @@ Use [[Status Rules]] before trusting any prompt. A prompt is not implementation 
 | BargeIn Idle Capture Test Failures | `Merlin.Vault/08_Implementation_Prompts/PROMPT-2026-07-07-022 Fix BargeIn Idle Capture Test Failures.md` | Voice Interruption System | ready | yes | Scoped bugfix prompt for the four known BargeIn idle-capture failures. |
 | Correction Regeneration Test Failures | `Merlin.Vault/08_Implementation_Prompts/PROMPT-2026-07-07-023 Fix Correction Regeneration Test Failures.md` | Correction Layer | ready | yes | Scoped bugfix prompt for known correction regeneration dispatcher failures. |
 | Feature-Owned Settings Migration | `Merlin.Vault/08_Implementation_Prompts/PROMPT-2026-07-07-011 Implement Feature-Owned Settings Migration.md` | Modular Runtime Refactor | implemented | no | Used by [[RUN-2026-07-07-012 Feature-Owned Settings Migration]]. |
+| Merlin Next Skeleton And Runtime Modes | `Merlin.Vault/08_Implementation_Prompts/PROMPT-2026-07-07-012 Implement Merlin Next Skeleton And Runtime Modes.md` | Modular Runtime Refactor | implemented | no | Used by [[RUN-2026-07-07-014 Merlin Next Skeleton And Runtime Modes]]. |
+| Kernel Contracts Shadow Bridge | `Merlin.Vault/08_Implementation_Prompts/PROMPT-2026-07-07-013 Implement Kernel Contracts Shadow Bridge.md` | Modular Runtime Refactor | implemented | no | Used by [[RUN-2026-07-07-015 Kernel Contracts Shadow Bridge]]. |
 | YouTube Site Control Profile Media Commands | `Merlin.Vault/08_Implementation_Prompts/YouTube Site Control Profile Media Commands.md` | Site Control Profiles / Browser Control | ready | yes | Short executable agent prompt for seeded YouTube media controls. Verify current code before implementing. |
 
 ## Prompt Extension Requirement

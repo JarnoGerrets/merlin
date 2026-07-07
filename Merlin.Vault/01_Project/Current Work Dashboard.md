@@ -16,7 +16,7 @@ This dashboard summarizes what is active, what is next, what is blocked, and wha
 | Vault operating system | active | Use new run/writeback/bundle rules on future tasks. | [[Implementation Plan Lifecycle]] | [[PB-0007 Documentation Bundle]] |
 | Browser control hardening | partial | Stabilize lifecycle/safety before site-specific expansion. | [[Browser Control Phases 2-5 Plan]] | [[PB-0003 Browser Workspace Bundle]] |
 | Motion control hardening | partial | Add diagnostics/safety-aware pointer click policy before site profiles. | [[Motion Control Profile Layer Plan]] | [[PB-0004 Motion Control Bundle]] |
-| Modular runtime refactor | active | Implement inert Next skeleton/runtime modes. | [[PLAN-2026-07-07-012 Merlin Next Skeleton And Runtime Modes Plan]] | [[PB-0010 Refactor Bundle]] |
+| Modular runtime refactor | active | Implement first controlled `app.open` vertical slice. | [[PLAN-2026-07-07-014 First Vertical Slice Apps AppOpen Plan]] | [[PB-0010 Refactor Bundle]] |
 
 ## Next Safe Tasks
 
@@ -54,6 +54,8 @@ Only list active, ready, or blocked derived work. Do not turn this dashboard int
 
 | Date | Run | Feature | Result |
 | --- | --- | --- | --- |
+| 2026-07-07 | [[RUN-2026-07-07-015 Kernel Contracts Shadow Bridge]] | Architecture | Added read-only kernel contracts and shadow trace bridge. |
+| 2026-07-07 | [[RUN-2026-07-07-014 Merlin Next Skeleton And Runtime Modes]] | Architecture | Added inert `Merlin.Backend/Next` skeleton and default Legacy runtime mode options. |
 | 2026-07-07 | [[RUN-2026-07-07-012 Feature-Owned Settings Migration]] | Architecture | Split backend settings into feature-owned files with compatible load order. |
 | 2026-07-07 | [[RUN-2026-07-07-011 AskClarification PR10.4 Closure Review]] | Voice | Marked PR10.4 implementation-complete and created live validation checklist. |
 | 2026-07-07 | [[RUN-2026-07-07-010 AskClarification PR10.4e Full Recomposition Ownership]] | Voice | Added executable pending clarification response recomposition owner. |

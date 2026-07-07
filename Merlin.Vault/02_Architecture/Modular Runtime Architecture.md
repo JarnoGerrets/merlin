@@ -80,6 +80,8 @@ Merlin.Adapters
 
 The goal is not to create many deployed services. The goal is a modular monolith: one local backend process with clean ownership boundaries.
 
+Implementation status: the initial feature-owned settings migration is implemented, and the inert `Merlin.Backend/Next` skeleton plus `MerlinNext` runtime mode options were added in [[RUN-2026-07-07-014 Merlin Next Skeleton And Runtime Modes]]. No request execution has moved to Next yet.
+
 ## Current Design
 
 Current backend behavior is concentrated in broad service folders and central routers.

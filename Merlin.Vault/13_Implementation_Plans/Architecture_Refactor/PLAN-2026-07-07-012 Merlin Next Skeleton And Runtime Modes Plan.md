@@ -2,7 +2,7 @@
 type: implementation-plan
 plan_id: PLAN-2026-07-07-012
 derived_work_id:
-status: ready
+status: implemented
 task_type: refactor
 derived_work_type: refactor
 origin_run:
@@ -28,9 +28,9 @@ required_prompt_extensions:
   - PE-0260
   - PE-0100
 risk_level: medium
-ready_for_agent: true
+ready_for_agent: false
 created_prompt: PROMPT-2026-07-07-012
-implemented_by:
+implemented_by: RUN-2026-07-07-014
 superseded_by:
 ---
 
@@ -38,9 +38,9 @@ superseded_by:
 
 ## Plan Status
 
-Status: ready
-Ready for agent use: true
-Reason: Adds structure and config only; no feature cutover.
+Status: implemented
+Ready for agent use: false
+Reason: Implemented in [[RUN-2026-07-07-014 Merlin Next Skeleton And Runtime Modes]].
 Related architecture:
 - [[Modular Runtime Architecture]]
 - [[Strangler Migration Architecture]]
@@ -225,3 +225,16 @@ dotnet test Merlin.Backend.Tests\Merlin.Backend.Tests.csproj --no-restore -p:Use
 ```
 
 If the change touches frontend, BrowserHost, or live-only systems, add the relevant manual validation checklist from the plan.
+
+## Implementation Result
+
+Implemented in [[RUN-2026-07-07-014 Merlin Next Skeleton And Runtime Modes]].
+
+Runtime behavior impact:
+
+- `Merlin.Backend/Next` skeleton exists with Host, Kernel, Modules, and Adapters folders.
+- `MerlinNext` runtime options bind from `Settings/Kernel/merlin-next.settings.json`.
+- `Program.cs` registers `AddMerlinNext(builder.Configuration)`.
+- `AddMerlinNext` only registers options and validation; it does not register request handlers, hosted services, shadow traffic, capability routing, or execution paths.
+- Default runtime mode remains Legacy with `Enabled=false`, `ShadowEnabled=false`, and no handled capabilities.
+- Focused tests verify default legacy mode, option binding, invalid mode failure, and enabled `NextOnly` rejection during the skeleton phase.
