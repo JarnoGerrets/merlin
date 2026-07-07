@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Merlin.Backend.Models;
+using Merlin.Backend.Services.BrowserWorkspace.PageControl.Safety;
 
 namespace Merlin.Backend.Services;
 
@@ -37,7 +38,8 @@ public sealed class ConfirmationService : IConfirmationService
         string intent,
         string normalizedCommand,
         string toolName,
-        IReadOnlyList<ApplicationCandidate>? candidates = null)
+        IReadOnlyList<ApplicationCandidate>? candidates = null,
+        BrowserPagePendingConfirmation? browserPage = null)
     {
         RemoveExpired();
 
@@ -53,7 +55,8 @@ public sealed class ConfirmationService : IConfirmationService
             Intent = intent,
             NormalizedCommand = normalizedCommand,
             ToolName = toolName,
-            Candidates = candidates ?? []
+            Candidates = candidates ?? [],
+            BrowserPage = browserPage
         };
 
         _confirmations[confirmation.ConfirmationId] = confirmation;
@@ -125,7 +128,8 @@ public sealed class ConfirmationService : IConfirmationService
             Intent = pending.Intent,
             NormalizedCommand = pending.NormalizedCommand,
             ToolName = pending.ToolName,
-            Candidates = [selected]
+            Candidates = [selected],
+            BrowserPage = pending.BrowserPage
         };
 
         return _confirmations.TryUpdate(pending.ConfirmationId, updated, pending)

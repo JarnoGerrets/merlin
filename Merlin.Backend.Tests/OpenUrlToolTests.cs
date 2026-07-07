@@ -1,3 +1,8 @@
+using Merlin.Backend.Services.BrowserWorkspace;
+using Merlin.Backend.Services.BrowserWorkspace.PageControl;
+using Merlin.Backend.Services.BrowserWorkspace.PageControl.Robustness;
+using Merlin.Backend.Services.BrowserWorkspace.PageControl.Safety;
+using Merlin.Backend.Services.BrowserWorkspace.Snapshot;
 using Merlin.Backend.Tools;
 using Xunit;
 
@@ -100,6 +105,29 @@ public sealed class OpenUrlToolTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_WhenBrowserWorkspaceIsAvailable_AutoOpensAndNavigatesWorkspace()
+    {
+        var launcher = new FakeProcessLauncher();
+        var workspace = new FakeBrowserWorkspaceService
+        {
+            IsActive = false,
+            OpenUrlsInsideWorkspaceWhenActive = true
+        };
+        var tool = new OpenUrlTool(launcher, workspace);
+
+        var result = await tool.ExecuteAsync("open google.com");
+
+        Assert.True(result.Success);
+        Assert.Equal("Opening https://google.com...", result.Message);
+        Assert.Equal("Merlin Browser Workspace", result.ToolName);
+        Assert.Equal("open_url", result.Intent);
+        Assert.True(workspace.WasOpened);
+        Assert.Null(workspace.OpenedUrl);
+        Assert.Equal("https://google.com", workspace.NavigatedUrl);
+        Assert.Null(launcher.LaunchedTarget);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_WhenBrowserTargetHasNoDot_DefaultsToDotCom()
     {
         var launcher = new FakeProcessLauncher();
@@ -156,6 +184,160 @@ public sealed class OpenUrlToolTests
             }
 
             LaunchedTarget = target;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakeBrowserWorkspaceService : IBrowserWorkspaceService
+    {
+        public event Func<BrowserWorkspaceStateChanged, CancellationToken, Task>? StateChanged;
+
+        public bool IsActive { get; init; }
+
+        public BrowserWorkspaceBounds? CurrentBounds => null;
+
+        public bool OpenUrlsInsideWorkspaceWhenActive { get; init; }
+
+        public string? OpenedUrl { get; private set; }
+
+        public string? NavigatedUrl { get; private set; }
+
+        public bool WasOpened { get; private set; }
+
+        public bool WasClosed { get; private set; }
+
+        public BrowserPageSnapshot? LatestSnapshot => null;
+
+        public Task OpenAsync(string? initialUrl = null, CancellationToken cancellationToken = default)
+        {
+            WasOpened = true;
+            OpenedUrl = initialUrl;
+            StateChanged?.Invoke(new BrowserWorkspaceStateChanged(true, CurrentBounds, "test"), cancellationToken);
+            return Task.CompletedTask;
+        }
+
+        public Task NavigateAsync(string url, CancellationToken cancellationToken = default)
+        {
+            NavigatedUrl = url;
+            return Task.CompletedTask;
+        }
+
+        public Task BackAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task ForwardAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task RefreshAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task ScrollAsync(
+            BrowserScrollDirection direction,
+            BrowserScrollAmount amount,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task ScrollToTopAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task ScrollToBottomAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task ZoomInAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task ZoomOutAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task ResetZoomAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task SearchAsync(string query, CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task<BrowserPageSnapshot?> GetSnapshotAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<BrowserPageSnapshot?>(null);
+        }
+
+        public Task<BrowserPageSnapshot?> GetFreshSnapshotAsync(
+            BrowserSnapshotFreshnessPolicy policy,
+            CancellationToken cancellationToken = default)
+        {
+            return GetSnapshotAsync(cancellationToken);
+        }
+
+        public Task<BrowserPageActionResult> SearchCurrentPageAsync(
+            string query,
+            string? preferredElementId = null,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new BrowserPageActionResult
+            {
+                Success = false,
+                ErrorCode = "not_supported"
+            });
+        }
+
+        public Task<BrowserPageActionResult> ClickVisibleElementAsync(
+            string? query,
+            string? targetKind = null,
+            int? ordinal = null,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new BrowserPageActionResult
+            {
+                Success = false,
+                ErrorCode = "not_supported"
+            });
+        }
+
+        public Task<BrowserPageActionResult> ConfirmBrowserPageClickAsync(
+            BrowserPagePendingConfirmation pending,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new BrowserPageActionResult
+            {
+                Success = false,
+                ErrorCode = "not_supported"
+            });
+        }
+
+        public Task<BrowserPageActionResult> PerformCommonActionAsync(
+            string action,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new BrowserPageActionResult
+            {
+                Success = false,
+                ErrorCode = "not_supported"
+            });
+        }
+
+        public Task CloseAsync(CancellationToken cancellationToken = default)
+        {
+            WasClosed = true;
+            StateChanged?.Invoke(new BrowserWorkspaceStateChanged(false, null, "test"), cancellationToken);
             return Task.CompletedTask;
         }
     }

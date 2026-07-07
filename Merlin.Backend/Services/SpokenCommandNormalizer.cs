@@ -39,6 +39,7 @@ public static class SpokenCommandNormalizer
         "edit",
         "enable",
         "exit",
+        "eyes",
         "gesture",
         "hide",
         "i",

@@ -8,6 +8,8 @@ public sealed class VisionOptions
     public string WorkerScriptPath { get; set; } = Path.Combine("VisionScripts", "vision_worker.py");
     public string ModelAssetPath { get; set; } = Path.Combine("VisionModels", "hand_landmarker.task");
     public string PreferredCameraName { get; set; } = string.Empty;
+    public string Backend { get; set; } = "Auto";
+    public string CaptureProfile { get; set; } = "Auto";
     public int CameraIndex { get; set; }
     public int Width { get; set; } = 1280;
     public int Height { get; set; } = 720;
@@ -22,6 +24,23 @@ public sealed class VisionOptions
     public double PinchHoldRatio { get; set; } = 0.32;
     public double PinchReleaseRatio { get; set; } = 0.40;
     public int PinchDebounceMs { get; set; } = 150;
+    public string PinchCalibrationPath { get; set; } = Path.Combine("Logs", "VisionCalibration", "pinch-calibration-latest.json");
+    public string MotionRegionCalibrationPath { get; set; } = Path.Combine("Logs", "VisionCalibration", "motion-region-calibration-latest.json");
+    public double PinchCalibrationLeadInSeconds { get; set; } = 1.0;
+    public double PinchCalibrationOpenSeconds { get; set; } = 2.5;
+    public double PinchCalibrationPinchedSeconds { get; set; } = 2.5;
+    public double PinchCalibrationReleaseSeconds { get; set; } = 2.0;
+    public double PinchCalibrationPhasePauseSeconds { get; set; } = 1.0;
+    public double MotionRegionCalibrationLeadInSeconds { get; set; } = 1.0;
+    public double MotionRegionCalibrationCornerSeconds { get; set; } = 2.0;
+    public double MotionRegionCalibrationPhasePauseSeconds { get; set; } = 1.0;
+    public double MotionRegionCalibrationPadding { get; set; } = 0.04;
     public double SmoothingAlpha { get; set; } = 0.25;
     public double PointerDeadzone { get; set; } = 0.003;
+    public double PointerGainX { get; set; } = 1.0;
+    public double PointerGainY { get; set; } = 1.0;
+    public double ControlRegionLeft { get; set; }
+    public double ControlRegionTop { get; set; }
+    public double ControlRegionRight { get; set; } = 1.0;
+    public double ControlRegionBottom { get; set; } = 1.0;
 }

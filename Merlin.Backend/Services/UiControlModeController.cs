@@ -14,7 +14,9 @@ public enum UiControlModeState
 public enum UiControlModeCommandAction
 {
     Start,
-    Stop
+    Stop,
+    CalibratePinch,
+    CalibrateMotionRegion
 }
 
 public sealed class UiControlModeController
@@ -68,6 +70,7 @@ public static class UiControlModeCommandMatcher
 {
     private static readonly string[] StartPhrases =
     [
+        "eyes open",
         "let me control the ui",
         "let me control ui",
         "start ui control",
@@ -81,6 +84,7 @@ public static class UiControlModeCommandMatcher
 
     private static readonly string[] StopPhrases =
     [
+        "eyes closed",
         "i am done with the ui",
         "im done with the ui",
         "i'm done with the ui",
@@ -94,9 +98,52 @@ public static class UiControlModeCommandMatcher
         "close your eyes"
     ];
 
+    private static readonly string[] PinchCalibrationPhrases =
+    [
+        "calibrate pinch",
+        "calibrate pinching",
+        "calibrate the pinch",
+        "calibrate my pinch",
+        "calibrate pinch gesture",
+        "calibrate the pinch gesture",
+        "calibrate ui pinch",
+        "calibrate ui control pinch",
+        "eyes open calibrate pinch",
+        "open eyes calibrate pinch",
+        "open your eyes calibrate pinch"
+    ];
+
+    private static readonly string[] MotionRegionCalibrationPhrases =
+    [
+        "calibrate motion region",
+        "calibrate the motion region",
+        "calibrate control region",
+        "calibrate the control region",
+        "calibrate pointer region",
+        "calibrate the pointer region",
+        "calibrate reachable region",
+        "calibrate the reachable region",
+        "calibrate motion control",
+        "calibrate hand control",
+        "calibrate ui control region",
+        "calibrate browser pointer region"
+    ];
+
     public static bool TryMatch(string? message, out UiControlModeCommandAction action)
     {
         var normalized = SpokenCommandNormalizer.Normalize(message).CommandText;
+        if (PinchCalibrationPhrases.Any(phrase => string.Equals(normalized, phrase, StringComparison.Ordinal)))
+        {
+            action = UiControlModeCommandAction.CalibratePinch;
+            return true;
+        }
+
+        if (MotionRegionCalibrationPhrases.Any(phrase => string.Equals(normalized, phrase, StringComparison.Ordinal)))
+        {
+            action = UiControlModeCommandAction.CalibrateMotionRegion;
+            return true;
+        }
+
         if (StartPhrases.Any(phrase => string.Equals(normalized, phrase, StringComparison.Ordinal)))
         {
             action = UiControlModeCommandAction.Start;
@@ -114,6 +161,18 @@ public static class UiControlModeCommandMatcher
         {
             action = UiControlModeCommandAction.Start;
             return false;
+        }
+
+        if (HasPinchCalibrationIntent(tokens, normalized))
+        {
+            action = UiControlModeCommandAction.CalibratePinch;
+            return true;
+        }
+
+        if (HasMotionRegionCalibrationIntent(tokens, normalized))
+        {
+            action = UiControlModeCommandAction.CalibrateMotionRegion;
+            return true;
         }
 
         if (HasUiControlTarget(tokens, normalized) && HasStopIntent(tokens, normalized))
@@ -140,9 +199,17 @@ public static class UiControlModeCommandMatcher
         {
             Intent = action == UiControlModeCommandAction.Start
                 ? "ui_control_mode_start"
+                : action == UiControlModeCommandAction.CalibratePinch
+                    ? "ui_control_pinch_calibration"
+                    : action == UiControlModeCommandAction.CalibrateMotionRegion
+                        ? "vision_motion_region_calibration"
                 : "ui_control_mode_stop",
             NormalizedCommand = action == UiControlModeCommandAction.Start
                 ? "ui control mode start"
+                : action == UiControlModeCommandAction.CalibratePinch
+                    ? "ui control pinch calibration"
+                    : action == UiControlModeCommandAction.CalibrateMotionRegion
+                        ? "vision motion region calibration"
                 : "ui control mode stop",
             Confidence = 1.0,
             OriginalMessage = originalMessage,
@@ -210,6 +277,42 @@ public static class UiControlModeCommandMatcher
             || (hasGesture && (hasMode || hasControl))
             || ContainsPhrase(commandText, "ui control")
             || ContainsPhrase(commandText, "gesture mode");
+    }
+
+    private static bool HasPinchCalibrationIntent(IReadOnlyList<string> tokens, string commandText)
+    {
+        var hasCalibrate = tokens.Contains("calibrate", StringComparer.Ordinal)
+            || tokens.Contains("calibration", StringComparer.Ordinal)
+            || tokens.Contains("callibrate", StringComparer.Ordinal)
+            || tokens.Contains("callibration", StringComparer.Ordinal);
+        var hasPinch = tokens.Contains("pinch", StringComparer.Ordinal)
+            || tokens.Contains("pinching", StringComparer.Ordinal)
+            || ContainsPhrase(commandText, "pinch gesture");
+
+        return hasCalibrate && hasPinch;
+    }
+
+    private static bool HasMotionRegionCalibrationIntent(IReadOnlyList<string> tokens, string commandText)
+    {
+        var hasCalibrate = tokens.Contains("calibrate", StringComparer.Ordinal)
+            || tokens.Contains("calibration", StringComparer.Ordinal)
+            || tokens.Contains("callibrate", StringComparer.Ordinal)
+            || tokens.Contains("callibration", StringComparer.Ordinal);
+        var hasRegionTarget = tokens.Contains("region", StringComparer.Ordinal)
+            || tokens.Contains("area", StringComparer.Ordinal)
+            || tokens.Contains("corners", StringComparer.Ordinal)
+            || ContainsPhrase(commandText, "motion control")
+            || ContainsPhrase(commandText, "hand control")
+            || ContainsPhrase(commandText, "pointer control");
+        var hasMotionTarget = tokens.Contains("motion", StringComparer.Ordinal)
+            || tokens.Contains("pointer", StringComparer.Ordinal)
+            || tokens.Contains("hand", StringComparer.Ordinal)
+            || tokens.Contains("control", StringComparer.Ordinal)
+            || tokens.Contains("reachable", StringComparer.Ordinal)
+            || HasUiControlTarget(tokens, commandText)
+            || ContainsPhrase(commandText, "browser pointer");
+
+        return hasCalibrate && hasRegionTarget && hasMotionTarget;
     }
 
     private static bool HasStartIntent(IReadOnlyList<string> tokens, string commandText)

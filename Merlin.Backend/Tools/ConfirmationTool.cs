@@ -1,5 +1,6 @@
 using Merlin.Backend.Models;
 using Merlin.Backend.Services;
+using Merlin.Backend.Services.BrowserWorkspace;
 
 namespace Merlin.Backend.Tools;
 
@@ -10,17 +11,23 @@ public sealed class ConfirmationTool : ITool
     private readonly IProcessLauncher _processLauncher;
     private readonly ITrustedApplicationStore _trustedApplicationStore;
     private readonly ITrustedUrlStore _trustedUrlStore;
+    private readonly IBrowserWorkspaceService? _browserWorkspaceService;
+    private readonly ILogger<ConfirmationTool>? _logger;
 
     public ConfirmationTool(
         IConfirmationService confirmationService,
         IProcessLauncher processLauncher,
         ITrustedApplicationStore trustedApplicationStore,
-        ITrustedUrlStore? trustedUrlStore = null)
+        ITrustedUrlStore? trustedUrlStore = null,
+        IBrowserWorkspaceService? browserWorkspaceService = null,
+        ILogger<ConfirmationTool>? logger = null)
     {
         _confirmationService = confirmationService;
         _processLauncher = processLauncher;
         _trustedApplicationStore = trustedApplicationStore;
         _trustedUrlStore = trustedUrlStore ?? NullTrustedUrlStore.Instance;
+        _browserWorkspaceService = browserWorkspaceService;
+        _logger = logger;
     }
 
     public string Name => "Confirmation";
@@ -49,7 +56,9 @@ public sealed class ConfirmationTool : ITool
                 Success = cancelled is not null,
                 Message = cancelled is null
                     ? "No pending confirmation."
-                    : "Okay, I will not open anything.",
+                    : string.Equals(cancelled.Action, "browser_page_click", StringComparison.OrdinalIgnoreCase)
+                        ? "Okay, I will not click it."
+                        : "Okay, I will not open anything.",
                 ErrorCode = cancelled is null ? "NO_PENDING_CONFIRMATION" : null,
                 ToolName = Name,
                 Intent = IntentName,
@@ -120,12 +129,77 @@ public sealed class ConfirmationTool : ITool
             };
         }
 
+        if (string.Equals(confirmation.Action, "browser_page_click", StringComparison.OrdinalIgnoreCase))
+        {
+            if (_browserWorkspaceService is null || confirmation.BrowserPage is null)
+            {
+                return new ToolResult
+                {
+                    Success = false,
+                    Message = "I can't do that automatically.",
+                    ErrorCode = "BROWSER_CONFIRMATION_UNAVAILABLE",
+                    ToolName = Name,
+                    Intent = IntentName
+                };
+            }
+
+            var result = await _browserWorkspaceService.ConfirmBrowserPageClickAsync(
+                confirmation.BrowserPage,
+                cancellationToken);
+            if (!result.Success)
+            {
+                var message = result.ErrorCode switch
+                {
+                    "confirmation_stale" => "That page changed, so I won't click it.",
+                    "unsafe_action_blocked" => "I can't do that automatically.",
+                    "browser_inactive" => "The browser is not open.",
+                    _ => "I could not click that."
+                };
+                _logger?.LogInformation(
+                    "BrowserPageConfirmationRejected ElementId: {ElementId}. ErrorCode: {ErrorCode}.",
+                    confirmation.BrowserPage.ElementId,
+                    result.ErrorCode);
+                return new ToolResult
+                {
+                    Success = false,
+                    Message = message,
+                    ErrorCode = result.ErrorCode?.ToUpperInvariant() ?? "BROWSER_PAGE_CONFIRMATION_FAILED",
+                    ToolName = Name,
+                    Intent = "browser_workspace_page_click",
+                    ResponseType = "error"
+                };
+            }
+
+            return new ToolResult
+            {
+                Success = true,
+                Message = string.IsNullOrWhiteSpace(result.ElementHref) ? "Clicked." : "Opening.",
+                ToolName = Name,
+                Intent = "browser_workspace_page_click",
+                ResponseType = "confirmation"
+            };
+        }
+
         if (string.Equals(confirmation.Action, "open_url", StringComparison.OrdinalIgnoreCase)
             || string.Equals(confirmation.Action, "open_url_fallback", StringComparison.OrdinalIgnoreCase))
         {
             try
             {
-                await _processLauncher.LaunchAsync(confirmation.Target, cancellationToken);
+                if (_browserWorkspaceService is not null)
+                {
+                    _logger?.LogInformation(
+                        "WebsiteFallbackConfirmedToBrowserWorkspace Action: {Action}. Url: {Url}. Alias: {Alias}.",
+                        confirmation.Action,
+                        confirmation.Target,
+                        confirmation.RequestedAlias);
+                    await _browserWorkspaceService.OpenAsync(null, cancellationToken);
+                    await _browserWorkspaceService.NavigateAsync(confirmation.Target, cancellationToken);
+                }
+                else
+                {
+                    await _processLauncher.LaunchAsync(confirmation.Target, cancellationToken);
+                }
+
                 if (string.Equals(confirmation.Action, "open_url_fallback", StringComparison.OrdinalIgnoreCase))
                 {
                     _trustedUrlStore.SaveMapping(

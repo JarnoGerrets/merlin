@@ -1,11 +1,15 @@
 using Merlin.Backend.Models;
+using Merlin.Backend.Services.BrowserWorkspace;
 
 namespace Merlin.Backend.Tools;
 
 public sealed class OpenUrlTool : ITool
 {
     private const string IntentName = "open_url";
+    private const string WorkspaceToolName = "Merlin Browser Workspace";
     private readonly IProcessLauncher _processLauncher;
+    private readonly IBrowserWorkspaceService? _browserWorkspaceService;
+    private readonly ILogger<OpenUrlTool>? _logger;
 
     private static readonly string[] SupportedPrefixes =
     [
@@ -26,9 +30,14 @@ public sealed class OpenUrlTool : ITool
         "powershell"
     };
 
-    public OpenUrlTool(IProcessLauncher processLauncher)
+    public OpenUrlTool(
+        IProcessLauncher processLauncher,
+        IBrowserWorkspaceService? browserWorkspaceService = null,
+        ILogger<OpenUrlTool>? logger = null)
     {
         _processLauncher = processLauncher;
+        _browserWorkspaceService = browserWorkspaceService;
+        _logger = logger;
     }
 
     public string Name => "Open URL";
@@ -73,6 +82,23 @@ public sealed class OpenUrlTool : ITool
 
         try
         {
+            if (_browserWorkspaceService is not null)
+            {
+                _logger?.LogInformation(
+                    "BrowserWorkspaceNavigateFromUrlOpen Url: {Url}. AutoOpen: True.",
+                    normalizationResult.Url);
+                await _browserWorkspaceService.OpenAsync(null, cancellationToken);
+                await _browserWorkspaceService.NavigateAsync(normalizationResult.Url, cancellationToken);
+
+                return new ToolResult
+                {
+                    Success = true,
+                    Message = $"Opening {normalizationResult.Url}...",
+                    ToolName = WorkspaceToolName,
+                    Intent = IntentName
+                };
+            }
+
             await _processLauncher.LaunchAsync(normalizationResult.Url, cancellationToken);
 
             return new ToolResult

@@ -6,8 +6,10 @@ using Merlin.Backend.Models;
 using Merlin.Backend.Configuration;
 using Merlin.Backend.Services;
 using Merlin.Backend.Services.BargeIn;
+using Merlin.Backend.Services.BrowserWorkspace;
 using Merlin.Backend.Services.InterruptionIntelligence;
 using Merlin.Backend.Services.LiveUtterance;
+using Merlin.Backend.Services.Motion;
 using Merlin.Backend.Services.SpeechPresence;
 using Merlin.Backend.Services.Vision;
 using Microsoft.Extensions.Options;
@@ -33,7 +35,10 @@ public sealed class WebSocketHandler
     private readonly VoiceStreamSessionService _voiceStreamSessionService;
     private readonly ISpeechPresenceDecisionLogSink? _speechPresenceDecisionLogSink;
     private readonly AssistantUiStateBroadcaster? _assistantUiStateBroadcaster;
+    private readonly IBrowserWorkspaceService? _browserWorkspaceService;
     private readonly VisionGestureEventRouter? _visionGestureEventRouter;
+    private readonly IMotionControlModeService? _motionControlModeService;
+    private readonly IVisionSidecarHost? _visionSidecarHost;
     private readonly MerlinAwakeStateService _merlinAwakeState;
     private readonly WakeResponsePhraseLibrary _wakeResponsePhrases;
     private readonly ConcurrentDictionary<string, AssistantRequest> _recentRequestsByCorrelationId = new(StringComparer.OrdinalIgnoreCase);
@@ -55,7 +60,10 @@ public sealed class WebSocketHandler
         ISpeechPresenceDecisionLogSink? speechPresenceDecisionLogSink = null,
         ILiveSpokenAnswerTrackingService? spokenAnswerTracking = null,
         AssistantUiStateBroadcaster? assistantUiStateBroadcaster = null,
+        IBrowserWorkspaceService? browserWorkspaceService = null,
         VisionGestureEventRouter? visionGestureEventRouter = null,
+        IMotionControlModeService? motionControlModeService = null,
+        IVisionSidecarHost? visionSidecarHost = null,
         MerlinAwakeStateService? merlinAwakeState = null,
         WakeResponsePhraseLibrary? wakeResponsePhrases = null)
     {
@@ -75,7 +83,10 @@ public sealed class WebSocketHandler
         _bargeInDebugSnapshots = bargeInDebugSnapshots;
         _speechPresenceDecisionLogSink = speechPresenceDecisionLogSink;
         _assistantUiStateBroadcaster = assistantUiStateBroadcaster;
+        _browserWorkspaceService = browserWorkspaceService;
         _visionGestureEventRouter = visionGestureEventRouter;
+        _motionControlModeService = motionControlModeService;
+        _visionSidecarHost = visionSidecarHost;
         _merlinAwakeState = merlinAwakeState ?? new MerlinAwakeStateService();
         _wakeResponsePhrases = wakeResponsePhrases ?? new WakeResponsePhraseLibrary();
     }
@@ -98,6 +109,7 @@ public sealed class WebSocketHandler
         Func<LiveUserUtteranceRouted, CancellationToken, Task>? liveUtteranceHandler = null;
         Func<BargeInDebugSnapshot, CancellationToken, Task>? bargeInDebugHandler = null;
         Func<AssistantUiStateEvent, string, CancellationToken, Task>? assistantUiStateHandler = null;
+        Func<BrowserWorkspaceStateChanged, CancellationToken, Task>? browserWorkspaceStateHandler = null;
         Func<VisionGestureEvent, CancellationToken, Task>? visionGestureHandler = null;
         _runtimeStateService.IncrementActiveWebSocketConnections();
         _logger.LogInformation(
@@ -154,7 +166,34 @@ public sealed class WebSocketHandler
                 _assistantUiStateBroadcaster.StateChanged += assistantUiStateHandler;
             }
 
-            if (_visionGestureEventRouter is not null)
+            if (_browserWorkspaceService is not null)
+            {
+                browserWorkspaceStateHandler = (state, token) => SendBrowserWorkspaceStateAsync(
+                    webSocket,
+                    sendGate,
+                    state,
+                    token);
+                _browserWorkspaceService.StateChanged += browserWorkspaceStateHandler;
+                if (_browserWorkspaceService.IsActive)
+                {
+                    await SendBrowserWorkspaceStateAsync(
+                        webSocket,
+                        sendGate,
+                        new BrowserWorkspaceStateChanged(true, _browserWorkspaceService.CurrentBounds, "connected"),
+                        context.RequestAborted);
+                }
+            }
+
+            if (_motionControlModeService is not null)
+            {
+                visionGestureHandler = (gestureEvent, token) => SendVisionGestureEventAsync(
+                    webSocket,
+                    sendGate,
+                    gestureEvent,
+                    token);
+                _motionControlModeService.DashboardGestureForwarded += visionGestureHandler;
+            }
+            else if (_visionGestureEventRouter is not null)
             {
                 visionGestureHandler = (gestureEvent, token) => SendVisionGestureEventAsync(
                     webSocket,
@@ -202,7 +241,16 @@ public sealed class WebSocketHandler
                 _assistantUiStateBroadcaster.StateChanged -= assistantUiStateHandler;
             }
 
-            if (_visionGestureEventRouter is not null && visionGestureHandler is not null)
+            if (_browserWorkspaceService is not null && browserWorkspaceStateHandler is not null)
+            {
+                _browserWorkspaceService.StateChanged -= browserWorkspaceStateHandler;
+            }
+
+            if (_motionControlModeService is not null && visionGestureHandler is not null)
+            {
+                _motionControlModeService.DashboardGestureForwarded -= visionGestureHandler;
+            }
+            else if (_visionGestureEventRouter is not null && visionGestureHandler is not null)
             {
                 _visionGestureEventRouter.GestureEventForwarded -= visionGestureHandler;
             }
@@ -859,6 +907,36 @@ public sealed class WebSocketHandler
             cancellationToken);
     }
 
+    private Task SendBrowserWorkspaceStateAsync(
+        System.Net.WebSockets.WebSocket webSocket,
+        SemaphoreSlim sendGate,
+        BrowserWorkspaceStateChanged state,
+        CancellationToken cancellationToken)
+    {
+        return SendJsonAsync(
+            webSocket,
+            sendGate,
+            JsonSerializer.Serialize(new
+            {
+                type = "BROWSER_WORKSPACE_STATE",
+                @event = "BROWSER_WORKSPACE_STATE",
+                active = state.Active,
+                reason = state.Reason,
+                bounds = state.Bounds is null
+                    ? null
+                    : new
+                    {
+                        x = state.Bounds.X,
+                        y = state.Bounds.Y,
+                        width = state.Bounds.Width,
+                        height = state.Bounds.Height,
+                        isMinimized = state.Bounds.IsMinimized,
+                        isFocused = state.Bounds.IsFocused
+                }
+            }, JsonSerializerOptions),
+            cancellationToken);
+    }
+
     private async Task QueueSpeechIfNeededAsync(
         System.Net.WebSockets.WebSocket webSocket,
         SemaphoreSlim sendGate,
@@ -903,6 +981,10 @@ public sealed class WebSocketHandler
         if (speechDecision.ShouldSpeak && speechDecision.ShouldQueue)
         {
             var speechText = speechDecision.SpeechTextOverride ?? ResponseSpeechText(response);
+            var shouldStartPinchCalibrationAfterSpeech = ShouldStartPinchCalibrationAfterSpeech(response);
+            var shouldStartMotionRegionCalibrationAfterSpeech = ShouldStartMotionRegionCalibrationAfterSpeech(response);
+            var pinchCalibrationStarted = 0;
+            var motionRegionCalibrationStarted = 0;
             await SendChatLogAppendAsync(
                 webSocket,
                 sendGate,
@@ -928,7 +1010,23 @@ public sealed class WebSocketHandler
             await _speechPlaybackService.EnqueueAsync(
                 speechText,
                 response.CorrelationId,
-                (visualEvent, token) => SendVisualEventAsync(webSocket, sendGate, visualEvent, token),
+                async (visualEvent, token) =>
+                {
+                    await SendVisualEventAsync(webSocket, sendGate, visualEvent, token);
+                    if (shouldStartPinchCalibrationAfterSpeech
+                        && string.Equals(visualEvent.Event, "SPEAKING_END", StringComparison.Ordinal)
+                        && Interlocked.Exchange(ref pinchCalibrationStarted, 1) == 0)
+                    {
+                        StartPinchCalibrationAfterSpeech(response.CorrelationId);
+                    }
+
+                    if (shouldStartMotionRegionCalibrationAfterSpeech
+                        && string.Equals(visualEvent.Event, "SPEAKING_END", StringComparison.Ordinal)
+                        && Interlocked.Exchange(ref motionRegionCalibrationStarted, 1) == 0)
+                    {
+                        StartMotionRegionCalibrationAfterSpeech(response.CorrelationId);
+                    }
+                },
                 response.SpeechCacheKey,
                 response.SpeechCacheKey is not null ? response.IsReplayableSpeech : null,
                 cancellationToken,
@@ -954,6 +1052,88 @@ public sealed class WebSocketHandler
         return string.Equals(response.ResponseType, "sleep_acknowledgement", StringComparison.OrdinalIgnoreCase)
             ? SpeechPlaybackItemType.SleepAcknowledgement
             : SpeechPlaybackItemType.FinalAnswer;
+    }
+
+    private bool ShouldStartPinchCalibrationAfterSpeech(AssistantResponse response)
+    {
+        return response.Success
+            && _visionSidecarHost is not null
+            && string.Equals(response.Intent, "ui_control_pinch_calibration", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool ShouldStartMotionRegionCalibrationAfterSpeech(AssistantResponse response)
+    {
+        return response.Success
+            && _visionSidecarHost is not null
+            && string.Equals(response.Intent, "vision_motion_region_calibration", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void StartPinchCalibrationAfterSpeech(string? correlationId)
+    {
+        if (_visionSidecarHost is null)
+        {
+            return;
+        }
+
+        _logger.LogInformation(
+            "UiControlPinchCalibrationSpeechCompletedStartingCalibration CorrelationId: {CorrelationId}.",
+            correlationId);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var result = await _visionSidecarHost.CalibratePinchAsync(CancellationToken.None);
+                _logger.LogInformation(
+                    "UiControlPinchCalibrationBackgroundCompleted Success: {Success}. Start: {Start}. Hold: {Hold}. Release: {Release}. OpenSamples: {OpenSamples}. PinchSamples: {PinchSamples}. ReleaseSamples: {ReleaseSamples}. Message: {Message}.",
+                    result.Success,
+                    result.PinchStartRatio,
+                    result.PinchHoldRatio,
+                    result.PinchReleaseRatio,
+                    result.OpenSamples,
+                    result.PinchSamples,
+                    result.ReleaseSamples,
+                    result.Message);
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(exception, "UiControlPinchCalibrationBackgroundFailed");
+            }
+        }, CancellationToken.None);
+    }
+
+    private void StartMotionRegionCalibrationAfterSpeech(string? correlationId)
+    {
+        if (_visionSidecarHost is null)
+        {
+            return;
+        }
+
+        _logger.LogInformation(
+            "VisionMotionRegionCalibrationSpeechCompletedStartingCalibration CorrelationId: {CorrelationId}.",
+            correlationId);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var result = await _visionSidecarHost.CalibrateMotionRegionAsync(CancellationToken.None);
+                _logger.LogInformation(
+                    "VisionMotionRegionCalibrationBackgroundCompleted Success: {Success}. Left: {Left}. Top: {Top}. Right: {Right}. Bottom: {Bottom}. TopLeftSamples: {TopLeftSamples}. TopRightSamples: {TopRightSamples}. BottomRightSamples: {BottomRightSamples}. BottomLeftSamples: {BottomLeftSamples}. Message: {Message}.",
+                    result.Success,
+                    result.ControlRegionLeft,
+                    result.ControlRegionTop,
+                    result.ControlRegionRight,
+                    result.ControlRegionBottom,
+                    result.TopLeftSamples,
+                    result.TopRightSamples,
+                    result.BottomRightSamples,
+                    result.BottomLeftSamples,
+                    result.Message);
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(exception, "VisionMotionRegionCalibrationBackgroundFailed");
+            }
+        }, CancellationToken.None);
     }
 
     internal static bool ShouldAppendAssistantChatLog(

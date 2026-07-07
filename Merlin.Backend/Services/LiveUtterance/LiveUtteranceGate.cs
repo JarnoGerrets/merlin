@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Merlin.Backend.Models;
 using Merlin.Backend.Services;
 using Merlin.Backend.Services.BargeIn;
+using Merlin.Backend.Services.Context.ActiveSurface;
 using Microsoft.Extensions.Options;
 
 namespace Merlin.Backend.Services.LiveUtterance;
@@ -11,10 +12,152 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
 {
     private static readonly string[] Fillers = ["uh", "um", "erm", "hmm", "well"];
     private static readonly string[] LeadingFillers = ["hey", "okay", "ok", "yo", "please", "merlin"];
+    private static readonly string[] BrowserCommandLeadingWrappers =
+    [
+        "please ",
+        "merlin ",
+        "hey merlin ",
+        "okay merlin ",
+        "ok merlin ",
+        "can you please ",
+        "could you please ",
+        "would you please ",
+        "can you ",
+        "could you ",
+        "would you "
+    ];
+    private static readonly string[] BrowserCommandTrailingControlWrappers =
+    [
+        " please",
+        " for me",
+        " thanks",
+        " thank you"
+    ];
     private static readonly string[] ShortControlPhrases = ["stop", "pause", "wait", "hold on", "hang on", "one second", "shut up", "be quiet", "quiet", "no stop", "wait wait"];
     private static readonly string[] CancellationPhrases = ["cancel", "cancel that", "never mind", "nevermind", "forget it", "abort", "dont do that", "don't do that", "stop doing that"];
     private static readonly string[] ContinuationPhrases = ["continue", "go on", "resume", "keep going", "carry on"];
     private static readonly string[] StatusPhrases = ["what are you doing", "what are you working on", "did you hear me", "are you still there"];
+    private static readonly string[] ExplicitAssistantPlaybackControlPhrases =
+    [
+        "pause yourself",
+        "pause your answer",
+        "pause your response",
+        "stop talking",
+        "stop your answer",
+        "resume your answer",
+        "continue your answer",
+        "continue talking"
+    ];
+    private static readonly string[] BrowserWorkspaceCommands =
+    [
+        "open browser",
+        "open browser workspace",
+        "open the browser workspace",
+        "open your browser",
+        "show browser workspace",
+        "show browser",
+        "start browser workspace",
+        "use browser",
+        "use your browser",
+        "close browser",
+        "close the browser",
+        "close browser workspace",
+        "close the browser workspace",
+        "close your browser",
+        "hide browser workspace",
+        "hide browser",
+        "exit browser",
+        "stop browser workspace",
+        "back",
+        "go back",
+        "browser back",
+        "go back one page",
+        "previous page",
+        "forward",
+        "go forward",
+        "browser forward",
+        "next page",
+        "refresh",
+        "refresh page",
+        "refresh browser",
+        "reload",
+        "reload page",
+        "reload browser",
+        "scroll down",
+        "scroll up",
+        "page down",
+        "page up",
+        "scroll a bit down",
+        "scroll a bit up",
+        "scroll further down",
+        "scroll further up",
+        "scroll to top",
+        "scroll to bottom",
+        "zoom in",
+        "zoom out",
+        "reset zoom",
+        "reset browser zoom",
+        "normal zoom",
+        "inspect page",
+        "inspect the page",
+        "show page snapshot",
+        "show the page snapshot",
+        "what can you see on this page",
+        "what do you see on this page",
+        "pause video",
+        "pause the video",
+        "please pause video",
+        "please pause the video",
+        "play video",
+        "play the video",
+        "please play",
+        "skip ad",
+        "skip the ad",
+        "click pause",
+        "click the pause button",
+        "press pause",
+        "mute video",
+        "unmute video",
+        "fullscreen",
+        "full screen",
+        "start browser hand control",
+        "start browser pointer",
+        "show browser pointer",
+        "enable browser motion",
+        "enable browser pointer",
+        "stop browser hand control",
+        "hide browser pointer",
+        "stop browser pointer",
+        "disable browser motion",
+        "disable browser pointer"
+    ];
+    private static readonly string[] BrowserWorkspaceCommandPrefixes =
+    [
+        "go to ",
+        "navigate to ",
+        "browse ",
+        "visit ",
+        "search for ",
+        "search web for ",
+        "search the web for ",
+        "search ",
+        "google ",
+        "look up ",
+        "find ",
+        "type ",
+        "enter ",
+        "put ",
+        "click ",
+        "select ",
+        "open the result ",
+        "open result ",
+        "open first result",
+        "open second result",
+        "open third result",
+        "open the first result",
+        "open the second result",
+        "open the third result"
+    ];
     private static readonly string[] ReplacementPrefixes = ["sorry i meant ", "i meant ", "i mean ", "actually ", "no open ", "no ", "not ", "instead "];
     private static readonly string[] CorrectionContentPrefixes = ["what i meant was ", "what i meant is ", "what i meant ", "what i mean is ", "what i mean ", "i meant was ", "i meant is ", "i meant ", "i mean "];
     private static readonly string[] CorrectionPrefixIntros = ["", "no ", "actually ", "wait ", "sorry "];
@@ -34,11 +177,11 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
     };
     private static readonly HashSet<string> CommandVerbs = new(StringComparer.Ordinal)
     {
-        "open", "search", "explain", "tell", "show", "read", "summarize", "play", "pause", "continue", "stop", "start", "launch", "find", "look"
+        "open", "go", "navigate", "visit", "browse", "search", "google", "reload", "refresh", "scroll", "zoom", "type", "enter", "put", "click", "select", "explain", "tell", "show", "read", "summarize", "play", "pause", "continue", "stop", "start", "launch", "find", "look", "calibrate"
     };
     private static readonly HashSet<string> VerbLikeWords = new(StringComparer.Ordinal)
     {
-        "am", "is", "are", "was", "were", "be", "being", "been", "do", "does", "did", "mean", "means", "explain", "work", "works", "happen", "happens", "different", "correct", "know", "use", "uses", "open", "search", "tell", "show", "read", "summarize", "play", "pause", "continue", "stop", "need", "want", "help"
+        "am", "is", "are", "was", "were", "be", "being", "been", "do", "does", "did", "mean", "means", "explain", "work", "works", "happen", "happens", "different", "correct", "know", "use", "uses", "open", "go", "navigate", "visit", "browse", "search", "google", "reload", "refresh", "scroll", "zoom", "type", "enter", "put", "click", "select", "tell", "show", "read", "summarize", "play", "pause", "continue", "stop", "need", "want", "help", "calibrate"
     };
     private static readonly HashSet<string> GarbageTokens = new(StringComparer.Ordinal)
     {
@@ -72,13 +215,22 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
     private readonly ConcurrentDictionary<string, PendingFragment> _pendingFragments = new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<LiveUtteranceGate> _logger;
     private readonly LiveUtteranceGateOptions _options;
+    private readonly IConfirmationService? _confirmationService;
+    private readonly IActiveSurfaceService? _activeSurfaceService;
+    private readonly IBrowserMediaCommandNormalizer _browserMediaCommandNormalizer;
 
     public LiveUtteranceGate(
         ILogger<LiveUtteranceGate> logger,
-        IOptions<LiveUtteranceGateOptions>? options = null)
+        IOptions<LiveUtteranceGateOptions>? options = null,
+        IConfirmationService? confirmationService = null,
+        IActiveSurfaceService? activeSurfaceService = null,
+        IBrowserMediaCommandNormalizer? browserMediaCommandNormalizer = null)
     {
         _logger = logger;
         _options = options?.Value ?? new LiveUtteranceGateOptions();
+        _confirmationService = confirmationService;
+        _activeSurfaceService = activeSurfaceService;
+        _browserMediaCommandNormalizer = browserMediaCommandNormalizer ?? new BrowserMediaCommandNormalizer();
     }
 
     public LiveUtteranceGateResult Evaluate(LiveUtteranceGateInput input)
@@ -148,6 +300,22 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
         var stripped = StripLeadingFiller(normalized);
         var analysisText = string.IsNullOrWhiteSpace(stripped) ? normalized : stripped;
         var sourceContext = strictness.ToString();
+
+        if (HasPendingConfirmation()
+            && (ConfirmationCommandMatcher.IsExplicitConfirmation(normalized)
+                || ConfirmationCommandMatcher.IsCancellationCommand(normalized)
+                || ConfirmationCommandMatcher.IsChoiceCommand(normalized)))
+        {
+            return Result(
+                LiveUtteranceGateDecisionKind.AcceptNewRequest,
+                0.97,
+                "Matched pending confirmation response.",
+                normalized,
+                stripped,
+                sourceContext,
+                positiveSignals: ["pending_confirmation_response"],
+                shouldRouteToCommandRouter: true);
+        }
 
         if (TryStripRepeatedNoCorrectionPrefix(analysisText, out var correctionContent))
         {
@@ -312,6 +480,74 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
                 stripped,
                 sourceContext,
                 positiveSignals: ["ui_control_mode_command"],
+                shouldRouteToCommandRouter: true);
+        }
+
+        var browserControlText = StripBrowserCommandTrailingControlWrappers(StripBrowserCommandLeadingWrappers(normalized));
+        var browserAnalysisControlText = StripBrowserCommandTrailingControlWrappers(StripBrowserCommandLeadingWrappers(analysisText));
+        var browserExtractionText = StripBrowserCommandLeadingWrappers(normalized);
+        var browserAnalysisExtractionText = StripBrowserCommandLeadingWrappers(analysisText);
+
+        if (MatchesAny(normalized, ExplicitAssistantPlaybackControlPhrases)
+            || MatchesAny(analysisText, ExplicitAssistantPlaybackControlPhrases))
+        {
+            return Result(
+                LiveUtteranceGateDecisionKind.AcceptPlaybackControl,
+                0.96,
+                "Matched explicit assistant playback control phrase.",
+                normalized,
+                stripped,
+                sourceContext,
+                positiveSignals: ["assistant_playback_control_phrase"],
+                shouldAffectPlayback: true);
+        }
+
+        var activeSurface = input.ActiveSurface
+            ?? _activeSurfaceService?.Current
+            ?? KnownSurfaces.Dashboard(DateTimeOffset.UtcNow);
+        var browserMediaMatch = _browserMediaCommandNormalizer.TryMatchExplicit(browserControlText)
+            ?? _browserMediaCommandNormalizer.TryMatchExplicit(browserAnalysisControlText)
+            ?? _browserMediaCommandNormalizer.TryMatchAmbiguous(browserControlText, activeSurface)
+            ?? _browserMediaCommandNormalizer.TryMatchAmbiguous(browserAnalysisControlText, activeSurface);
+        if (browserMediaMatch is not null)
+        {
+            LogSurfaceDecision(
+                normalized,
+                "ActiveSurfaceCommand",
+                "CommandRouter",
+                browserMediaMatch.Capability,
+                activeSurface,
+                browserMediaMatch.Reason,
+                input.Utterance.CorrelationId,
+                input.Utterance.ActiveTurnId);
+            return Result(
+                LiveUtteranceGateDecisionKind.AcceptNewRequest,
+                browserMediaMatch.Confidence,
+                browserMediaMatch.Reason,
+                normalized,
+                stripped,
+                sourceContext,
+                positiveSignals: ["browser_media_command", "active_surface"],
+                shouldRouteToCommandRouter: true);
+        }
+
+        if (MatchesAny(normalized, BrowserWorkspaceCommands)
+            || MatchesAny(analysisText, BrowserWorkspaceCommands)
+            || MatchesAny(browserControlText, BrowserWorkspaceCommands)
+            || MatchesAny(browserAnalysisControlText, BrowserWorkspaceCommands)
+            || MatchesBrowserWorkspacePrefix(normalized)
+            || MatchesBrowserWorkspacePrefix(analysisText)
+            || MatchesBrowserWorkspacePrefix(browserExtractionText)
+            || MatchesBrowserWorkspacePrefix(browserAnalysisExtractionText))
+        {
+            return Result(
+                LiveUtteranceGateDecisionKind.AcceptNewRequest,
+                input.IsIdleListening ? 0.94 : 0.88,
+                "Matched deterministic browser workspace command.",
+                normalized,
+                stripped,
+                sourceContext,
+                positiveSignals: ["browser_workspace_command", "structured_command"],
                 shouldRouteToCommandRouter: true);
         }
 
@@ -954,6 +1190,79 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
         return phrases.Any(phrase => string.Equals(normalized, phrase, StringComparison.OrdinalIgnoreCase));
     }
 
+    private static string StripBrowserCommandLeadingWrappers(string normalized)
+    {
+        var current = normalized;
+        var changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var prefix in BrowserCommandLeadingWrappers.OrderByDescending(static value => value.Length))
+            {
+                if (!current.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                current = current[prefix.Length..].Trim();
+                changed = true;
+                break;
+            }
+        }
+
+        return current;
+    }
+
+    private static string StripBrowserCommandTrailingControlWrappers(string normalized)
+    {
+        var current = normalized;
+        var changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var suffix in BrowserCommandTrailingControlWrappers.OrderByDescending(static value => value.Length))
+            {
+                if (!current.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                current = current[..^suffix.Length].Trim();
+                changed = true;
+                break;
+            }
+        }
+
+        return current;
+    }
+
+    private static bool MatchesBrowserWorkspacePrefix(string normalized)
+    {
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return false;
+        }
+
+        foreach (var prefix in BrowserWorkspaceCommandPrefixes)
+        {
+            if (!normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var target = normalized[prefix.Length..].Trim();
+            if (string.IsNullOrWhiteSpace(target)
+                || target is "calculator" or "paint" or "notepad" or "word" or "spotify" or "chrome" or "edge" or "firefox")
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
     private static bool TryMatchEmbeddedPhrase(string normalized, IEnumerable<string> phrases, out string matchedPhrase)
     {
         foreach (var phrase in phrases.OrderByDescending(static phrase => phrase.Length))
@@ -1042,6 +1351,9 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
             && needles.Any(needle => value.Contains(needle, StringComparison.OrdinalIgnoreCase));
     }
 
+    private bool HasPendingConfirmation() =>
+        _confirmationService?.GetLatestPending() is not null;
+
     private static string Normalize(string value)
     {
         var lower = value.ToLowerInvariant()
@@ -1124,6 +1436,31 @@ public sealed partial class LiveUtteranceGate : ILiveUtteranceGate
             result.ShouldRouteToCommandRouter,
             result.HoldWindow?.TotalMilliseconds,
             result.ClarificationPrompt);
+    }
+
+    private void LogSurfaceDecision(
+        string utteranceNormalized,
+        string decisionKind,
+        string routeTarget,
+        string? capabilityHint,
+        ActiveSurfaceSnapshot activeSurface,
+        string reason,
+        string? correlationId,
+        string? turnId)
+    {
+        _logger.LogInformation(
+            "LiveUtteranceSurfaceDecision UtteranceNormalized: {UtteranceNormalized}. DecisionKind: {DecisionKind}. RouteTarget: {RouteTarget}. CapabilityHint: {CapabilityHint}. ActiveSurfaceKind: {ActiveSurfaceKind}. ActiveSurfaceId: {ActiveSurfaceId}. ActiveSurfaceSource: {ActiveSurfaceSource}. ActiveSurfaceConfidence: {ActiveSurfaceConfidence}. Reason: {Reason}. CorrelationId: {CorrelationId}. TurnId: {TurnId}.",
+            utteranceNormalized,
+            decisionKind,
+            routeTarget,
+            capabilityHint,
+            activeSurface.Kind,
+            activeSurface.SurfaceId,
+            activeSurface.Source,
+            activeSurface.Confidence,
+            reason,
+            correlationId,
+            turnId);
     }
 
     private static UtteranceRouteDecision Decision(

@@ -45,4 +45,52 @@ public sealed class VisionSidecarMessage
 
     [JsonPropertyName("source")]
     public string? Source { get; init; }
+
+    [JsonPropertyName("status")]
+    public string? Status { get; init; }
+
+    [JsonPropertyName("pinchStartRatio")]
+    public double PinchStartRatio { get; init; }
+
+    [JsonPropertyName("pinchHoldRatio")]
+    public double PinchHoldRatio { get; init; }
+
+    [JsonPropertyName("pinchReleaseRatio")]
+    public double PinchReleaseRatio { get; init; }
+
+    [JsonPropertyName("openSamples")]
+    public int OpenSamples { get; init; }
+
+    [JsonPropertyName("pinchSamples")]
+    public int PinchSamples { get; init; }
+
+    [JsonPropertyName("releaseSamples")]
+    public int ReleaseSamples { get; init; }
+
+    [JsonPropertyName("calibrationPath")]
+    public string? CalibrationPath { get; init; }
+
+    [JsonPropertyName("controlRegionLeft")]
+    public double ControlRegionLeft { get; init; }
+
+    [JsonPropertyName("controlRegionTop")]
+    public double ControlRegionTop { get; init; }
+
+    [JsonPropertyName("controlRegionRight")]
+    public double ControlRegionRight { get; init; }
+
+    [JsonPropertyName("controlRegionBottom")]
+    public double ControlRegionBottom { get; init; }
+
+    [JsonPropertyName("topLeftSamples")]
+    public int TopLeftSamples { get; init; }
+
+    [JsonPropertyName("topRightSamples")]
+    public int TopRightSamples { get; init; }
+
+    [JsonPropertyName("bottomRightSamples")]
+    public int BottomRightSamples { get; init; }
+
+    [JsonPropertyName("bottomLeftSamples")]
+    public int BottomLeftSamples { get; init; }
 }

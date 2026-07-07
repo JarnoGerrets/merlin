@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Merlin.Backend.Services.Context.ActiveSurface;
 
 namespace Merlin.Backend.Models;
 
@@ -21,4 +22,7 @@ public sealed class AssistantRequest
 
     [JsonIgnore]
     public DateTimeOffset? ReceivedAtUtc { get; init; }
+
+    [JsonIgnore]
+    public ActiveSurfaceSnapshot? ActiveSurface { get; init; }
 }

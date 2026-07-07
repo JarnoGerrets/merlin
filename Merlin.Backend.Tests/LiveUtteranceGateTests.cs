@@ -1,4 +1,6 @@
 using Merlin.Backend.Models;
+using Merlin.Backend.Services.Context.ActiveSurface;
+using Merlin.Backend.Services;
 using Merlin.Backend.Services.BargeIn;
 using Merlin.Backend.Services.LiveUtterance;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -80,6 +82,54 @@ public sealed class LiveUtteranceGateTests
     }
 
     [Theory]
+    [InlineData("confirm")]
+    [InlineData("I confirm")]
+    [InlineData("yes")]
+    [InlineData("go ahead")]
+    [InlineData("do it")]
+    [InlineData("no")]
+    [InlineData("cancel")]
+    [InlineData("never mind")]
+    public void PendingConfirmationResponses_RouteToCommandRouter(string text)
+    {
+        var confirmationService = new ConfirmationService();
+        confirmationService.Create(
+            "browser_page_click",
+            "button_1",
+            "Checkout",
+            "checkout",
+            "click checkout",
+            "browser_workspace_page_click",
+            "click checkout",
+            "Merlin Browser Workspace");
+        var gate = new LiveUtteranceGate(
+            NullLogger<LiveUtteranceGate>.Instance,
+            Options.Create(new LiveUtteranceGateOptions()),
+            confirmationService);
+
+        var result = EvaluateWithGate(
+            gate,
+            text,
+            LiveAssistantTurnState.IdleListening,
+            activeTurn: false,
+            source: "live_utterance_monitor");
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AcceptNewRequest, result.Decision);
+        Assert.True(result.ShouldRouteToCommandRouter);
+        Assert.False(result.ShouldCallDeepInfra);
+        Assert.Contains("pending_confirmation_response", result.PositiveSignals);
+    }
+
+    [Fact]
+    public void ConfirmWithoutPendingConfirmation_DoesNotRoute()
+    {
+        var result = Evaluate("confirm", LiveAssistantTurnState.IdleListening, activeTurn: false, source: "live_utterance_monitor");
+
+        Assert.NotEqual(LiveUtteranceGateDecisionKind.AcceptNewRequest, result.Decision);
+        Assert.False(result.ShouldRouteToCommandRouter);
+    }
+
+    [Theory]
     [InlineData("open the chat")]
     [InlineData("show chat")]
     [InlineData("Merlin, open jetlog")]
@@ -108,6 +158,154 @@ public sealed class LiveUtteranceGateTests
         Assert.True(result.ShouldRouteToCommandRouter);
         Assert.False(result.ShouldCallDeepInfra);
         Assert.Contains("ui_control_mode_command", result.PositiveSignals);
+    }
+
+    [Theory]
+    [InlineData("Close browser.")]
+    [InlineData("Hey Merlin, close browser.")]
+    [InlineData("close your browser")]
+    [InlineData("open browser workspace")]
+    [InlineData("go back")]
+    [InlineData("please go back")]
+    [InlineData("go back please")]
+    [InlineData("refresh page .")]
+    [InlineData("scroll down")]
+    [InlineData("can you please scroll down")]
+    [InlineData("scroll a bit up")]
+    [InlineData("zoom in")]
+    [InlineData("reset zoom")]
+    [InlineData("inspect page")]
+    [InlineData("click pricing")]
+    [InlineData("click the first result")]
+    [InlineData("open the result, Shakira")]
+    public void BrowserWorkspaceCommands_RouteBeforeGarbageHeuristic(string text)
+    {
+        var result = Evaluate(text, LiveAssistantTurnState.IdleListening, source: "live_utterance_monitor");
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AcceptNewRequest, result.Decision);
+        Assert.True(result.ShouldRouteToCommandRouter);
+        Assert.False(result.ShouldCallDeepInfra);
+        Assert.Contains("browser_workspace_command", result.PositiveSignals);
+    }
+
+    [Fact]
+    public void DashboardPause_IsAssistantPlaybackControl()
+    {
+        var result = Evaluate(
+            "pause",
+            LiveAssistantTurnState.Speaking,
+            assistantWasSpeaking: true,
+            activeSurface: KnownSurfaces.Dashboard(DateTimeOffset.UtcNow));
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AcceptPlaybackControl, result.Decision);
+        Assert.True(result.ShouldAffectPlayback);
+        Assert.False(result.ShouldRouteToCommandRouter);
+    }
+
+    [Fact]
+    public void BrowserWorkspacePause_RoutesToCommandRouter()
+    {
+        var result = Evaluate(
+            "pause",
+            LiveAssistantTurnState.Speaking,
+            assistantWasSpeaking: true,
+            activeSurface: KnownSurfaces.BrowserWorkspace(DateTimeOffset.UtcNow));
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AcceptNewRequest, result.Decision);
+        Assert.True(result.ShouldRouteToCommandRouter);
+        Assert.False(result.ShouldAffectPlayback);
+        Assert.Contains("browser_media_command", result.PositiveSignals);
+    }
+
+    [Fact]
+    public void UnknownSurfacePause_KeepsAssistantPlaybackControl()
+    {
+        var result = Evaluate(
+            "pause",
+            LiveAssistantTurnState.Speaking,
+            assistantWasSpeaking: true,
+            activeSurface: KnownSurfaces.Unknown(DateTimeOffset.UtcNow));
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AcceptPlaybackControl, result.Decision);
+        Assert.True(result.ShouldAffectPlayback);
+        Assert.False(result.ShouldRouteToCommandRouter);
+    }
+
+    [Fact]
+    public void BrowserWorkspacePauseYourAnswer_IsAssistantPlaybackControl()
+    {
+        var result = Evaluate(
+            "pause your answer",
+            LiveAssistantTurnState.Speaking,
+            assistantWasSpeaking: true,
+            activeSurface: KnownSurfaces.BrowserWorkspace(DateTimeOffset.UtcNow));
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AcceptPlaybackControl, result.Decision);
+        Assert.True(result.ShouldAffectPlayback);
+        Assert.False(result.ShouldRouteToCommandRouter);
+    }
+
+    [Theory]
+    [InlineData("pause the video")]
+    [InlineData("skip ad")]
+    [InlineData("overslaan")]
+    [InlineData("stop the video")]
+    public void ExplicitBrowserMedia_RoutesToCommandRouterRegardlessOfSurface(string text)
+    {
+        var result = Evaluate(
+            text,
+            LiveAssistantTurnState.Speaking,
+            assistantWasSpeaking: true,
+            activeSurface: KnownSurfaces.Dashboard(DateTimeOffset.UtcNow));
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AcceptNewRequest, result.Decision);
+        Assert.True(result.ShouldRouteToCommandRouter);
+        Assert.False(result.ShouldAffectPlayback);
+    }
+
+    [Fact]
+    public void BrowserWorkspaceStop_RemainsPlaybackControl()
+    {
+        var result = Evaluate(
+            "stop",
+            LiveAssistantTurnState.Speaking,
+            assistantWasSpeaking: true,
+            activeSurface: KnownSurfaces.BrowserWorkspace(DateTimeOffset.UtcNow));
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AcceptPlaybackControl, result.Decision);
+        Assert.True(result.ShouldAffectPlayback);
+        Assert.False(result.ShouldRouteToCommandRouter);
+    }
+
+    [Fact]
+    public void BrowserWorkspaceYeah_RemainsNoOp()
+    {
+        var result = Evaluate(
+            "yeah",
+            LiveAssistantTurnState.IdleListening,
+            activeTurn: false,
+            source: "live_utterance_monitor",
+            activeSurface: KnownSurfaces.BrowserWorkspace(DateTimeOffset.UtcNow));
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.IgnoreAsGarbageTranscript, result.Decision);
+        Assert.False(result.ShouldRouteToCommandRouter);
+    }
+
+    [Theory]
+    [InlineData("go to nu.nl")]
+    [InlineData("search for best webcams")]
+    [InlineData("search this page for webcams")]
+    [InlineData("can you search this page for please")]
+    [InlineData("type coffee machine into the search field")]
+    [InlineData("click the link called documentation")]
+    [InlineData("google best webcams")]
+    [InlineData("navigate to bol.com")]
+    public void BrowserNavigationRequests_RouteToCommandRouter(string text)
+    {
+        var result = Evaluate(text, LiveAssistantTurnState.IdleListening, source: "live_utterance_monitor");
+
+        Assert.Equal(LiveUtteranceGateDecisionKind.AcceptNewRequest, result.Decision);
+        Assert.True(result.ShouldRouteToCommandRouter);
     }
 
     [Theory]
@@ -424,7 +622,21 @@ public sealed class LiveUtteranceGateTests
         bool assistantWasSpeaking = false,
         bool activeTurn = true,
         string? pendingCommand = null,
-        string source = "test")
+        string source = "test",
+        ActiveSurfaceSnapshot? activeSurface = null)
+    {
+        return EvaluateWithGate(_gate, text, state, assistantWasSpeaking, activeTurn, pendingCommand, source, activeSurface);
+    }
+
+    private static LiveUtteranceGateResult EvaluateWithGate(
+        LiveUtteranceGate gate,
+        string text,
+        LiveAssistantTurnState state,
+        bool assistantWasSpeaking = false,
+        bool activeTurn = true,
+        string? pendingCommand = null,
+        string source = "test",
+        ActiveSurfaceSnapshot? activeSurface = null)
     {
         var turn = activeTurn
             ? new LiveAssistantTurn
@@ -449,7 +661,7 @@ public sealed class LiveUtteranceGateTests
             Confidence = 0.9
         };
 
-        return _gate.Evaluate(new LiveUtteranceGateInput
+        return gate.Evaluate(new LiveUtteranceGateInput
         {
             Utterance = utterance,
             ActiveTurn = turn,
@@ -458,7 +670,8 @@ public sealed class LiveUtteranceGateTests
             IsIdleListening = !activeTurn || state is LiveAssistantTurnState.IdleListening,
             PendingCommandDescription = pendingCommand,
             SttConfidence = utterance.Confidence,
-            AudioSpeechConfidence = utterance.Confidence
+            AudioSpeechConfidence = utterance.Confidence,
+            ActiveSurface = activeSurface
         });
     }
 

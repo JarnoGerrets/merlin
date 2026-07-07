@@ -1,8 +1,14 @@
 using Merlin.Backend.Models;
 using Merlin.Backend.Configuration;
 using Merlin.Backend.Services.Acknowledgement;
+using Merlin.Backend.Services.BrowserWorkspace;
+using Merlin.Backend.Services.BrowserWorkspace.Motion;
+using Merlin.Backend.Services.BrowserWorkspace.Snapshot;
+using Merlin.Backend.Services.Context.ActiveSurface;
 using Merlin.Backend.Services.Feedback;
+using Merlin.Backend.Services.Motion;
 using Merlin.Backend.Services.Vision;
+using Merlin.Backend.Services.Web;
 using Merlin.Backend.Tools;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
@@ -28,6 +34,11 @@ public sealed class CommandRouter
     private readonly ILiveAssistantTurnService? _liveTurnService;
     private readonly UiControlModeController? _uiControlModeController;
     private readonly IVisionSidecarHost? _visionSidecarHost;
+    private readonly IBrowserWorkspaceService? _browserWorkspaceService;
+    private readonly BrowserMotionOverlayModeService? _browserMotionOverlayModeService;
+    private readonly IWebDestinationParser? _webDestinationParser;
+    private readonly IActiveSurfaceService? _activeSurfaceService;
+    private readonly IMotionControlModeService? _motionControlModeService;
 
     public CommandRouter(
         IIntentParser intentParser,
@@ -46,7 +57,12 @@ public sealed class CommandRouter
         IResponsiveFeedbackOrchestrator? responsiveFeedbackOrchestrator = null,
         IOptions<ResponsiveFeedbackOptions>? responsiveFeedbackOptions = null,
         UiControlModeController? uiControlModeController = null,
-        IVisionSidecarHost? visionSidecarHost = null)
+        IVisionSidecarHost? visionSidecarHost = null,
+        IBrowserWorkspaceService? browserWorkspaceService = null,
+        BrowserMotionOverlayModeService? browserMotionOverlayModeService = null,
+        IWebDestinationParser? webDestinationParser = null,
+        IActiveSurfaceService? activeSurfaceService = null,
+        IMotionControlModeService? motionControlModeService = null)
     {
         _acknowledgementPolicy = acknowledgementPolicy;
         _acknowledgementSpeechService = acknowledgementSpeechService;
@@ -65,6 +81,11 @@ public sealed class CommandRouter
         _liveTurnService = liveTurnService;
         _uiControlModeController = uiControlModeController;
         _visionSidecarHost = visionSidecarHost;
+        _browserWorkspaceService = browserWorkspaceService;
+        _browserMotionOverlayModeService = browserMotionOverlayModeService;
+        _webDestinationParser = webDestinationParser;
+        _activeSurfaceService = activeSurfaceService;
+        _motionControlModeService = motionControlModeService;
     }
 
     public async Task<AssistantResponse> RouteAsync(string message, CancellationToken cancellationToken = default)
@@ -81,6 +102,9 @@ public sealed class CommandRouter
         var captureId = request.CaptureId;
         var requestId = correlationId;
         var rawMessage = request.Message;
+        var activeSurface = request.ActiveSurface
+            ?? _activeSurfaceService?.Current
+            ?? KnownSurfaces.Dashboard(DateTimeOffset.UtcNow);
         var shouldNormalizeSpeech = ShouldNormalizeSpeech(request);
         var message = shouldNormalizeSpeech
             ? _speechCommandNormalizer.Normalize(rawMessage)
@@ -98,11 +122,15 @@ public sealed class CommandRouter
         }
 
         _logger.LogInformation(
-            "Command received. CaptureId: {CaptureId}. CorrelationId: {CorrelationId}. RequestCount: {RequestCount}. Command: {Command}",
+            "Command received. CaptureId: {CaptureId}. CorrelationId: {CorrelationId}. RequestCount: {RequestCount}. Command: {Command}. ActiveSurfaceKind: {ActiveSurfaceKind}. ActiveSurfaceId: {ActiveSurfaceId}. ActiveSurfaceSource: {ActiveSurfaceSource}. ActiveSurfaceConfidence: {ActiveSurfaceConfidence}.",
             captureId,
             correlationId,
             _runtimeStateService.TotalRequestsProcessed,
-            message);
+            message,
+            activeSurface.Kind,
+            activeSurface.SurfaceId,
+            activeSurface.Source,
+            activeSurface.Confidence);
         if (!string.IsNullOrWhiteSpace(captureId))
         {
             _logger.LogInformation(
@@ -176,28 +204,120 @@ public sealed class CommandRouter
             }, cancellationToken);
         }
 
+        var webDestinationCommand = _webDestinationParser?.TryParse(message, activeSurface);
+        if (webDestinationCommand is not null)
+        {
+            return await HandleWebDestinationCommandAsync(
+                webDestinationCommand,
+                rawMessage,
+                message,
+                activeSurface,
+                correlationId,
+                captureId,
+                cancellationToken);
+        }
+
         if (UiControlModeCommandMatcher.TryMatch(message, out var uiControlAction))
         {
             var uiControlIntentResult = UiControlModeCommandMatcher.ToIntentParseResult(uiControlAction, rawMessage);
             _runtimeStateService.RecordIntentParserUsed(nameof(UiControlModeCommandMatcher), uiControlIntentResult.Intent);
 
-            if (uiControlAction == UiControlModeCommandAction.Start)
+            if (uiControlAction == UiControlModeCommandAction.CalibratePinch)
             {
-                _logger.LogInformation("UiControlModeStartCommandDetected CorrelationId: {CorrelationId}. Command: {Command}", correlationId, message);
+                _logger.LogInformation("UiControlPinchCalibrationCommandDetected CorrelationId: {CorrelationId}. Command: {Command}", correlationId, message);
                 _uiControlModeController?.Start();
                 if (_visionSidecarHost is not null)
                 {
                     await _visionSidecarHost.StartTrackingAsync(cancellationToken);
                 }
+
+                var success = _visionSidecarHost is not null;
+                var spokenText = success
+                    ? "Starting pinch calibration. One beep means open hand. Two beeps means pinch. Three beeps means release."
+                    : "Vision sidecar is not available.";
+
+                return await PolishAsync(new AssistantResponse
+                {
+                    Success = success,
+                    Message = spokenText,
+                    SpokenText = spokenText,
+                    CorrelationId = correlationId,
+                    CaptureId = captureId,
+                    ToolName = "UI Control Mode",
+                    Intent = uiControlIntentResult.Intent,
+                    IntentConfidence = uiControlIntentResult.Confidence,
+                    OriginalMessage = uiControlIntentResult.OriginalMessage,
+                    ParserUsed = uiControlIntentResult.ParserUsed,
+                    CapabilityId = uiControlIntentResult.CapabilityId,
+                    CapabilityName = uiControlIntentResult.CapabilityName,
+                    ResponseType = "system"
+                }, cancellationToken);
+            }
+
+            if (uiControlAction == UiControlModeCommandAction.CalibrateMotionRegion)
+            {
+                _logger.LogInformation("VisionMotionRegionCalibrationCommandDetected CorrelationId: {CorrelationId}. Command: {Command}", correlationId, message);
+                _uiControlModeController?.Start();
+                if (_visionSidecarHost is not null)
+                {
+                    await _visionSidecarHost.StartTrackingAsync(cancellationToken);
+                }
+
+                var success = _visionSidecarHost is not null;
+                var spokenText = success
+                    ? "Starting motion region calibration. Move your hand to each corner when you hear the beeps: top left, top right, bottom right, then bottom left."
+                    : "Vision sidecar is not available.";
+
+                return await PolishAsync(new AssistantResponse
+                {
+                    Success = success,
+                    Message = spokenText,
+                    SpokenText = spokenText,
+                    CorrelationId = correlationId,
+                    CaptureId = captureId,
+                    ToolName = "Motion Region Calibration",
+                    Intent = uiControlIntentResult.Intent,
+                    IntentConfidence = uiControlIntentResult.Confidence,
+                    OriginalMessage = uiControlIntentResult.OriginalMessage,
+                    ParserUsed = uiControlIntentResult.ParserUsed,
+                    CapabilityId = "vision_motion_region_calibration",
+                    CapabilityName = "Motion Region Calibration",
+                    ResponseType = "system"
+                }, cancellationToken);
+            }
+
+            if (uiControlAction == UiControlModeCommandAction.Start)
+            {
+                _logger.LogInformation("UiControlModeStartCommandDetected CorrelationId: {CorrelationId}. Command: {Command}", correlationId, message);
+                if (_motionControlModeService is not null)
+                {
+                    await _motionControlModeService.EnableAsync("ui_control_command", cancellationToken: cancellationToken);
+                }
+                else
+                {
+                    _uiControlModeController?.Start();
+                    if (_visionSidecarHost is not null)
+                    {
+                        await _visionSidecarHost.StartTrackingAsync(cancellationToken);
+                    }
+                }
             }
             else
             {
                 _logger.LogInformation("UiControlModeStopCommandDetected CorrelationId: {CorrelationId}. Command: {Command}", correlationId, message);
-                if (_visionSidecarHost is not null)
+                if (_motionControlModeService is not null)
                 {
-                    await _visionSidecarHost.StopTrackingAsync(cancellationToken);
+                    await _motionControlModeService.DisableAsync("ui_control_command", cancellationToken);
                 }
-                _uiControlModeController?.Stop();
+                else
+                {
+                    if (_visionSidecarHost is not null)
+                    {
+                        await _visionSidecarHost.StopTrackingAsync(cancellationToken);
+                    }
+
+                    _uiControlModeController?.Stop();
+                }
             }
 
             return await PolishAsync(new AssistantResponse
@@ -705,6 +825,1149 @@ public sealed class CommandRouter
         string? pendingCommandDescription = null)
     {
         _liveTurnService?.UpdateTurnState(correlationId, state, pendingCommandDescription);
+    }
+
+    private async Task<AssistantResponse> HandleWebDestinationCommandAsync(
+        WebDestinationCommand command,
+        string rawMessage,
+        string normalizedMessage,
+        ActiveSurfaceSnapshot activeSurface,
+        string correlationId,
+        string? captureId,
+        CancellationToken cancellationToken)
+    {
+        var intent = command.Action switch
+        {
+            WebDestinationAction.CloseWorkspace => "browser_workspace_close",
+            WebDestinationAction.OpenWorkspace => "browser_workspace_open",
+            WebDestinationAction.Search => "browser_workspace_search",
+            WebDestinationAction.SearchCurrentPage => "browser_workspace_page_search",
+            WebDestinationAction.ClickVisibleElement => "browser_workspace_page_click",
+            WebDestinationAction.Back => "browser_workspace_back",
+            WebDestinationAction.Forward => "browser_workspace_forward",
+            WebDestinationAction.Refresh => "browser_workspace_refresh",
+            WebDestinationAction.Scroll => "browser_workspace_scroll",
+            WebDestinationAction.ScrollToTop => "browser_workspace_scroll_top",
+            WebDestinationAction.ScrollToBottom => "browser_workspace_scroll_bottom",
+            WebDestinationAction.ZoomIn => "browser_workspace_zoom_in",
+            WebDestinationAction.ZoomOut => "browser_workspace_zoom_out",
+            WebDestinationAction.ResetZoom => "browser_workspace_zoom_reset",
+            WebDestinationAction.InspectPage => "browser_workspace_page_snapshot",
+            WebDestinationAction.PageInfo => "browser_workspace_page_info",
+            WebDestinationAction.SummarizePage => "browser_workspace_page_summary",
+            WebDestinationAction.FindOnPage => "browser_workspace_page_find",
+            WebDestinationAction.CommonPageAction => "browser_workspace_common_action",
+            WebDestinationAction.EnableBrowserMotionOverlay => "browser_motion_overlay_start",
+            WebDestinationAction.DisableBrowserMotionOverlay => "browser_motion_overlay_stop",
+            _ => "browser_workspace_open_url"
+        };
+        _runtimeStateService.RecordIntentParserUsed(nameof(WebDestinationParser), intent);
+
+        if (_browserWorkspaceService is null)
+        {
+            _logger.LogWarning(
+                "WebDestinationCommandDetected CorrelationId: {CorrelationId}. Action: {Action}. Reason: {Reason}. Rejected: service_unavailable. Command: {Command}",
+                correlationId,
+                command.Action,
+                command.Reason,
+                normalizedMessage);
+
+            return await PolishAsync(new AssistantResponse
+            {
+                Success = false,
+                Message = "Browser is not available.",
+                SpokenText = "Browser is not available.",
+                CorrelationId = correlationId,
+                CaptureId = captureId,
+                ErrorCode = "BROWSER_WORKSPACE_UNAVAILABLE",
+                ToolName = "Merlin Browser Workspace",
+                Intent = "browser_workspace_unavailable",
+                IntentConfidence = 1,
+                OriginalMessage = rawMessage,
+                ParserUsed = nameof(WebDestinationParser),
+                CapabilityId = "browser_workspace",
+                CapabilityName = "Browser Workspace",
+                ResponseType = "error"
+            }, cancellationToken);
+        }
+
+        _logger.LogInformation(
+            "WebDestinationCommandDetected CorrelationId: {CorrelationId}. Action: {Action}. Url: {Url}. Reason: {Reason}. Command: {Command}. ActiveSurfaceKind: {ActiveSurfaceKind}. ActiveSurfaceId: {ActiveSurfaceId}. ActiveSurfaceSource: {ActiveSurfaceSource}. ActiveSurfaceConfidence: {ActiveSurfaceConfidence}.",
+            correlationId,
+            command.Action,
+            command.Url,
+            command.Reason,
+            normalizedMessage,
+            activeSurface.Kind,
+            activeSurface.SurfaceId,
+            activeSurface.Source,
+            activeSurface.Confidence);
+
+        try
+        {
+            string message;
+            switch (command.Action)
+            {
+                case WebDestinationAction.CloseWorkspace:
+                    _logger.LogInformation(
+                        "BrowserCommandDetected CorrelationId: {CorrelationId}. Action: {Action}.",
+                        correlationId,
+                        command.Action);
+                    _logger.LogInformation("BrowserWorkspaceCloseRequested CorrelationId: {CorrelationId}.", correlationId);
+                    await _browserWorkspaceService.CloseAsync(cancellationToken);
+                    message = "Closed.";
+                    break;
+
+                case WebDestinationAction.Back:
+                    if (!_browserWorkspaceService.IsActive)
+                    {
+                        return await BrowserNotOpenAsync(command, rawMessage, correlationId, captureId, cancellationToken);
+                    }
+
+                    _logger.LogInformation("BrowserBackCommandSent CorrelationId: {CorrelationId}.", correlationId);
+                    await _browserWorkspaceService.BackAsync(cancellationToken);
+                    message = "Back.";
+                    break;
+
+                case WebDestinationAction.Forward:
+                    if (!_browserWorkspaceService.IsActive)
+                    {
+                        return await BrowserNotOpenAsync(command, rawMessage, correlationId, captureId, cancellationToken);
+                    }
+
+                    _logger.LogInformation("BrowserForwardCommandSent CorrelationId: {CorrelationId}.", correlationId);
+                    await _browserWorkspaceService.ForwardAsync(cancellationToken);
+                    message = "Forward.";
+                    break;
+
+                case WebDestinationAction.Refresh:
+                    if (!_browserWorkspaceService.IsActive)
+                    {
+                        return await BrowserNotOpenAsync(command, rawMessage, correlationId, captureId, cancellationToken);
+                    }
+
+                    _logger.LogInformation("BrowserRefreshCommandSent CorrelationId: {CorrelationId}.", correlationId);
+                    await _browserWorkspaceService.RefreshAsync(cancellationToken);
+                    message = "Refreshed.";
+                    break;
+
+                case WebDestinationAction.Scroll:
+                    if (!_browserWorkspaceService.IsActive)
+                    {
+                        return await BrowserNotOpenAsync(command, rawMessage, correlationId, captureId, cancellationToken);
+                    }
+
+                    var direction = command.ScrollDirection
+                        ?? throw new InvalidOperationException("No scroll direction was resolved.");
+                    var amount = command.ScrollAmount
+                        ?? BrowserScrollAmount.Normal;
+                    _logger.LogInformation(
+                        "BrowserScrollCommandSent CorrelationId: {CorrelationId}. Direction: {Direction}. Amount: {Amount}.",
+                        correlationId,
+                        direction,
+                        amount);
+                    await _browserWorkspaceService.ScrollAsync(direction, amount, cancellationToken);
+                    message = "Scrolling.";
+                    break;
+
+                case WebDestinationAction.ScrollToTop:
+                    if (!_browserWorkspaceService.IsActive)
+                    {
+                        return await BrowserNotOpenAsync(command, rawMessage, correlationId, captureId, cancellationToken);
+                    }
+
+                    _logger.LogInformation("BrowserScrollCommandSent CorrelationId: {CorrelationId}. Direction: top.", correlationId);
+                    await _browserWorkspaceService.ScrollToTopAsync(cancellationToken);
+                    message = "Scrolling.";
+                    break;
+
+                case WebDestinationAction.ScrollToBottom:
+                    if (!_browserWorkspaceService.IsActive)
+                    {
+                        return await BrowserNotOpenAsync(command, rawMessage, correlationId, captureId, cancellationToken);
+                    }
+
+                    _logger.LogInformation("BrowserScrollCommandSent CorrelationId: {CorrelationId}. Direction: bottom.", correlationId);
+                    await _browserWorkspaceService.ScrollToBottomAsync(cancellationToken);
+                    message = "Scrolling.";
+                    break;
+
+                case WebDestinationAction.ZoomIn:
+                    if (!_browserWorkspaceService.IsActive)
+                    {
+                        return await BrowserNotOpenAsync(command, rawMessage, correlationId, captureId, cancellationToken);
+                    }
+
+                    _logger.LogInformation("BrowserZoomCommandSent CorrelationId: {CorrelationId}. Action: zoom_in.", correlationId);
+                    await _browserWorkspaceService.ZoomInAsync(cancellationToken);
+                    message = "Zooming in.";
+                    break;
+
+                case WebDestinationAction.ZoomOut:
+                    if (!_browserWorkspaceService.IsActive)
+                    {
+                        return await BrowserNotOpenAsync(command, rawMessage, correlationId, captureId, cancellationToken);
+                    }
+
+                    _logger.LogInformation("BrowserZoomCommandSent CorrelationId: {CorrelationId}. Action: zoom_out.", correlationId);
+                    await _browserWorkspaceService.ZoomOutAsync(cancellationToken);
+                    message = "Zooming out.";
+                    break;
+
+                case WebDestinationAction.ResetZoom:
+                    if (!_browserWorkspaceService.IsActive)
+                    {
+                        return await BrowserNotOpenAsync(command, rawMessage, correlationId, captureId, cancellationToken);
+                    }
+
+                    _logger.LogInformation("BrowserZoomCommandSent CorrelationId: {CorrelationId}. Action: reset_zoom.", correlationId);
+                    await _browserWorkspaceService.ResetZoomAsync(cancellationToken);
+                    message = "Reset zoom.";
+                    break;
+
+                case WebDestinationAction.Search:
+                    if (string.IsNullOrWhiteSpace(command.SearchQuery))
+                    {
+                        throw new InvalidOperationException("No search query was resolved.");
+                    }
+
+                    _logger.LogInformation(
+                        "BrowserSearchCommandDetected CorrelationId: {CorrelationId}. QueryLength: {QueryLength}.",
+                        correlationId,
+                        command.SearchQuery.Trim().Length);
+                    await _browserWorkspaceService.SearchAsync(command.SearchQuery, cancellationToken);
+                    message = "Searching.";
+                    break;
+
+                case WebDestinationAction.SearchCurrentPage:
+                    if (string.IsNullOrWhiteSpace(command.SearchQuery))
+                    {
+                        throw new InvalidOperationException("No page search query was resolved.");
+                    }
+
+                    _logger.LogInformation(
+                        "PageSearchCommandDetected CorrelationId: {CorrelationId}. QueryLength: {QueryLength}. HasSiteHint: {HasSiteHint}.",
+                        correlationId,
+                        command.SearchQuery.Trim().Length,
+                        !string.IsNullOrWhiteSpace(command.SiteHint));
+                    if (!string.IsNullOrWhiteSpace(command.Url))
+                    {
+                        _logger.LogInformation(
+                            "PageSearchSiteHintNavigateRequested CorrelationId: {CorrelationId}. SiteHint: {SiteHint}. Url: {Url}.",
+                            correlationId,
+                            command.SiteHint,
+                            command.Url);
+                        await _browserWorkspaceService.NavigateAsync(command.Url, cancellationToken);
+                        await Task.Delay(TimeSpan.FromMilliseconds(900), cancellationToken);
+                    }
+                    else if (!_browserWorkspaceService.IsActive)
+                    {
+                        return await BrowserNotOpenAsync(command, rawMessage, correlationId, captureId, cancellationToken);
+                    }
+
+                    var pageSearchResult = await _browserWorkspaceService.SearchCurrentPageAsync(
+                        command.SearchQuery,
+                        cancellationToken: cancellationToken);
+                    if (!pageSearchResult.Success)
+                    {
+                        var failureMessage = pageSearchResult.ErrorCode switch
+                        {
+                            "search_field_not_found" => "I could not find a search field on this page.",
+                            "unsafe_action_blocked" => "I can't handle password or payment fields.",
+                            "browser_inactive" => "The browser is not open.",
+                            _ => "I could not search this page."
+                        };
+
+                        return await PolishAsync(new AssistantResponse
+                        {
+                            Success = false,
+                            Message = failureMessage,
+                            SpokenText = failureMessage,
+                            CorrelationId = correlationId,
+                            CaptureId = captureId,
+                            ErrorCode = pageSearchResult.ErrorCode?.ToUpperInvariant() ?? "PAGE_SEARCH_FAILED",
+                            ToolName = "Merlin Browser Workspace",
+                            Intent = intent,
+                            IntentConfidence = 1,
+                            OriginalMessage = rawMessage,
+                            ParserUsed = nameof(WebDestinationParser),
+                            CapabilityId = "browser_workspace",
+                            CapabilityName = "Browser Workspace",
+                            ResponseType = "error"
+                        }, cancellationToken);
+                    }
+
+                    message = "Searching.";
+                    break;
+
+                case WebDestinationAction.ClickVisibleElement:
+                    _logger.LogInformation(
+                        "PageClickCommandDetected CorrelationId: {CorrelationId}. QueryLength: {QueryLength}. TargetKind: {TargetKind}. Ordinal: {Ordinal}.",
+                        correlationId,
+                        command.ClickQuery?.Trim().Length ?? 0,
+                        command.TargetKind,
+                        command.Ordinal);
+                    if (!_browserWorkspaceService.IsActive)
+                    {
+                        return await BrowserNotOpenAsync(command, rawMessage, correlationId, captureId, cancellationToken);
+                    }
+
+                    var clickResult = await _browserWorkspaceService.ClickVisibleElementAsync(
+                        command.ClickQuery,
+                        command.TargetKind,
+                        command.Ordinal,
+                        cancellationToken);
+                    if (!clickResult.Success)
+                    {
+                        var failureMessage = clickResult.ErrorCode switch
+                        {
+                            "element_not_found" => "I could not find that on the page.",
+                            "ambiguous_match" => $"I found multiple matches{(string.IsNullOrWhiteSpace(command.ClickQuery) ? "." : $" for {command.ClickQuery}.")}",
+                            "unsafe_action_requires_confirmation" => $"I need confirmation before clicking \"{(string.IsNullOrWhiteSpace(clickResult.ElementText) ? "that" : clickResult.ElementText)}\".",
+                            "unsafe_action_blocked" => "I can't do that automatically.",
+                            "confirmation_stale" => "That page changed, so I won't click it.",
+                            "browser_inactive" => "The browser is not open.",
+                            _ => "I could not click that."
+                        };
+
+                        return await PolishAsync(new AssistantResponse
+                        {
+                            Success = false,
+                            Message = failureMessage,
+                            SpokenText = failureMessage,
+                            CorrelationId = correlationId,
+                            CaptureId = captureId,
+                            ErrorCode = clickResult.ErrorCode?.ToUpperInvariant() ?? "PAGE_CLICK_FAILED",
+                            ToolName = "Merlin Browser Workspace",
+                            Intent = intent,
+                            IntentConfidence = 1,
+                            OriginalMessage = rawMessage,
+                            ParserUsed = nameof(WebDestinationParser),
+                            CapabilityId = "browser_workspace",
+                            CapabilityName = "Browser Workspace",
+                            ResponseType = string.Equals(clickResult.ErrorCode, "unsafe_action_requires_confirmation", StringComparison.OrdinalIgnoreCase)
+                                ? "confirmation"
+                                : "error",
+                            Confirmation = clickResult.Confirmation
+                        }, cancellationToken);
+                    }
+
+                    message = string.Equals(command.TargetKind, "result", StringComparison.OrdinalIgnoreCase)
+                        || command.Ordinal is not null
+                        || !string.IsNullOrWhiteSpace(clickResult.ElementHref)
+                            ? "Opening."
+                            : "Clicked.";
+                    break;
+
+                case WebDestinationAction.InspectPage:
+                    if (!_browserWorkspaceService.IsActive)
+                    {
+                        return await BrowserNotOpenAsync(command, rawMessage, correlationId, captureId, cancellationToken);
+                    }
+
+                    var snapshot = await _browserWorkspaceService.GetSnapshotAsync(cancellationToken);
+                    if (snapshot is null)
+                    {
+                        throw new InvalidOperationException("No page snapshot was returned.");
+                    }
+
+                    message = string.IsNullOrWhiteSpace(snapshot.Error)
+                        ? FormatPageSnapshotSummary(snapshot)
+                        : "I could not inspect the page.";
+                    break;
+
+                case WebDestinationAction.PageInfo:
+                    if (!_browserWorkspaceService.IsActive)
+                    {
+                        return await BrowserNotOpenAsync(command, rawMessage, correlationId, captureId, cancellationToken);
+                    }
+
+                    var pageInfoSnapshot = await _browserWorkspaceService.GetSnapshotAsync(cancellationToken);
+                    if (pageInfoSnapshot is null)
+                    {
+                        throw new InvalidOperationException("No page snapshot was returned.");
+                    }
+
+                    message = string.IsNullOrWhiteSpace(pageInfoSnapshot.Error)
+                        ? FormatPageInfo(pageInfoSnapshot)
+                        : "I could not inspect the page.";
+                    break;
+
+                case WebDestinationAction.SummarizePage:
+                    if (!_browserWorkspaceService.IsActive)
+                    {
+                        return await BrowserNotOpenAsync(command, rawMessage, correlationId, captureId, cancellationToken);
+                    }
+
+                    var summarySnapshot = await _browserWorkspaceService.GetSnapshotAsync(cancellationToken);
+                    if (summarySnapshot is null)
+                    {
+                        throw new InvalidOperationException("No page snapshot was returned.");
+                    }
+
+                    message = string.IsNullOrWhiteSpace(summarySnapshot.Error)
+                        ? FormatPageReadout(summarySnapshot)
+                        : "I could not inspect the page.";
+                    break;
+
+                case WebDestinationAction.FindOnPage:
+                    if (string.IsNullOrWhiteSpace(command.SearchQuery))
+                    {
+                        throw new InvalidOperationException("No page find query was resolved.");
+                    }
+
+                    if (!_browserWorkspaceService.IsActive)
+                    {
+                        return await BrowserNotOpenAsync(command, rawMessage, correlationId, captureId, cancellationToken);
+                    }
+
+                    var findSnapshot = await _browserWorkspaceService.GetSnapshotAsync(cancellationToken);
+                    if (findSnapshot is null)
+                    {
+                        throw new InvalidOperationException("No page snapshot was returned.");
+                    }
+
+                    message = string.IsNullOrWhiteSpace(findSnapshot.Error)
+                        ? FormatPageFindResult(findSnapshot, command.SearchQuery)
+                        : "I could not inspect the page.";
+                    break;
+
+                case WebDestinationAction.CommonPageAction:
+                    if (!_browserWorkspaceService.IsActive)
+                    {
+                        return await BrowserNotOpenAsync(command, rawMessage, correlationId, captureId, cancellationToken);
+                    }
+
+                    if (string.IsNullOrWhiteSpace(command.CommonAction))
+                    {
+                        throw new InvalidOperationException("No browser common action was resolved.");
+                    }
+
+                    _logger.LogInformation(
+                        "BrowserCommonActionDetected CorrelationId: {CorrelationId}. Action: {Action}.",
+                        correlationId,
+                        command.CommonAction);
+                    var commonResult = await _browserWorkspaceService.PerformCommonActionAsync(
+                        command.CommonAction,
+                        cancellationToken);
+                    if (!commonResult.Success)
+                    {
+                        var failureMessage = commonResult.ErrorCode switch
+                        {
+                            "skip_button_not_found" => "I don't see a skip button.",
+                            "common_action_not_found" => "I could not find that on the page.",
+                            "ambiguous_match" => "I found multiple matches.",
+                            "unsafe_action_blocked" => "I can't do that automatically.",
+                            "unsafe_action_requires_confirmation" => "I can't do that automatically.",
+                            _ => "I could not do that."
+                        };
+
+                        return await PolishAsync(new AssistantResponse
+                        {
+                            Success = false,
+                            Message = failureMessage,
+                            SpokenText = failureMessage,
+                            CorrelationId = correlationId,
+                            CaptureId = captureId,
+                            ErrorCode = commonResult.ErrorCode?.ToUpperInvariant() ?? "BROWSER_COMMON_ACTION_FAILED",
+                            ToolName = "Merlin Browser Workspace",
+                            Intent = intent,
+                            IntentConfidence = 1,
+                            OriginalMessage = rawMessage,
+                            ParserUsed = nameof(WebDestinationParser),
+                            CapabilityId = "browser_workspace",
+                            CapabilityName = "Browser Workspace",
+                            ResponseType = "error"
+                        }, cancellationToken);
+                    }
+
+                    message = command.CommonAction switch
+                    {
+                        "skip_ad" => "Skipped.",
+                        "play_video" => "Playing.",
+                        "pause_video" => "Paused.",
+                        "mute_video" => "Muted.",
+                        "unmute_video" => "Unmuted.",
+                        "fullscreen" => "Fullscreen.",
+                        "exit_fullscreen" => "Exited fullscreen.",
+                        _ => "Clicked."
+                    };
+                    break;
+
+                case WebDestinationAction.EnableBrowserMotionOverlay:
+                    if (_motionControlModeService is not null)
+                    {
+                        if (_browserWorkspaceService is null || !_browserWorkspaceService.IsActive)
+                        {
+                            return await BrowserNotOpenAsync(command, rawMessage, correlationId, captureId, cancellationToken);
+                        }
+
+                        var bounds = _browserWorkspaceService.CurrentBounds;
+                        if (bounds is null || bounds.IsMinimized || bounds.Width <= 0 || bounds.Height <= 0)
+                        {
+                            return await PolishAsync(new AssistantResponse
+                            {
+                                Success = false,
+                                Message = "The browser is not available.",
+                                SpokenText = "The browser is not available.",
+                                CorrelationId = correlationId,
+                                CaptureId = captureId,
+                                ErrorCode = "BROWSER_UNAVAILABLE",
+                                ToolName = "Merlin Browser Workspace",
+                                Intent = intent,
+                                IntentConfidence = 1,
+                                OriginalMessage = rawMessage,
+                                ParserUsed = nameof(WebDestinationParser),
+                                CapabilityId = "browser_workspace",
+                                CapabilityName = "Browser Workspace",
+                                ResponseType = "error"
+                            }, cancellationToken);
+                        }
+
+                        var profileOverride = new MotionControlProfileOverride(
+                            MotionControlProfileId.BrowserWorkspace,
+                            "browser_pointer_command");
+                        await _motionControlModeService.EnableAsync(
+                            "browser_pointer_command",
+                            profileOverride,
+                            cancellationToken);
+
+                        message = "Browser pointer started.";
+                        break;
+                    }
+
+                    if (_browserMotionOverlayModeService is null)
+                    {
+                        return await PolishAsync(new AssistantResponse
+                        {
+                            Success = false,
+                            Message = "Browser pointer is not available.",
+                            SpokenText = "Browser pointer is not available.",
+                            CorrelationId = correlationId,
+                            CaptureId = captureId,
+                            ErrorCode = "BROWSER_POINTER_UNAVAILABLE",
+                            ToolName = "Merlin Browser Workspace",
+                            Intent = intent,
+                            IntentConfidence = 1,
+                            OriginalMessage = rawMessage,
+                            ParserUsed = nameof(WebDestinationParser),
+                            CapabilityId = "browser_workspace",
+                            CapabilityName = "Browser Workspace",
+                            ResponseType = "error"
+                        }, cancellationToken);
+                    }
+
+                    var startResult = await _browserMotionOverlayModeService.EnableAsync(cancellationToken);
+                    if (startResult is BrowserMotionOverlayStartResult.BrowserNotOpen)
+                    {
+                        return await BrowserNotOpenAsync(command, rawMessage, correlationId, captureId, cancellationToken);
+                    }
+
+                    if (startResult is BrowserMotionOverlayStartResult.BrowserUnavailable)
+                    {
+                        return await PolishAsync(new AssistantResponse
+                        {
+                            Success = false,
+                            Message = "The browser is not available.",
+                            SpokenText = "The browser is not available.",
+                            CorrelationId = correlationId,
+                            CaptureId = captureId,
+                            ErrorCode = "BROWSER_UNAVAILABLE",
+                            ToolName = "Merlin Browser Workspace",
+                            Intent = intent,
+                            IntentConfidence = 1,
+                            OriginalMessage = rawMessage,
+                            ParserUsed = nameof(WebDestinationParser),
+                            CapabilityId = "browser_workspace",
+                            CapabilityName = "Browser Workspace",
+                            ResponseType = "error"
+                        }, cancellationToken);
+                    }
+
+                    if (_visionSidecarHost is not null)
+                    {
+                        await _visionSidecarHost.StartTrackingAsync(cancellationToken);
+                    }
+
+                    message = "Browser pointer started.";
+                    break;
+
+                case WebDestinationAction.DisableBrowserMotionOverlay:
+                    if (_motionControlModeService is not null)
+                    {
+                        if (string.Equals(
+                            _motionControlModeService.Current.ActiveProfileId,
+                            MotionControlProfileId.BrowserWorkspace,
+                            StringComparison.OrdinalIgnoreCase))
+                        {
+                            await _motionControlModeService.DisableAsync("browser_pointer_command", cancellationToken);
+                        }
+
+                        message = "Browser pointer stopped.";
+                        break;
+                    }
+
+                    if (_browserMotionOverlayModeService is not null)
+                    {
+                        await _browserMotionOverlayModeService.DisableAsync("voice_command", cancellationToken);
+                    }
+
+                    if (_visionSidecarHost is not null && _uiControlModeController?.IsActive != true)
+                    {
+                        await _visionSidecarHost.StopTrackingAsync(cancellationToken);
+                    }
+
+                    message = "Browser pointer stopped.";
+                    break;
+
+                case WebDestinationAction.Navigate:
+                    if (string.IsNullOrWhiteSpace(command.Url))
+                    {
+                        throw new InvalidOperationException("No URL was resolved for browser navigation.");
+                    }
+
+                    _logger.LogInformation(
+                        "WebDestinationResolved CorrelationId: {CorrelationId}. Url: {Url}. Reason: {Reason}.",
+                        correlationId,
+                        command.Url,
+                        command.Reason);
+                    _logger.LogInformation(
+                        "BrowserWorkspaceAutoOpenRequested CorrelationId: {CorrelationId}. Url: {Url}.",
+                        correlationId,
+                        command.Url);
+                    await _browserWorkspaceService.NavigateAsync(command.Url, cancellationToken);
+                    message = "Opening.";
+                    break;
+
+                default:
+                    _logger.LogInformation("BrowserWorkspaceGenericOpenRequested CorrelationId: {CorrelationId}.", correlationId);
+                    await _browserWorkspaceService.OpenAsync(null, cancellationToken);
+                    message = "Opening browser.";
+                    break;
+            }
+
+            return await PolishAsync(new AssistantResponse
+            {
+                Success = true,
+                Message = message,
+                SpokenText = message,
+                CorrelationId = correlationId,
+                CaptureId = captureId,
+                ToolName = "Merlin Browser Workspace",
+                Intent = intent,
+                IntentConfidence = 1,
+                OriginalMessage = rawMessage,
+                ParserUsed = nameof(WebDestinationParser),
+                CapabilityId = "browser_workspace",
+                CapabilityName = "Browser Workspace",
+                ResponseType = "system"
+            }, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                exception,
+                "BrowserWorkspaceCommandFailed CorrelationId: {CorrelationId}. Action: {Action}. Url: {Url}.",
+                correlationId,
+                command.Action,
+                command.Url);
+
+            return await PolishAsync(new AssistantResponse
+            {
+                Success = false,
+                Message = $"Browser failed: {exception.Message}",
+                SpokenText = "Browser failed.",
+                CorrelationId = correlationId,
+                CaptureId = captureId,
+                ErrorCode = "BROWSER_WORKSPACE_FAILED",
+                ToolName = "Merlin Browser Workspace",
+                Intent = "browser_workspace_failed",
+                IntentConfidence = 1,
+                OriginalMessage = rawMessage,
+                ParserUsed = nameof(WebDestinationParser),
+                CapabilityId = "browser_workspace",
+                CapabilityName = "Browser Workspace",
+                ResponseType = "error"
+            }, cancellationToken);
+        }
+    }
+
+    private static string FormatPageSnapshotSummary(BrowserPageSnapshot snapshot)
+    {
+        static string Count(int count, string singular, string plural) =>
+            $"{count} {(count == 1 ? singular : plural)}";
+
+        return $"I can see {Count(snapshot.SearchFields.Count, "search field", "search fields")}, {Count(snapshot.Buttons.Count, "button", "buttons")}, {Count(snapshot.Links.Count, "link", "links")}, and {Count(snapshot.Headings.Count, "heading", "headings")}.";
+    }
+
+    private static string FormatPageInfo(BrowserPageSnapshot snapshot)
+    {
+        var title = CleanPageText(snapshot.Title);
+        var host = TryGetHost(snapshot.Url);
+        if (!string.IsNullOrWhiteSpace(title) && !string.IsNullOrWhiteSpace(host))
+        {
+            return $"You are on {title} at {host}.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(title))
+        {
+            return $"You are on {title}.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(host))
+        {
+            return $"You are on {host}.";
+        }
+
+        return "I can see the browser page, but it does not expose a title or URL.";
+    }
+
+    private static string FormatPageReadout(BrowserPageSnapshot snapshot)
+    {
+        var title = CleanPageText(snapshot.Title);
+        var heading = FirstText(snapshot.Headings);
+        var textBlocks = snapshot.TextBlocks
+            .Select(static element => CleanPageText(element.Text))
+            .Where(static text => !string.IsNullOrWhiteSpace(text))
+            .Take(3)
+            .ToArray();
+        var results = snapshot.Results
+            .Select(static element => CleanPageText(element.Text))
+            .Where(static text => !string.IsNullOrWhiteSpace(text))
+            .Take(3)
+            .ToArray();
+
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(title))
+        {
+            parts.Add($"Page: {title}.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(heading)
+            && !string.Equals(heading, title, StringComparison.OrdinalIgnoreCase))
+        {
+            parts.Add($"Main heading: {heading}.");
+        }
+
+        if (textBlocks.Length > 0)
+        {
+            parts.Add("Visible text: " + string.Join(" ", textBlocks) + ".");
+        }
+        else if (results.Length > 0)
+        {
+            parts.Add("Top visible results: " + string.Join("; ", results) + ".");
+        }
+
+        if (parts.Count == 0)
+        {
+            return FormatPageSnapshotSummary(snapshot);
+        }
+
+        return LimitSentence(string.Join(" ", parts), 900);
+    }
+
+    private static string FormatPageFindResult(BrowserPageSnapshot snapshot, string query)
+    {
+        var normalizedQuery = NormalizePageText(query);
+        if (string.IsNullOrWhiteSpace(normalizedQuery))
+        {
+            return "I need something to find on the page.";
+        }
+
+        var matches = EnumerateReadableSnapshotElements(snapshot)
+            .Select(element => new
+            {
+                Text = CleanPageText(GetReadableElementText(element)),
+                Element = element
+            })
+            .Where(item => !string.IsNullOrWhiteSpace(item.Text))
+            .Where(item => NormalizePageText(item.Text).Contains(normalizedQuery, StringComparison.Ordinal))
+            .Take(5)
+            .ToArray();
+
+        if (matches.Length == 0)
+        {
+            return $"I do not see \"{CleanPageText(query)}\" on this page.";
+        }
+
+        var labels = matches
+            .Select(static item => item.Text!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(3)
+            .ToArray();
+
+        return $"I found {matches.Length} {(matches.Length == 1 ? "match" : "matches")}: {string.Join("; ", labels)}.";
+    }
+
+    private static IEnumerable<BrowserSnapshotElement> EnumerateReadableSnapshotElements(BrowserPageSnapshot snapshot)
+    {
+        foreach (var element in snapshot.Headings) yield return element;
+        foreach (var element in snapshot.Results) yield return element;
+        foreach (var element in snapshot.Links) yield return element;
+        foreach (var element in snapshot.Buttons) yield return element;
+        foreach (var element in snapshot.TextBlocks) yield return element;
+    }
+
+    private static string? GetReadableElementText(BrowserSnapshotElement element) =>
+        element.Text
+        ?? element.Label
+        ?? element.AriaLabel
+        ?? element.Title
+        ?? element.DataTitleNoTooltip
+        ?? element.DataTooltipTitle
+        ?? element.Placeholder;
+
+    private static string? FirstText(IEnumerable<BrowserSnapshotElement> elements) =>
+        elements
+            .Select(static element => CleanPageText(GetReadableElementText(element)))
+            .FirstOrDefault(static text => !string.IsNullOrWhiteSpace(text));
+
+    private static string? TryGetHost(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)
+            || !Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            || string.IsNullOrWhiteSpace(uri.Host))
+        {
+            return null;
+        }
+
+        return uri.Host.StartsWith("www.", StringComparison.OrdinalIgnoreCase)
+            ? uri.Host[4..]
+            : uri.Host;
+    }
+
+    private static string CleanPageText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var cleaned = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+        return LimitSentence(cleaned, 240);
+    }
+
+    private static string NormalizePageText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var normalized = System.Text.RegularExpressions.Regex.Replace(text.ToLowerInvariant(), @"[^\p{L}\p{Nd}]+", " ");
+        return System.Text.RegularExpressions.Regex.Replace(normalized, @"\s+", " ").Trim();
+    }
+
+    private static string LimitSentence(string text, int maxLength)
+    {
+        if (text.Length <= maxLength)
+        {
+            return text;
+        }
+
+        return string.Concat(text.AsSpan(0, Math.Max(0, maxLength - 3)), "...");
+    }
+
+    private async Task<AssistantResponse> BrowserNotOpenAsync(
+        WebDestinationCommand command,
+        string rawMessage,
+        string correlationId,
+        string? captureId,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation(
+            "BrowserCommandRejectedBrowserNotOpen CorrelationId: {CorrelationId}. Action: {Action}.",
+            correlationId,
+            command.Action);
+
+        return await PolishAsync(new AssistantResponse
+        {
+            Success = false,
+            Message = "The browser is not open.",
+            SpokenText = "The browser is not open.",
+            CorrelationId = correlationId,
+            CaptureId = captureId,
+            ErrorCode = "BROWSER_WORKSPACE_NOT_OPEN",
+            ToolName = "Merlin Browser Workspace",
+            Intent = "browser_workspace_not_open",
+            IntentConfidence = 1,
+            OriginalMessage = rawMessage,
+            ParserUsed = nameof(WebDestinationParser),
+            CapabilityId = "browser_workspace",
+            CapabilityName = "Browser Workspace",
+            ResponseType = "error"
+        }, cancellationToken);
+    }
+
+    private async Task<AssistantResponse> HandleBrowserWorkspaceCommandAsync(
+        BrowserWorkspaceAction action,
+        string? url,
+        string rawMessage,
+        string normalizedMessage,
+        string correlationId,
+        string? captureId,
+        CancellationToken cancellationToken)
+    {
+        _runtimeStateService.RecordIntentParserUsed(
+            nameof(BrowserWorkspaceCommandMatcher),
+            action == BrowserWorkspaceAction.Close
+                ? "browser_workspace_close"
+                : url is null ? "browser_workspace_open" : "browser_workspace_open_url");
+
+        if (_browserWorkspaceService is null)
+        {
+            _logger.LogWarning(
+                "BrowserWorkspaceCommandRejected CorrelationId: {CorrelationId}. Reason: service_unavailable. Command: {Command}",
+                correlationId,
+                normalizedMessage);
+
+            return await PolishAsync(new AssistantResponse
+            {
+                Success = false,
+                Message = "Browser is not available.",
+                SpokenText = "Browser is not available.",
+                CorrelationId = correlationId,
+                CaptureId = captureId,
+                ErrorCode = "BROWSER_WORKSPACE_UNAVAILABLE",
+                ToolName = "Merlin Browser Workspace",
+                Intent = "browser_workspace_unavailable",
+                OriginalMessage = rawMessage,
+                ParserUsed = nameof(BrowserWorkspaceCommandMatcher),
+                CapabilityId = "browser_workspace",
+                CapabilityName = "Browser Workspace",
+                ResponseType = "error"
+            }, cancellationToken);
+        }
+
+        try
+        {
+            if (action == BrowserWorkspaceAction.Close)
+            {
+                _logger.LogInformation(
+                    "BrowserWorkspaceCloseCommandDetected CorrelationId: {CorrelationId}. Command: {Command}",
+                    correlationId,
+                    normalizedMessage);
+                await _browserWorkspaceService.CloseAsync(cancellationToken);
+
+                return await PolishAsync(new AssistantResponse
+                {
+                    Success = true,
+                    Message = "Closing browser.",
+                    SpokenText = "Closing browser.",
+                    CorrelationId = correlationId,
+                    CaptureId = captureId,
+                    ToolName = "Merlin Browser Workspace",
+                    Intent = "browser_workspace_close",
+                    IntentConfidence = 1,
+                    OriginalMessage = rawMessage,
+                    ParserUsed = nameof(BrowserWorkspaceCommandMatcher),
+                    CapabilityId = "browser_workspace",
+                    CapabilityName = "Browser Workspace",
+                    ResponseType = "system"
+                }, cancellationToken);
+            }
+
+            _logger.LogInformation(
+                "BrowserWorkspaceOpenCommandDetected CorrelationId: {CorrelationId}. Url: {Url}. Command: {Command}",
+                correlationId,
+                url,
+                normalizedMessage);
+            await _browserWorkspaceService.OpenAsync(url, cancellationToken);
+
+            var message = url is null
+                ? "Opening browser."
+                : $"Opening {url}.";
+
+            return await PolishAsync(new AssistantResponse
+            {
+                Success = true,
+                Message = message,
+                SpokenText = message,
+                CorrelationId = correlationId,
+                CaptureId = captureId,
+                ToolName = "Merlin Browser Workspace",
+                Intent = url is null ? "browser_workspace_open" : "browser_workspace_open_url",
+                IntentConfidence = 1,
+                OriginalMessage = rawMessage,
+                ParserUsed = nameof(BrowserWorkspaceCommandMatcher),
+                CapabilityId = "browser_workspace",
+                CapabilityName = "Browser Workspace",
+                ResponseType = "system"
+            }, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                exception,
+                "BrowserWorkspaceCommandFailed CorrelationId: {CorrelationId}. Action: {Action}. Url: {Url}.",
+                correlationId,
+                action,
+                url);
+
+            return await PolishAsync(new AssistantResponse
+            {
+                Success = false,
+                Message = $"Browser failed: {exception.Message}",
+                SpokenText = "Browser failed.",
+                CorrelationId = correlationId,
+                CaptureId = captureId,
+                ErrorCode = "BROWSER_WORKSPACE_FAILED",
+                ToolName = "Merlin Browser Workspace",
+                Intent = "browser_workspace_failed",
+                IntentConfidence = 1,
+                OriginalMessage = rawMessage,
+                ParserUsed = nameof(BrowserWorkspaceCommandMatcher),
+                CapabilityId = "browser_workspace",
+                CapabilityName = "Browser Workspace",
+                ResponseType = "error"
+            }, cancellationToken);
+        }
+    }
+
+    private static bool TryMatchBrowserWorkspaceCommand(
+        string message,
+        out BrowserWorkspaceAction action,
+        out string? url)
+    {
+        return BrowserWorkspaceCommandMatcher.TryMatch(message, out action, out url);
+    }
+
+    private enum BrowserWorkspaceAction
+    {
+        Open,
+        Close
+    }
+
+    private static class BrowserWorkspaceCommandMatcher
+    {
+        private static readonly string[] OpenCommands =
+        [
+            "open browser workspace",
+            "open the browser workspace",
+            "open your browser",
+            "use your browser",
+            "start browser workspace",
+            "show browser workspace"
+        ];
+
+        private static readonly string[] CloseCommands =
+        [
+            "close browser",
+            "close browser workspace",
+            "close the browser workspace",
+            "close your browser",
+            "stop browser workspace",
+            "hide browser workspace"
+        ];
+
+        private static readonly string[] InsideSuffixes =
+        [
+            " inside you",
+            " inside merlin",
+            " in merlin"
+        ];
+
+        private static readonly string[] UrlPrefixes =
+        [
+            "go to ",
+            "open ",
+            "browse ",
+            "visit ",
+            "pull up "
+        ];
+
+        public static bool TryMatch(
+            string message,
+            out BrowserWorkspaceAction action,
+            out string? url)
+        {
+            action = BrowserWorkspaceAction.Open;
+            url = null;
+
+            var command = Clean(message);
+            if (string.IsNullOrWhiteSpace(command))
+            {
+                return false;
+            }
+
+            if (OpenCommands.Any(openCommand => string.Equals(command, openCommand, StringComparison.OrdinalIgnoreCase)))
+            {
+                action = BrowserWorkspaceAction.Open;
+                return true;
+            }
+
+            if (CloseCommands.Any(closeCommand => string.Equals(command, closeCommand, StringComparison.OrdinalIgnoreCase)))
+            {
+                action = BrowserWorkspaceAction.Close;
+                return true;
+            }
+
+            foreach (var suffix in InsideSuffixes)
+            {
+                if (!command.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var withoutSuffix = command[..^suffix.Length].Trim();
+                foreach (var prefix in UrlPrefixes)
+                {
+                    if (!withoutSuffix.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    var target = withoutSuffix[prefix.Length..].Trim();
+                    if (string.Equals(target, "this", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(target, "that", StringComparison.OrdinalIgnoreCase))
+                    {
+                        action = BrowserWorkspaceAction.Open;
+                        url = null;
+                        return true;
+                    }
+
+                    var normalizationResult = OpenUrlTool.NormalizeUrl(target);
+                    if (!normalizationResult.Success)
+                    {
+                        return false;
+                    }
+
+                    action = BrowserWorkspaceAction.Open;
+                    url = normalizationResult.Url;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static string Clean(string message)
+        {
+            var cleaned = (message ?? string.Empty)
+                .Trim()
+                .TrimEnd('.', '!', '?', ';', ':', ',');
+
+            if (cleaned.StartsWith("merlin ", StringComparison.OrdinalIgnoreCase))
+            {
+                cleaned = cleaned["merlin ".Length..].Trim();
+            }
+
+            foreach (var prefix in new[] { "please ", "can you ", "could you " })
+            {
+                if (cleaned.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    cleaned = cleaned[prefix.Length..].Trim();
+                    break;
+                }
+            }
+
+            if (cleaned.EndsWith(" please", StringComparison.OrdinalIgnoreCase))
+            {
+                cleaned = cleaned[..^" please".Length].Trim();
+            }
+
+            return cleaned;
+        }
     }
 
     private static bool ShouldUsePendingCommandGate(ITool tool, IntentParseResult intentResult)

@@ -8,6 +8,7 @@ var _viewport_container: SubViewportContainer
 var _viewport: SubViewport
 var _organism: Node
 var _temporary_state_token := 0
+var _mini_visual_profile_enabled := false
 var visual_state := {
 	"mode": "idle",
 	"energy": 0.0,
@@ -97,6 +98,12 @@ func set_speech_energy_override(value: float) -> void:
 	update_visual_state({ "speech_energy": clampf(value, 0.0, 1.0) })
 	if _organism != null:
 		_organism.call("set_speech_energy_override", value)
+
+
+func set_mini_visual_profile(enabled: bool) -> void:
+	_mini_visual_profile_enabled = enabled
+	if _organism != null and _organism.has_method("set_mini_visual_profile"):
+		_organism.call("set_mini_visual_profile", enabled)
 
 
 func update_visual_state(patch: Dictionary) -> void:
@@ -278,6 +285,8 @@ func _build_viewport() -> void:
 		return
 	_organism.name = "MerlinOrganism3D"
 	_viewport.add_child(_organism)
+	if _mini_visual_profile_enabled and _organism.has_method("set_mini_visual_profile"):
+		_organism.call("set_mini_visual_profile", true)
 
 
 func _sync_viewport_size() -> void:

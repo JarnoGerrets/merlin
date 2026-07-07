@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Merlin.Backend.Configuration;
 using Merlin.Backend.Models;
+using Merlin.Backend.Services.Context.ActiveSurface;
 using Merlin.Backend.Services.InterruptionIntelligence;
 using Merlin.Backend.Services.LiveUtterance;
 using Merlin.Backend.Services.SpeechPresence;
@@ -42,6 +43,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
     private readonly ISpeechPresenceDetector? _speechPresenceDetector;
     private readonly ISpeechPresenceDecisionLogSink? _speechPresenceDecisionLogSink;
     private readonly IFloorYieldController? _floorYieldController;
+    private readonly IActiveSurfaceService? _activeSurfaceService;
     private readonly MerlinAwakeStateService _merlinAwakeState;
     private readonly object _syncRoot = new();
     private long _analysisFrameSequence;
@@ -98,7 +100,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         IFloorYieldController? floorYieldController = null,
         ILiveInterruptionIntegrationService? liveInterruptionIntegrationService = null,
         IActiveSpokenTurnResolver? activeSpokenTurnResolver = null,
-        AssistantUiStateBroadcaster? assistantUiStateBroadcaster = null)
+        AssistantUiStateBroadcaster? assistantUiStateBroadcaster = null,
+        IActiveSurfaceService? activeSurfaceService = null)
     {
         _playbackReferenceTap = playbackReferenceTap;
         _assistantPlaybackMonitor = assistantPlaybackMonitor;
@@ -125,6 +128,7 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
         _speechPresenceDetector = speechPresenceDetector;
         _speechPresenceDecisionLogSink = speechPresenceDecisionLogSink;
         _floorYieldController = floorYieldController;
+        _activeSurfaceService = activeSurfaceService;
         _activeSpokenTurnResolver = activeSpokenTurnResolver;
 
         _playbackReferenceTap.SpeechStarted += OnSpeechStarted;
@@ -3550,7 +3554,8 @@ public sealed class BargeInCoordinator : IBargeInCoordinator, IAsyncDisposable
             IsIdleListening = activeTurn is null && utterance.StateWhenCaptured is LiveAssistantTurnState.IdleListening,
             PendingCommandDescription = activeTurn?.PendingCommandDescription,
             SttConfidence = utterance.Confidence,
-            AudioSpeechConfidence = vadConfidence
+            AudioSpeechConfidence = vadConfidence,
+            ActiveSurface = _activeSurfaceService?.Current
         };
     }
 

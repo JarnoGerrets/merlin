@@ -23,7 +23,7 @@ func apply_chatlog_defaults() -> void:
 	default_size = Vector2(420.0, 720.0)
 	min_size = Vector2(280.0, 220.0)
 	max_size = Vector2(900.0, 1100.0)
-	default_position = Vector2(24.0, 76.0)
+	default_position = Vector2.ZERO
 	layer_group = MerlinWindowConstantsScript.LAYER_GROUP_NORMAL_WINDOWS
 	capabilities.can_move = true
 	capabilities.can_resize = true

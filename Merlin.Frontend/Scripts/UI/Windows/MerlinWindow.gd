@@ -199,8 +199,8 @@ func clamp_to_viewport() -> void:
 		return
 	var viewport_size := viewport.get_visible_rect().size
 	var max_position := Vector2(
-		maxf(0.0, viewport_size.x - 80.0),
-		maxf(0.0, viewport_size.y - 60.0)
+		maxf(0.0, viewport_size.x - size.x),
+		maxf(0.0, viewport_size.y - size.y)
 	)
 	position = Vector2(
 		clampf(position.x, 0.0, max_position.x),

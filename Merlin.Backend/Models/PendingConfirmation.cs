@@ -1,3 +1,5 @@
+using Merlin.Backend.Services.BrowserWorkspace.PageControl.Safety;
+
 namespace Merlin.Backend.Models;
 
 public sealed class PendingConfirmation
@@ -23,4 +25,6 @@ public sealed class PendingConfirmation
     public string ToolName { get; init; } = string.Empty;
 
     public IReadOnlyList<ApplicationCandidate> Candidates { get; init; } = [];
+
+    public BrowserPagePendingConfirmation? BrowserPage { get; init; }
 }

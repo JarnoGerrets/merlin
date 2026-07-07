@@ -1,7 +1,7 @@
 # Chatterbox Timing Log
 
-- **Started UTC:** `2026-07-04T15:15:21.9517759+00:00`
-- **Stopped UTC:** `2026-07-04T15:21:44.8577071+00:00`
+- **Started UTC:** `2026-07-06T20:28:37.1759619+00:00`
+- **Stopped UTC:** `2026-07-06T20:31:27.5897140+00:00`
 - **Content Root:** `C:\Users\jarno\Source\Merlin\Merlin.Backend`
 - **Provider:** `chatterbox`
 - **Fallback Provider:** `piper`
@@ -14,7 +14,7 @@
 
 ## Worker Loads
 
-- `2026-07-04T15:15:49.9165720+00:00` Model `turbo`, requested `cuda`, selected `cuda`, ok `True`, worker load `17984,9ms`, total load `18221,5ms`, sample rate `24000`
+- `2026-07-06T20:28:58.0717334+00:00` Model `turbo`, requested `cuda`, selected `cuda`, ok `True`, worker load `13161,2ms`, total load `13337,9ms`, sample rate `24000`
 
 ## Endpoint Timings
 
@@ -22,35 +22,24 @@ No synthesize endpoint calls were recorded.
 
 ## Router Events
 
-- `2026-07-04T15:16:20.1035787+00:00` configured `chatterbox`, selected `chatterbox`, fallback `False`, chars `10`, elapsed `56,0ms`, reason `success`
-- `2026-07-04T15:16:23.4625219+00:00` configured `chatterbox`, selected `chatterbox`, fallback `False`, chars `13`, elapsed `17,2ms`, reason `success`
-- `2026-07-04T15:16:28.3726243+00:00` configured `chatterbox`, selected `chatterbox`, fallback `False`, chars `24`, elapsed `18,6ms`, reason `success`
-- `2026-07-04T15:16:42.2435468+00:00` configured `chatterbox`, selected `chatterbox`, fallback `False`, chars `13`, elapsed `22,1ms`, reason `success`
-- `2026-07-04T15:17:30.8812945+00:00` configured `chatterbox`, selected `chatterbox`, fallback `False`, chars `26`, elapsed `24,5ms`, reason `success`
-- `2026-07-04T15:17:37.1229052+00:00` configured `chatterbox`, selected `chatterbox`, fallback `False`, chars `18`, elapsed `35,0ms`, reason `success`
-- `2026-07-04T15:18:02.2293046+00:00` configured `chatterbox`, selected `chatterbox`, fallback `False`, chars `24`, elapsed `19,8ms`, reason `success`
-- `2026-07-04T15:18:16.6883369+00:00` configured `chatterbox`, selected `chatterbox`, fallback `False`, chars `23`, elapsed `17,3ms`, reason `success`
-- `2026-07-04T15:18:21.0282237+00:00` configured `chatterbox`, selected `chatterbox`, fallback `False`, chars `147`, elapsed `1908,6ms`, reason `success`
-- `2026-07-04T15:18:35.5348828+00:00` configured `chatterbox`, selected `chatterbox`, fallback `False`, chars `13`, elapsed `24,4ms`, reason `success`
-- `2026-07-04T15:20:16.4863017+00:00` configured `chatterbox`, selected `chatterbox`, fallback `False`, chars `26`, elapsed `18,1ms`, reason `success`
-- `2026-07-04T15:20:22.3346024+00:00` configured `chatterbox`, selected `chatterbox`, fallback `False`, chars `49`, elapsed `18,6ms`, reason `success`
-- `2026-07-04T15:20:30.4103290+00:00` configured `chatterbox`, selected `chatterbox`, fallback `False`, chars `45`, elapsed `19,3ms`, reason `success`
-- `2026-07-04T15:20:41.4193748+00:00` configured `chatterbox`, selected `chatterbox`, fallback `False`, chars `30`, elapsed `24,2ms`, reason `success`
-- `2026-07-04T15:21:32.9902950+00:00` configured `chatterbox`, selected `chatterbox`, fallback `False`, chars `15`, elapsed `29,7ms`, reason `success`
+- `2026-07-06T20:29:10.8077088+00:00` configured `chatterbox`, selected `chatterbox`, fallback `False`, chars `10`, elapsed `63,6ms`, reason `success`
+- `2026-07-06T20:29:14.9961035+00:00` configured `chatterbox`, selected `chatterbox`, fallback `False`, chars `8`, elapsed `17,6ms`, reason `success`
+- `2026-07-06T20:29:26.1805821+00:00` configured `chatterbox`, selected `chatterbox`, fallback `False`, chars `24`, elapsed `17,4ms`, reason `success`
+- `2026-07-06T20:31:14.4913924+00:00` configured `chatterbox`, selected `chatterbox`, fallback `False`, chars `7`, elapsed `29,3ms`, reason `success`
 
 ## Chatterbox Synthesis
 
-### `2026-07-04T15:15:52.7476139+00:00` `44e4756a59944309bbe2240bb336e0a7`
+### `2026-07-06T20:28:59.9478990+00:00` `41784a0556c44a6d80cccb303c0ade09`
 
 - **OK:** `True`
 - **Chars:** `29`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `12,8`
+- **Total Wall Ms:** `9,7`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `1,760`
-- **Realtime Factor:** `0,007`
+- **Realtime Factor:** `0,005`
 - **Bytes:** `84480`
 - **Cache Hits:** `1`
 - **Cache Misses:** `0`
@@ -58,9 +47,9 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 29 | hit | 0,0 | 0,0 | 11,8 | 1,760 | 0,007 | 84480 |
+| 1/1 | 29 | hit | 0,0 | 0,0 | 8,5 | 1,760 | 0,005 | 84480 |
 
-### `2026-07-04T15:15:52.7503392+00:00` `972f2c3b90da4736bfea28a226d98a37`
+### `2026-07-06T20:28:59.9509018+00:00` `04459aa84e8f4c218da62d790a52f230`
 
 - **OK:** `True`
 - **Chars:** `33`
@@ -70,7 +59,7 @@ No synthesize endpoint calls were recorded.
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `2,240`
-- **Realtime Factor:** `0,001`
+- **Realtime Factor:** `0,000`
 - **Bytes:** `107520`
 - **Cache Hits:** `1`
 - **Cache Misses:** `0`
@@ -80,7 +69,7 @@ No synthesize endpoint calls were recorded.
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | 1/1 | 33 | hit | 0,0 | 0,0 | 1,0 | 2,240 | 0,000 | 107520 |
 
-### `2026-07-04T15:15:52.7513009+00:00` `ce2300f392324416bd6fe95d4e1b54f1`
+### `2026-07-06T20:28:59.9518137+00:00` `5fbbe575a2f74468b8884a12ff85cd7f`
 
 - **OK:** `True`
 - **Chars:** `15`
@@ -98,15 +87,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 15 | hit | 0,0 | 0,0 | 0,6 | 1,440 | 0,000 | 69120 |
+| 1/1 | 15 | hit | 0,0 | 0,0 | 0,7 | 1,440 | 0,000 | 69120 |
 
-### `2026-07-04T15:15:52.7521563+00:00` `5e655e98239d402b99a801825d27af59`
+### `2026-07-06T20:28:59.9524516+00:00` `ce50a4434baf41c9abf83d373ea01e5a`
 
 - **OK:** `True`
 - **Chars:** `10`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,8`
+- **Total Wall Ms:** `0,6`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `1,080`
@@ -118,15 +107,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 10 | hit | 0,0 | 0,0 | 0,7 | 1,080 | 0,001 | 51840 |
+| 1/1 | 10 | hit | 0,0 | 0,0 | 0,5 | 1,080 | 0,000 | 51840 |
 
-### `2026-07-04T15:15:52.7529350+00:00` `75884602bf0f4f55b2fcbe4cc8f7b608`
+### `2026-07-06T20:28:59.9530073+00:00` `d3f6f64329604459801c5c60dc1bbc8f`
 
 - **OK:** `True`
 - **Chars:** `31`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,7`
+- **Total Wall Ms:** `0,5`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `2,200`
@@ -138,15 +127,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 31 | hit | 0,0 | 0,0 | 0,7 | 2,200 | 0,000 | 105600 |
+| 1/1 | 31 | hit | 0,0 | 0,0 | 0,5 | 2,200 | 0,000 | 105600 |
 
-### `2026-07-04T15:15:52.7536912+00:00` `d5316076e1874767a5ead7ae4d2d3487`
+### `2026-07-06T20:28:59.9535551+00:00` `594f230382e547238e80c25d3c1794f7`
 
 - **OK:** `True`
 - **Chars:** `31`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,7`
+- **Total Wall Ms:** `0,5`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `2,040`
@@ -158,15 +147,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 31 | hit | 0,0 | 0,0 | 0,6 | 2,040 | 0,000 | 97920 |
+| 1/1 | 31 | hit | 0,0 | 0,0 | 0,4 | 2,040 | 0,000 | 97920 |
 
-### `2026-07-04T15:15:52.7544617+00:00` `24ec6fac35e7432b86319ca334a383ac`
+### `2026-07-06T20:28:59.9540854+00:00` `3f9c1cde596b42c7a82ff380a0bfdd18`
 
 - **OK:** `True`
 - **Chars:** `35`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,7`
+- **Total Wall Ms:** `0,5`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `2,120`
@@ -178,15 +167,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 35 | hit | 0,0 | 0,0 | 0,6 | 2,120 | 0,000 | 101760 |
+| 1/1 | 35 | hit | 0,0 | 0,0 | 0,4 | 2,120 | 0,000 | 101760 |
 
-### `2026-07-04T15:15:52.7550882+00:00` `d694e3b988f546e3888652fc9d8f37d8`
+### `2026-07-06T20:28:59.9546555+00:00` `732890e164fa44eaaea82b211d64dcc9`
 
 - **OK:** `True`
 - **Chars:** `31`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,6`
+- **Total Wall Ms:** `0,5`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `2,000`
@@ -200,7 +189,7 @@ No synthesize endpoint calls were recorded.
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | 1/1 | 31 | hit | 0,0 | 0,0 | 0,5 | 2,000 | 0,000 | 96000 |
 
-### `2026-07-04T15:15:52.7556605+00:00` `89e0df8c92e048c795b4231a2af70c61`
+### `2026-07-06T20:28:59.9551752+00:00` `1206a1a8e0fa4e2b84cb07fcb0c9b9d7`
 
 - **OK:** `True`
 - **Chars:** `24`
@@ -218,19 +207,19 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 24 | hit | 0,0 | 0,0 | 0,5 | 2,000 | 0,000 | 96000 |
+| 1/1 | 24 | hit | 0,0 | 0,0 | 0,4 | 2,000 | 0,000 | 96000 |
 
-### `2026-07-04T15:15:52.7567020+00:00` `03faba485236448c8a26314be5c8734e`
+### `2026-07-06T20:28:59.9556760+00:00` `f27074e52a7345bab622ce183670738b`
 
 - **OK:** `True`
 - **Chars:** `28`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `1,0`
+- **Total Wall Ms:** `0,4`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `1,840`
-- **Realtime Factor:** `0,001`
+- **Realtime Factor:** `0,000`
 - **Bytes:** `88320`
 - **Cache Hits:** `1`
 - **Cache Misses:** `0`
@@ -238,15 +227,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 28 | hit | 0,0 | 0,0 | 0,9 | 1,840 | 0,001 | 88320 |
+| 1/1 | 28 | hit | 0,0 | 0,0 | 0,4 | 1,840 | 0,000 | 88320 |
 
-### `2026-07-04T15:15:52.7575448+00:00` `edb38665a4974edab5778c4424cd055a`
+### `2026-07-06T20:28:59.9563526+00:00` `287cf60b193749d3982d17ebd97a15a2`
 
 - **OK:** `True`
 - **Chars:** `64`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,7`
+- **Total Wall Ms:** `0,6`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `3,760`
@@ -258,15 +247,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 64 | hit | 0,0 | 0,0 | 0,7 | 3,760 | 0,000 | 180480 |
+| 1/1 | 64 | hit | 0,0 | 0,0 | 0,6 | 3,760 | 0,000 | 180480 |
 
-### `2026-07-04T15:15:52.7584102+00:00` `ba9a92464e0a4a7c88a3f2d3cd03ce36`
+### `2026-07-06T20:28:59.9569436+00:00` `641e4766e97e42a4b0ac202984a60c34`
 
 - **OK:** `True`
 - **Chars:** `31`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,8`
+- **Total Wall Ms:** `0,5`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `2,160`
@@ -278,15 +267,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 31 | hit | 0,0 | 0,0 | 0,7 | 2,160 | 0,000 | 103680 |
+| 1/1 | 31 | hit | 0,0 | 0,0 | 0,5 | 2,160 | 0,000 | 103680 |
 
-### `2026-07-04T15:15:52.7592941+00:00` `990a35cefdda411682b3a893077d2162`
+### `2026-07-06T20:28:59.9576490+00:00` `e9026e03011048e685606a92b233da03`
 
 - **OK:** `True`
 - **Chars:** `31`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,8`
+- **Total Wall Ms:** `0,6`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `1,920`
@@ -298,15 +287,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 31 | hit | 0,0 | 0,0 | 0,7 | 1,920 | 0,000 | 92160 |
+| 1/1 | 31 | hit | 0,0 | 0,0 | 0,6 | 1,920 | 0,000 | 92160 |
 
-### `2026-07-04T15:15:52.7599316+00:00` `4315bf167c72403f9a05e01961218596`
+### `2026-07-06T20:28:59.9583896+00:00` `9bd3c7889a2f40aca15cc421b9ff08e3`
 
 - **OK:** `True`
 - **Chars:** `43`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,6`
+- **Total Wall Ms:** `0,7`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `3,120`
@@ -318,15 +307,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 43 | hit | 0,0 | 0,0 | 0,5 | 3,120 | 0,000 | 149760 |
+| 1/1 | 43 | hit | 0,0 | 0,0 | 0,6 | 3,120 | 0,000 | 149760 |
 
-### `2026-07-04T15:15:52.7605746+00:00` `284eb5453ed14e4886786022034aaf00`
+### `2026-07-06T20:28:59.9589430+00:00` `da9a08b8259844c895d2226738793ee8`
 
 - **OK:** `True`
 - **Chars:** `38`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,6`
+- **Total Wall Ms:** `0,5`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `2,280`
@@ -340,13 +329,13 @@ No synthesize endpoint calls were recorded.
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | 1/1 | 38 | hit | 0,0 | 0,0 | 0,5 | 2,280 | 0,000 | 109440 |
 
-### `2026-07-04T15:15:52.7613526+00:00` `1e311d78e7f84c8d9705aa9e9b959df3`
+### `2026-07-06T20:28:59.9594920+00:00` `bb2c1438ff764fea8aea06d961c3b70c`
 
 - **OK:** `True`
 - **Chars:** `46`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,7`
+- **Total Wall Ms:** `0,5`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `2,920`
@@ -358,15 +347,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 46 | hit | 0,0 | 0,0 | 0,7 | 2,920 | 0,000 | 140160 |
+| 1/1 | 46 | hit | 0,0 | 0,0 | 0,5 | 2,920 | 0,000 | 140160 |
 
-### `2026-07-04T15:15:52.7621575+00:00` `6f07d30c3ef44e66b3e100e1b0b44034`
+### `2026-07-06T20:28:59.9600373+00:00` `5a226538274840f49dc5848bd9156f15`
 
 - **OK:** `True`
 - **Chars:** `47`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,7`
+- **Total Wall Ms:** `0,5`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `2,960`
@@ -378,15 +367,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 47 | hit | 0,0 | 0,0 | 0,7 | 2,960 | 0,000 | 142080 |
+| 1/1 | 47 | hit | 0,0 | 0,0 | 0,5 | 2,960 | 0,000 | 142080 |
 
-### `2026-07-04T15:15:52.7629268+00:00` `fe31d9a91fed49f3863e2d85a8ed9879`
+### `2026-07-06T20:28:59.9605956+00:00` `7fdbe8a47c394e7db879eadbecad1ae4`
 
 - **OK:** `True`
 - **Chars:** `23`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,7`
+- **Total Wall Ms:** `0,5`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `1,600`
@@ -398,15 +387,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 23 | hit | 0,0 | 0,0 | 0,6 | 1,600 | 0,000 | 76800 |
+| 1/1 | 23 | hit | 0,0 | 0,0 | 0,5 | 1,600 | 0,000 | 76800 |
 
-### `2026-07-04T15:15:52.7637185+00:00` `5b27ab3845c04fc3a914314217f7d1d0`
+### `2026-07-06T20:28:59.9611207+00:00` `beceb66b2793497ba9302e39be4fc5f8`
 
 - **OK:** `True`
 - **Chars:** `31`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,7`
+- **Total Wall Ms:** `0,5`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `2,560`
@@ -418,19 +407,19 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 31 | hit | 0,0 | 0,0 | 0,7 | 2,560 | 0,000 | 122880 |
+| 1/1 | 31 | hit | 0,0 | 0,0 | 0,4 | 2,560 | 0,000 | 122880 |
 
-### `2026-07-04T15:15:52.7643425+00:00` `6dbd2635532f4fa6bcbcb5680513e57e`
+### `2026-07-06T20:28:59.9618395+00:00` `293244f481204057aa39a4400c9ce192`
 
 - **OK:** `True`
 - **Chars:** `17`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,5`
+- **Total Wall Ms:** `0,7`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `1,320`
-- **Realtime Factor:** `0,000`
+- **Realtime Factor:** `0,001`
 - **Bytes:** `63360`
 - **Cache Hits:** `1`
 - **Cache Misses:** `0`
@@ -438,15 +427,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 17 | hit | 0,0 | 0,0 | 0,5 | 1,320 | 0,000 | 63360 |
+| 1/1 | 17 | hit | 0,0 | 0,0 | 0,6 | 1,320 | 0,000 | 63360 |
 
-### `2026-07-04T15:15:52.7649491+00:00` `1085ef1596264f10acd3d5e8cdafc030`
+### `2026-07-06T20:28:59.9627596+00:00` `5a57c508f7f7416497c448e73301658c`
 
 - **OK:** `True`
 - **Chars:** `42`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,5`
+- **Total Wall Ms:** `0,8`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `2,400`
@@ -458,15 +447,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 42 | hit | 0,0 | 0,0 | 0,5 | 2,400 | 0,000 | 115200 |
+| 1/1 | 42 | hit | 0,0 | 0,0 | 0,8 | 2,400 | 0,000 | 115200 |
 
-### `2026-07-04T15:15:52.7655984+00:00` `c63c4e027307436891df96f6fd42eab7`
+### `2026-07-06T20:28:59.9637290+00:00` `66f8ece19ced4d36afc6359a1d1b1ece`
 
 - **OK:** `True`
 - **Chars:** `6`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,6`
+- **Total Wall Ms:** `0,9`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `1,000`
@@ -478,15 +467,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 6 | hit | 0,0 | 0,0 | 0,5 | 1,000 | 0,001 | 48000 |
+| 1/1 | 6 | hit | 0,0 | 0,0 | 0,8 | 1,000 | 0,001 | 48000 |
 
-### `2026-07-04T15:15:52.7661852+00:00` `9ec10bcf38c241e694b1d67cfdb6bc23`
+### `2026-07-06T20:28:59.9645547+00:00` `c5565bf9c8c148d0828d363026f26c18`
 
 - **OK:** `True`
 - **Chars:** `20`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,5`
+- **Total Wall Ms:** `0,7`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `1,560`
@@ -498,15 +487,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 20 | hit | 0,0 | 0,0 | 0,5 | 1,560 | 0,000 | 74880 |
+| 1/1 | 20 | hit | 0,0 | 0,0 | 0,7 | 1,560 | 0,000 | 74880 |
 
-### `2026-07-04T15:15:52.7671035+00:00` `444912dc755441cb901bbb9308722f6b`
+### `2026-07-06T20:28:59.9653757+00:00` `943933e72a7148f39c0ee07139b997d1`
 
 - **OK:** `True`
 - **Chars:** `27`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,8`
+- **Total Wall Ms:** `0,7`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `2,120`
@@ -518,19 +507,19 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 27 | hit | 0,0 | 0,0 | 0,8 | 2,120 | 0,000 | 101760 |
+| 1/1 | 27 | hit | 0,0 | 0,0 | 0,7 | 2,120 | 0,000 | 101760 |
 
-### `2026-07-04T15:15:52.7679826+00:00` `5469fa15a6464d34b402770eb6e031af`
+### `2026-07-06T20:28:59.9659495+00:00` `da7203c1391444ba9a9f5d99ea5ab421`
 
 - **OK:** `True`
 - **Chars:** `19`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,8`
+- **Total Wall Ms:** `0,5`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `1,280`
-- **Realtime Factor:** `0,001`
+- **Realtime Factor:** `0,000`
 - **Bytes:** `61440`
 - **Cache Hits:** `1`
 - **Cache Misses:** `0`
@@ -538,15 +527,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 19 | hit | 0,0 | 0,0 | 0,7 | 1,280 | 0,001 | 61440 |
+| 1/1 | 19 | hit | 0,0 | 0,0 | 0,5 | 1,280 | 0,000 | 61440 |
 
-### `2026-07-04T15:15:52.7687174+00:00` `c09eeacd508c4726b556bf3c4c7acdf8`
+### `2026-07-06T20:28:59.9665270+00:00` `edb2a04ecc2b4033adb7270cbf87cb21`
 
 - **OK:** `True`
 - **Chars:** `14`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,7`
+- **Total Wall Ms:** `0,5`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `1,040`
@@ -558,9 +547,9 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 14 | hit | 0,0 | 0,0 | 0,6 | 1,040 | 0,001 | 49920 |
+| 1/1 | 14 | hit | 0,0 | 0,0 | 0,5 | 1,040 | 0,000 | 49920 |
 
-### `2026-07-04T15:15:52.7695470+00:00` `9a788eecc3384148859687c4b22a374d`
+### `2026-07-06T20:28:59.9672717+00:00` `6321c73eb41e4e8790983b6b58349847`
 
 - **OK:** `True`
 - **Chars:** `17`
@@ -580,7 +569,7 @@ No synthesize endpoint calls were recorded.
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | 1/1 | 17 | hit | 0,0 | 0,0 | 0,7 | 1,920 | 0,000 | 92160 |
 
-### `2026-07-04T15:15:52.7705521+00:00` `0f3e368dae014e95adffad7de2edeb9a`
+### `2026-07-06T20:28:59.9683370+00:00` `f052b53f35c441afa1b390621c22e7b5`
 
 - **OK:** `True`
 - **Chars:** `13`
@@ -600,17 +589,17 @@ No synthesize endpoint calls were recorded.
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | 1/1 | 13 | hit | 0,0 | 0,0 | 0,9 | 0,920 | 0,001 | 44160 |
 
-### `2026-07-04T15:15:52.7716084+00:00` `e60aca97cf004219a295facdacbede61`
+### `2026-07-06T20:28:59.9691834+00:00` `b24f00180673494db726121f7ec7ba21`
 
 - **OK:** `True`
 - **Chars:** `23`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `1,0`
+- **Total Wall Ms:** `0,7`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `1,760`
-- **Realtime Factor:** `0,001`
+- **Realtime Factor:** `0,000`
 - **Bytes:** `84480`
 - **Cache Hits:** `1`
 - **Cache Misses:** `0`
@@ -618,15 +607,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 23 | hit | 0,0 | 0,0 | 0,9 | 1,760 | 0,001 | 84480 |
+| 1/1 | 23 | hit | 0,0 | 0,0 | 0,7 | 1,760 | 0,000 | 84480 |
 
-### `2026-07-04T15:15:52.7727905+00:00` `eab59c29596540f1a88e39ca52a26ac8`
+### `2026-07-06T20:28:59.9699819+00:00` `07755899b94b4f808c5fa3ab2e57f8c9`
 
 - **OK:** `True`
 - **Chars:** `14`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,9`
+- **Total Wall Ms:** `0,7`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `1,240`
@@ -638,19 +627,19 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 14 | hit | 0,0 | 0,0 | 0,8 | 1,240 | 0,001 | 59520 |
+| 1/1 | 14 | hit | 0,0 | 0,0 | 0,7 | 1,240 | 0,001 | 59520 |
 
-### `2026-07-04T15:15:52.7737641+00:00` `d6979de80aba41d19f8ed6a26ff0bf59`
+### `2026-07-06T20:28:59.9706825+00:00` `1a9884d1d5d84cedaa2f7e92bf6ac75c`
 
 - **OK:** `True`
 - **Chars:** `12`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,9`
+- **Total Wall Ms:** `0,6`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `1,280`
-- **Realtime Factor:** `0,001`
+- **Realtime Factor:** `0,000`
 - **Bytes:** `61440`
 - **Cache Hits:** `1`
 - **Cache Misses:** `0`
@@ -658,15 +647,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 12 | hit | 0,0 | 0,0 | 0,8 | 1,280 | 0,001 | 61440 |
+| 1/1 | 12 | hit | 0,0 | 0,0 | 0,6 | 1,280 | 0,000 | 61440 |
 
-### `2026-07-04T15:15:52.7746987+00:00` `1dd0939be8f043a3a44c8997044ca56e`
+### `2026-07-06T20:28:59.9712418+00:00` `d4101d00b89d4e7db5154499620bc987`
 
 - **OK:** `True`
 - **Chars:** `27`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,8`
+- **Total Wall Ms:** `0,5`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `2,440`
@@ -678,15 +667,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 27 | hit | 0,0 | 0,0 | 0,8 | 2,440 | 0,000 | 117120 |
+| 1/1 | 27 | hit | 0,0 | 0,0 | 0,5 | 2,440 | 0,000 | 117120 |
 
-### `2026-07-04T15:15:52.7756688+00:00` `21857138298248ad9de7ccaf286859fa`
+### `2026-07-06T20:28:59.9718294+00:00` `2f69ad16da1f45738869bda0ff6760b3`
 
 - **OK:** `True`
 - **Chars:** `10`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,8`
+- **Total Wall Ms:** `0,5`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `0,920`
@@ -698,19 +687,19 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 10 | hit | 0,0 | 0,0 | 0,8 | 0,920 | 0,001 | 44160 |
+| 1/1 | 10 | hit | 0,0 | 0,0 | 0,5 | 0,920 | 0,001 | 44160 |
 
-### `2026-07-04T15:15:52.7766637+00:00` `41c501a26ee24e95a1bfde9216e1adc2`
+### `2026-07-06T20:28:59.9724133+00:00` `befff49b99dc40e0b09b238441a6601e`
 
 - **OK:** `True`
 - **Chars:** `9`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,9`
+- **Total Wall Ms:** `0,5`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `1,080`
-- **Realtime Factor:** `0,001`
+- **Realtime Factor:** `0,000`
 - **Bytes:** `51840`
 - **Cache Hits:** `1`
 - **Cache Misses:** `0`
@@ -718,19 +707,19 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 9 | hit | 0,0 | 0,0 | 0,9 | 1,080 | 0,001 | 51840 |
+| 1/1 | 9 | hit | 0,0 | 0,0 | 0,5 | 1,080 | 0,000 | 51840 |
 
-### `2026-07-04T15:15:52.7778049+00:00` `9421ef15cb734ae4bea93c7ffb7331f5`
+### `2026-07-06T20:28:59.9728834+00:00` `6ada8168a258461fb89d9ce15ec60517`
 
 - **OK:** `True`
 - **Chars:** `14`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `1,0`
+- **Total Wall Ms:** `0,4`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `1,040`
-- **Realtime Factor:** `0,001`
+- **Realtime Factor:** `0,000`
 - **Bytes:** `49920`
 - **Cache Hits:** `1`
 - **Cache Misses:** `0`
@@ -738,15 +727,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 14 | hit | 0,0 | 0,0 | 1,0 | 1,040 | 0,001 | 49920 |
+| 1/1 | 14 | hit | 0,0 | 0,0 | 0,4 | 1,040 | 0,000 | 49920 |
 
-### `2026-07-04T15:15:52.7785548+00:00` `c687ce8cc72f46df9e460ba168788767`
+### `2026-07-06T20:28:59.9735500+00:00` `b1e71b68e6f745329d74e891eb34459b`
 
 - **OK:** `True`
 - **Chars:** `6`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,7`
+- **Total Wall Ms:** `0,6`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `0,720`
@@ -760,13 +749,13 @@ No synthesize endpoint calls were recorded.
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | 1/1 | 6 | hit | 0,0 | 0,0 | 0,6 | 0,720 | 0,001 | 34560 |
 
-### `2026-07-04T15:15:52.7793110+00:00` `393cd1bd0c6b4d23abfbb9694a794738`
+### `2026-07-06T20:28:59.9741785+00:00` `57163105108845e6b3160c63ddc085aa`
 
 - **OK:** `True`
 - **Chars:** `13`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,7`
+- **Total Wall Ms:** `0,5`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `0,920`
@@ -778,15 +767,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 13 | hit | 0,0 | 0,0 | 0,6 | 0,920 | 0,001 | 44160 |
+| 1/1 | 13 | hit | 0,0 | 0,0 | 0,5 | 0,920 | 0,001 | 44160 |
 
-### `2026-07-04T15:15:52.7801021+00:00` `4f4cafec54b140e3a2de0335ed451657`
+### `2026-07-06T20:28:59.9748193+00:00` `ec1df46f6f834f20b3687d5f13009144`
 
 - **OK:** `True`
 - **Chars:** `5`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,7`
+- **Total Wall Ms:** `0,6`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `0,800`
@@ -798,15 +787,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 5 | hit | 0,0 | 0,0 | 0,6 | 0,800 | 0,001 | 38400 |
+| 1/1 | 5 | hit | 0,0 | 0,0 | 0,5 | 0,800 | 0,001 | 38400 |
 
-### `2026-07-04T15:15:52.7808299+00:00` `f293e1557c334eb38ada8f88283e3e1c`
+### `2026-07-06T20:28:59.9753580+00:00` `8a2943d025b74ccba8720fe4c8abfd05`
 
 - **OK:** `True`
 - **Chars:** `20`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,7`
+- **Total Wall Ms:** `0,5`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `1,560`
@@ -818,9 +807,9 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 20 | hit | 0,0 | 0,0 | 0,6 | 1,560 | 0,000 | 74880 |
+| 1/1 | 20 | hit | 0,0 | 0,0 | 0,4 | 1,560 | 0,000 | 74880 |
 
-### `2026-07-04T15:15:52.7815305+00:00` `42ed119877c74bf38af8070c52b353dd`
+### `2026-07-06T20:28:59.9760423+00:00` `2bed332c954f42d29ba57fc72c20829c`
 
 - **OK:** `True`
 - **Chars:** `19`
@@ -840,17 +829,17 @@ No synthesize endpoint calls were recorded.
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | 1/1 | 19 | hit | 0,0 | 0,0 | 0,6 | 1,800 | 0,000 | 86400 |
 
-### `2026-07-04T15:15:52.7825078+00:00` `821b2fe25b6e4ce2961db72f4d31e9be`
+### `2026-07-06T20:28:59.9767077+00:00` `6335ab0c6eda40e99a0c5072c4d00ee9`
 
 - **OK:** `True`
 - **Chars:** `15`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,9`
+- **Total Wall Ms:** `0,6`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `1,200`
-- **Realtime Factor:** `0,001`
+- **Realtime Factor:** `0,000`
 - **Bytes:** `57600`
 - **Cache Hits:** `1`
 - **Cache Misses:** `0`
@@ -858,19 +847,19 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 15 | hit | 0,0 | 0,0 | 0,9 | 1,200 | 0,001 | 57600 |
+| 1/1 | 15 | hit | 0,0 | 0,0 | 0,5 | 1,200 | 0,000 | 57600 |
 
-### `2026-07-04T15:15:52.7835321+00:00` `edac3affdcf1432ea04a8d1f9fdc5ed5`
+### `2026-07-06T20:28:59.9773210+00:00` `0d948fc32b6f432099e044ac095552f0`
 
 - **OK:** `True`
 - **Chars:** `13`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,9`
+- **Total Wall Ms:** `0,5`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `1,280`
-- **Realtime Factor:** `0,001`
+- **Realtime Factor:** `0,000`
 - **Bytes:** `61440`
 - **Cache Hits:** `1`
 - **Cache Misses:** `0`
@@ -878,19 +867,19 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 13 | hit | 0,0 | 0,0 | 0,9 | 1,280 | 0,001 | 61440 |
+| 1/1 | 13 | hit | 0,0 | 0,0 | 0,5 | 1,280 | 0,000 | 61440 |
 
-### `2026-07-04T15:15:52.7844890+00:00` `de59f86af3c24f738036d7ed1ed8fe27`
+### `2026-07-06T20:28:59.9779470+00:00` `b5fa68dfbff34c6f961578f7bc14c4af`
 
 - **OK:** `True`
 - **Chars:** `14`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,8`
+- **Total Wall Ms:** `0,6`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `1,240`
-- **Realtime Factor:** `0,001`
+- **Realtime Factor:** `0,000`
 - **Bytes:** `59520`
 - **Cache Hits:** `1`
 - **Cache Misses:** `0`
@@ -898,15 +887,15 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 14 | hit | 0,0 | 0,0 | 0,8 | 1,240 | 0,001 | 59520 |
+| 1/1 | 14 | hit | 0,0 | 0,0 | 0,5 | 1,240 | 0,000 | 59520 |
 
-### `2026-07-04T15:15:52.7855294+00:00` `688aef510c7f470f9578298ff0bc3545`
+### `2026-07-06T20:28:59.9785798+00:00` `f615ceff370c4002870a711f9a3fc418`
 
 - **OK:** `True`
 - **Chars:** `26`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `0,9`
+- **Total Wall Ms:** `0,6`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `3,880`
@@ -918,19 +907,19 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 26 | hit | 0,0 | 0,0 | 0,9 | 3,880 | 0,000 | 186240 |
+| 1/1 | 26 | hit | 0,0 | 0,0 | 0,5 | 3,880 | 0,000 | 186240 |
 
-### `2026-07-04T15:16:20.1032153+00:00` `995e427400854d9ab407d1c6b064428c`
+### `2026-07-06T20:29:10.8074573+00:00` `609864524c6642a08bfe278ab9903f3f`
 
 - **OK:** `True`
 - **Chars:** `10`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `55,4`
+- **Total Wall Ms:** `63,1`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
 - **Audio Duration Seconds:** `0,920`
-- **Realtime Factor:** `0,060`
+- **Realtime Factor:** `0,069`
 - **Bytes:** `44160`
 - **Cache Hits:** `1`
 - **Cache Misses:** `0`
@@ -938,337 +927,74 @@ No synthesize endpoint calls were recorded.
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 10 | hit | 0,0 | 0,0 | 55,3 | 0,920 | 0,060 | 44160 |
+| 1/1 | 10 | hit | 0,0 | 0,0 | 62,9 | 0,920 | 0,068 | 44160 |
 
-### `2026-07-04T15:16:23.4624989+00:00` `024ab0d068a2432290de8f72d84d4965`
+### `2026-07-06T20:29:14.9960845+00:00` `42ab1cd72fa84b46af609fcc2f67f540`
 
 - **OK:** `True`
-- **Chars:** `13`
+- **Chars:** `8`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `17,0`
+- **Total Wall Ms:** `17,4`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
-- **Audio Duration Seconds:** `1,040`
-- **Realtime Factor:** `0,016`
-- **Bytes:** `49920`
+- **Audio Duration Seconds:** `0,880`
+- **Realtime Factor:** `0,020`
+- **Bytes:** `42240`
 - **Cache Hits:** `1`
 - **Cache Misses:** `0`
-- **Text Preview:** `Opening chat.`
+- **Text Preview:** `Opening.`
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 13 | hit | 0,0 | 0,0 | 16,9 | 1,040 | 0,016 | 49920 |
+| 1/1 | 8 | hit | 0,0 | 0,0 | 17,3 | 0,880 | 0,020 | 42240 |
 
-### `2026-07-04T15:16:28.3726007+00:00` `05c3a375de004120adf6963fe0074441`
+### `2026-07-06T20:29:26.1805644+00:00` `22d2bd8714b24b02ba63ff019ebcc1c9`
 
 - **OK:** `True`
 - **Chars:** `24`
-- **Chunks:** `1`
-- **Requested Device:** `cuda`
-- **Total Wall Ms:** `18,3`
-- **Total Worker Generation Ms:** `0,0`
-- **Total Conditioning Ms:** `0,0`
-- **Audio Duration Seconds:** `2,000`
-- **Realtime Factor:** `0,009`
-- **Bytes:** `96000`
-- **Cache Hits:** `1`
-- **Cache Misses:** `0`
-- **Text Preview:** `UI control mode started.`
-
-| Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
-| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 24 | hit | 0,0 | 0,0 | 18,2 | 2,000 | 0,009 | 96000 |
-
-### `2026-07-04T15:16:42.2435240+00:00` `af9ce4505b5643e0bb3bfd2daa61b674`
-
-- **OK:** `True`
-- **Chars:** `13`
-- **Chunks:** `1`
-- **Requested Device:** `cuda`
-- **Total Wall Ms:** `21,9`
-- **Total Worker Generation Ms:** `0,0`
-- **Total Conditioning Ms:** `0,0`
-- **Audio Duration Seconds:** `1,040`
-- **Realtime Factor:** `0,021`
-- **Bytes:** `49920`
-- **Cache Hits:** `1`
-- **Cache Misses:** `0`
-- **Text Preview:** `Opening chat.`
-
-| Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
-| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 13 | hit | 0,0 | 0,0 | 21,8 | 1,040 | 0,021 | 49920 |
-
-### `2026-07-04T15:17:30.8812620+00:00` `da619bf1a780443f95d1198bf0ff6621`
-
-- **OK:** `True`
-- **Chars:** `26`
-- **Chunks:** `1`
-- **Requested Device:** `cuda`
-- **Total Wall Ms:** `24,2`
-- **Total Worker Generation Ms:** `0,0`
-- **Total Conditioning Ms:** `0,0`
-- **Audio Duration Seconds:** `1,680`
-- **Realtime Factor:** `0,014`
-- **Bytes:** `80640`
-- **Cache Hits:** `1`
-- **Cache Misses:** `0`
-- **Text Preview:** `Let me think that through.`
-
-| Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
-| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 26 | hit | 0,0 | 0,0 | 24,1 | 1,680 | 0,014 | 80640 |
-
-### `2026-07-04T15:17:37.1001275+00:00` `72bc43708b4749ae8beab9122c13e049`
-
-- **OK:** `True`
-- **Chars:** `115`
-- **Chunks:** `1`
-- **Requested Device:** `cuda`
-- **Total Wall Ms:** `4038,6`
-- **Total Worker Generation Ms:** `0,0`
-- **Total Conditioning Ms:** `0,0`
-- **Audio Duration Seconds:** `0,000`
-- **Realtime Factor:** `0,000`
-- **Bytes:** `0`
-- **Cache Hits:** `0`
-- **Cache Misses:** `0`
-- **Text Preview:** `Thanks for stopping by! That sounds like a perfect place to wrap up. Until next time—take care and see you soon! 🌟`
-
-| Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
-| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-
-### `2026-07-04T15:17:37.1228876+00:00` `f723af1f772446cabf4a31322c4af5c6`
-
-- **OK:** `True`
-- **Chars:** `18`
-- **Chunks:** `1`
-- **Requested Device:** `cuda`
-- **Total Wall Ms:** `34,8`
-- **Total Worker Generation Ms:** `0,0`
-- **Total Conditioning Ms:** `0,0`
-- **Audio Duration Seconds:** `2,200`
-- **Realtime Factor:** `0,016`
-- **Bytes:** `105600`
-- **Cache Hits:** `1`
-- **Cache Misses:** `0`
-- **Text Preview:** `Got it, I'll stop.`
-
-| Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
-| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 18 | hit | 0,0 | 0,0 | 22,9 | 2,200 | 0,010 | 105600 |
-
-### `2026-07-04T15:18:02.2292832+00:00` `dc0a40b781ca4a978177cdfbfa015497`
-
-- **OK:** `True`
-- **Chars:** `24`
-- **Chunks:** `1`
-- **Requested Device:** `cuda`
-- **Total Wall Ms:** `19,4`
-- **Total Worker Generation Ms:** `0,0`
-- **Total Conditioning Ms:** `0,0`
-- **Audio Duration Seconds:** `2,040`
-- **Realtime Factor:** `0,010`
-- **Bytes:** `97920`
-- **Cache Hits:** `1`
-- **Cache Misses:** `0`
-- **Text Preview:** `UI control mode stopped.`
-
-| Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
-| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 24 | hit | 0,0 | 0,0 | 19,3 | 2,040 | 0,009 | 97920 |
-
-### `2026-07-04T15:18:16.6883181+00:00` `37bce23f5e8049289f4cde3f7f9ebc18`
-
-- **OK:** `True`
-- **Chars:** `23`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
 - **Total Wall Ms:** `17,2`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
-- **Audio Duration Seconds:** `1,480`
-- **Realtime Factor:** `0,012`
-- **Bytes:** `71040`
+- **Audio Duration Seconds:** `1,720`
+- **Realtime Factor:** `0,010`
+- **Bytes:** `82560`
 - **Cache Hits:** `1`
 - **Cache Misses:** `0`
-- **Text Preview:** `I'll work through that.`
+- **Text Preview:** `Browser pointer started.`
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 23 | hit | 0,0 | 0,0 | 17,1 | 1,480 | 0,012 | 71040 |
+| 1/1 | 24 | hit | 0,0 | 0,0 | 17,1 | 1,720 | 0,010 | 82560 |
 
-### `2026-07-04T15:18:21.0281993+00:00` `a12031291e5c43ac8d0baacc988e0376`
-
-- **OK:** `True`
-- **Chars:** `147`
-- **Chunks:** `2`
-- **Requested Device:** `cuda`
-- **Total Wall Ms:** `1907,7`
-- **Total Worker Generation Ms:** `6064,7`
-- **Total Conditioning Ms:** `0,0`
-- **Audio Duration Seconds:** `12,480`
-- **Realtime Factor:** `0,153`
-- **Bytes:** `599040`
-- **Cache Hits:** `0`
-- **Cache Misses:** `2`
-- **Text Preview:** `It seems your message got cut off. Could you clarify what you meant? I'm here to help with practical, grounded advice—just need a bit more context.`
-
-| Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
-| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/2 | 68 | miss | 4225,2 | 0,0 | 15,9 | 8,400 | 0,002 | 403200 |
-| 2/2 | 78 | miss | 1839,4 | 0,0 | 1891,6 | 4,080 | 0,464 | 195840 |
-
-### `2026-07-04T15:18:35.5348598+00:00` `2d5f4334316343ea82f721578fe2b075`
+### `2026-07-06T20:31:14.4913701+00:00` `6ed7c15850b246e7a7c4c65f84549d10`
 
 - **OK:** `True`
-- **Chars:** `13`
+- **Chars:** `7`
 - **Chunks:** `1`
 - **Requested Device:** `cuda`
-- **Total Wall Ms:** `24,2`
+- **Total Wall Ms:** `28,8`
 - **Total Worker Generation Ms:** `0,0`
 - **Total Conditioning Ms:** `0,0`
-- **Audio Duration Seconds:** `1,040`
-- **Realtime Factor:** `0,023`
-- **Bytes:** `49920`
+- **Audio Duration Seconds:** `0,800`
+- **Realtime Factor:** `0,036`
+- **Bytes:** `38400`
 - **Cache Hits:** `1`
 - **Cache Misses:** `0`
-- **Text Preview:** `Opening chat.`
+- **Text Preview:** `Closed.`
 
 | Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
 | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 13 | hit | 0,0 | 0,0 | 24,1 | 1,040 | 0,023 | 49920 |
-
-### `2026-07-04T15:20:16.4862743+00:00` `afeaa110b0d04691a4a987609ec521a6`
-
-- **OK:** `True`
-- **Chars:** `26`
-- **Chunks:** `1`
-- **Requested Device:** `cuda`
-- **Total Wall Ms:** `17,9`
-- **Total Worker Generation Ms:** `0,0`
-- **Total Conditioning Ms:** `0,0`
-- **Audio Duration Seconds:** `1,680`
-- **Realtime Factor:** `0,011`
-- **Bytes:** `80640`
-- **Cache Hits:** `1`
-- **Cache Misses:** `0`
-- **Text Preview:** `Let me think that through.`
-
-| Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
-| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 26 | hit | 0,0 | 0,0 | 17,8 | 1,680 | 0,011 | 80640 |
-
-### `2026-07-04T15:20:22.3345825+00:00` `5d9334cded2f4b18bcc59868dc22c77b`
-
-- **OK:** `True`
-- **Chars:** `49`
-- **Chunks:** `1`
-- **Requested Device:** `cuda`
-- **Total Wall Ms:** `18,4`
-- **Total Worker Generation Ms:** `0,0`
-- **Total Conditioning Ms:** `0,0`
-- **Audio Duration Seconds:** `3,280`
-- **Realtime Factor:** `0,006`
-- **Bytes:** `157440`
-- **Cache Hits:** `1`
-- **Cache Misses:** `0`
-- **Text Preview:** `I have the context. I am putting it together now.`
-
-| Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
-| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 49 | hit | 0,0 | 0,0 | 18,3 | 3,280 | 0,006 | 157440 |
-
-### `2026-07-04T15:20:30.4102851+00:00` `fa4f940c03f249b0aa7dfd1ee4ba7794`
-
-- **OK:** `True`
-- **Chars:** `45`
-- **Chunks:** `1`
-- **Requested Device:** `cuda`
-- **Total Wall Ms:** `19,1`
-- **Total Worker Generation Ms:** `0,0`
-- **Total Conditioning Ms:** `0,0`
-- **Audio Duration Seconds:** `2,360`
-- **Realtime Factor:** `0,008`
-- **Bytes:** `113280`
-- **Cache Hits:** `1`
-- **Cache Misses:** `0`
-- **Text Preview:** `I am taking a little more care with this one.`
-
-| Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
-| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 45 | hit | 0,0 | 0,0 | 18,9 | 2,360 | 0,008 | 113280 |
-
-### `2026-07-04T15:20:41.4193386+00:00` `b900e3de4da94ab7b421b20fd2994389`
-
-- **OK:** `True`
-- **Chars:** `30`
-- **Chunks:** `1`
-- **Requested Device:** `cuda`
-- **Total Wall Ms:** `23,8`
-- **Total Worker Generation Ms:** `0,0`
-- **Total Conditioning Ms:** `0,0`
-- **Audio Duration Seconds:** `1,800`
-- **Realtime Factor:** `0,013`
-- **Bytes:** `86400`
-- **Cache Hits:** `1`
-- **Cache Misses:** `0`
-- **Text Preview:** `Still working through it, sir.`
-
-| Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
-| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 30 | hit | 0,0 | 0,0 | 23,7 | 1,800 | 0,013 | 86400 |
-
-### `2026-07-04T15:21:32.9581473+00:00` `303ba2cc8b0c4af6aa9d5f436bfbaa17`
-
-- **OK:** `True`
-- **Chars:** `855`
-- **Chunks:** `8`
-- **Requested Device:** `cuda`
-- **Total Wall Ms:** `15258,2`
-- **Total Worker Generation Ms:** `13540,0`
-- **Total Conditioning Ms:** `0,0`
-- **Audio Duration Seconds:** `32,040`
-- **Realtime Factor:** `0,476`
-- **Bytes:** `1537920`
-- **Cache Hits:** `0`
-- **Cache Misses:** `4`
-- **Text Preview:** `The web AI is currently unavailable, so I'm starting localAI instead. A gentle nudge in the direction of domestic bliss! To encourage your partner to cook fo...`
-
-| Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
-| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/8 | 120 | miss | 1966,6 | 0,0 | 29,2 | 4,600 | 0,006 | 220800 |
-| 2/8 | 109 | miss | 5899,9 | 0,0 | 5900,8 | 10,040 | 0,588 | 481920 |
-| 3/8 | 122 | miss | 2189,2 | 0,0 | 2191,3 | 7,200 | 0,304 | 345600 |
-| 4/8 | 101 | miss | 3484,4 | 0,0 | 3493,9 | 10,200 | 0,343 | 489600 |
-
-### `2026-07-04T15:21:32.9902754+00:00` `c5d720b5593743f89fde8fbb1d89675b`
-
-- **OK:** `True`
-- **Chars:** `15`
-- **Chunks:** `1`
-- **Requested Device:** `cuda`
-- **Total Wall Ms:** `29,4`
-- **Total Worker Generation Ms:** `0,0`
-- **Total Conditioning Ms:** `0,0`
-- **Audio Duration Seconds:** `1,920`
-- **Realtime Factor:** `0,015`
-- **Bytes:** `92160`
-- **Cache Hits:** `1`
-- **Cache Misses:** `0`
-- **Text Preview:** `Okay, stopping.`
-
-| Chunk | Chars | Cache | Generation ms | Conditioning ms | Chunk wall ms | Audio sec | RTF | Bytes |
-| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1/1 | 15 | hit | 0,0 | 0,0 | 29,3 | 1,920 | 0,015 | 92160 |
+| 1/1 | 7 | hit | 0,0 | 0,0 | 28,7 | 0,800 | 0,036 | 38400 |
 
 ## Raw JSON
 
 ```json
 {
-  "startedUtc": "2026-07-04T15:15:21.9517759+00:00",
-  "stoppedUtc": "2026-07-04T15:21:44.8577071+00:00",
+  "startedUtc": "2026-07-06T20:28:37.1759619+00:00",
+  "stoppedUtc": "2026-07-06T20:31:27.589714+00:00",
   "contentRootPath": "C:\\Users\\jarno\\Source\\Merlin\\Merlin.Backend",
   "provider": "chatterbox",
   "fallbackProvider": "piper",
@@ -1281,166 +1007,67 @@ No synthesize endpoint calls were recorded.
   "endpointTimings": [],
   "routerTimings": [
     {
-      "timestampUtc": "2026-07-04T15:16:20.1035787+00:00",
+      "timestampUtc": "2026-07-06T20:29:10.8077088+00:00",
       "configuredProvider": "chatterbox",
       "selectedProvider": "chatterbox",
       "usedFallback": false,
       "reason": "success",
       "chars": 10,
-      "elapsedMs": 56.0296
+      "elapsedMs": 63.5908
     },
     {
-      "timestampUtc": "2026-07-04T15:16:23.4625219+00:00",
+      "timestampUtc": "2026-07-06T20:29:14.9961035+00:00",
       "configuredProvider": "chatterbox",
       "selectedProvider": "chatterbox",
       "usedFallback": false,
       "reason": "success",
-      "chars": 13,
-      "elapsedMs": 17.1923
+      "chars": 8,
+      "elapsedMs": 17.5787
     },
     {
-      "timestampUtc": "2026-07-04T15:16:28.3726243+00:00",
-      "configuredProvider": "chatterbox",
-      "selectedProvider": "chatterbox",
-      "usedFallback": false,
-      "reason": "success",
-      "chars": 24,
-      "elapsedMs": 18.6
-    },
-    {
-      "timestampUtc": "2026-07-04T15:16:42.2435468+00:00",
-      "configuredProvider": "chatterbox",
-      "selectedProvider": "chatterbox",
-      "usedFallback": false,
-      "reason": "success",
-      "chars": 13,
-      "elapsedMs": 22.0547
-    },
-    {
-      "timestampUtc": "2026-07-04T15:17:30.8812945+00:00",
-      "configuredProvider": "chatterbox",
-      "selectedProvider": "chatterbox",
-      "usedFallback": false,
-      "reason": "success",
-      "chars": 26,
-      "elapsedMs": 24.465
-    },
-    {
-      "timestampUtc": "2026-07-04T15:17:37.1229052+00:00",
-      "configuredProvider": "chatterbox",
-      "selectedProvider": "chatterbox",
-      "usedFallback": false,
-      "reason": "success",
-      "chars": 18,
-      "elapsedMs": 34.97
-    },
-    {
-      "timestampUtc": "2026-07-04T15:18:02.2293046+00:00",
+      "timestampUtc": "2026-07-06T20:29:26.1805821+00:00",
       "configuredProvider": "chatterbox",
       "selectedProvider": "chatterbox",
       "usedFallback": false,
       "reason": "success",
       "chars": 24,
-      "elapsedMs": 19.7629
+      "elapsedMs": 17.4053
     },
     {
-      "timestampUtc": "2026-07-04T15:18:16.6883369+00:00",
+      "timestampUtc": "2026-07-06T20:31:14.4913924+00:00",
       "configuredProvider": "chatterbox",
       "selectedProvider": "chatterbox",
       "usedFallback": false,
       "reason": "success",
-      "chars": 23,
-      "elapsedMs": 17.3293
-    },
-    {
-      "timestampUtc": "2026-07-04T15:18:21.0282237+00:00",
-      "configuredProvider": "chatterbox",
-      "selectedProvider": "chatterbox",
-      "usedFallback": false,
-      "reason": "success",
-      "chars": 147,
-      "elapsedMs": 1908.5742
-    },
-    {
-      "timestampUtc": "2026-07-04T15:18:35.5348828+00:00",
-      "configuredProvider": "chatterbox",
-      "selectedProvider": "chatterbox",
-      "usedFallback": false,
-      "reason": "success",
-      "chars": 13,
-      "elapsedMs": 24.3915
-    },
-    {
-      "timestampUtc": "2026-07-04T15:20:16.4863017+00:00",
-      "configuredProvider": "chatterbox",
-      "selectedProvider": "chatterbox",
-      "usedFallback": false,
-      "reason": "success",
-      "chars": 26,
-      "elapsedMs": 18.1088
-    },
-    {
-      "timestampUtc": "2026-07-04T15:20:22.3346024+00:00",
-      "configuredProvider": "chatterbox",
-      "selectedProvider": "chatterbox",
-      "usedFallback": false,
-      "reason": "success",
-      "chars": 49,
-      "elapsedMs": 18.6033
-    },
-    {
-      "timestampUtc": "2026-07-04T15:20:30.410329+00:00",
-      "configuredProvider": "chatterbox",
-      "selectedProvider": "chatterbox",
-      "usedFallback": false,
-      "reason": "success",
-      "chars": 45,
-      "elapsedMs": 19.3359
-    },
-    {
-      "timestampUtc": "2026-07-04T15:20:41.4193748+00:00",
-      "configuredProvider": "chatterbox",
-      "selectedProvider": "chatterbox",
-      "usedFallback": false,
-      "reason": "success",
-      "chars": 30,
-      "elapsedMs": 24.1924
-    },
-    {
-      "timestampUtc": "2026-07-04T15:21:32.990295+00:00",
-      "configuredProvider": "chatterbox",
-      "selectedProvider": "chatterbox",
-      "usedFallback": false,
-      "reason": "success",
-      "chars": 15,
-      "elapsedMs": 29.7039
+      "chars": 7,
+      "elapsedMs": 29.2657
     }
   ],
   "workerLoadTimings": [
     {
-      "timestampUtc": "2026-07-04T15:15:49.916572+00:00",
+      "timestampUtc": "2026-07-06T20:28:58.0717334+00:00",
       "model": "turbo",
       "requestedDevice": "cuda",
       "selectedDevice": "cuda",
       "ok": true,
-      "workerLoadMs": 17984.881,
-      "totalLoadMs": 18221.4834,
+      "workerLoadMs": 13161.205,
+      "totalLoadMs": 13337.8606,
       "sampleRate": 24000,
       "error": null
     }
   ],
   "synthesisTimings": [
     {
-      "timestampUtc": "2026-07-04T15:15:52.7476139+00:00",
-      "requestId": "44e4756a59944309bbe2240bb336e0a7",
+      "timestampUtc": "2026-07-06T20:28:59.947899+00:00",
+      "requestId": "41784a0556c44a6d80cccb303c0ade09",
       "chars": 29,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 12.8281,
+      "totalWallMs": 9.6798,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.76,
-      "realtimeFactor": 0.007288693181818182,
+      "realtimeFactor": 0.005499886363636364,
       "bytes": 84480,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -1455,25 +1082,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 11.8092,
+          "totalChunkMs": 8.4857,
           "bytes": 84480,
           "durationSeconds": 1.76,
-          "realtimeFactor": 0.006709772727272727,
+          "realtimeFactor": 0.004821420454545455,
           "textPreview": "Opening the app for you, sir."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7503392+00:00",
-      "requestId": "972f2c3b90da4736bfea28a226d98a37",
+      "timestampUtc": "2026-07-06T20:28:59.9509018+00:00",
+      "requestId": "04459aa84e8f4c218da62d790a52f230",
       "chars": 33,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 1.135,
+      "totalWallMs": 1.0826,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 2.24,
-      "realtimeFactor": 0.0005066964285714285,
+      "realtimeFactor": 0.0004833035714285714,
       "bytes": 107520,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -1488,25 +1115,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 1.0051,
+          "totalChunkMs": 0.9694,
           "bytes": 107520,
           "durationSeconds": 2.24,
-          "realtimeFactor": 0.00044870535714285715,
+          "realtimeFactor": 0.0004327678571428571,
           "textPreview": "Opening the website for you, sir."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7513009+00:00",
-      "requestId": "ce2300f392324416bd6fe95d4e1b54f1",
+      "timestampUtc": "2026-07-06T20:28:59.9518137+00:00",
+      "requestId": "5fbbe575a2f74468b8884a12ff85cd7f",
       "chars": 15,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.8403,
+      "totalWallMs": 0.8066,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.44,
-      "realtimeFactor": 0.0005835416666666667,
+      "realtimeFactor": 0.0005601388888888889,
       "bytes": 69120,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -1521,25 +1148,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.6404,
+          "totalChunkMs": 0.661,
           "bytes": 69120,
           "durationSeconds": 1.44,
-          "realtimeFactor": 0.0004447222222222222,
+          "realtimeFactor": 0.0004590277777777778,
           "textPreview": "Opening it now."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7521563+00:00",
-      "requestId": "5e655e98239d402b99a801825d27af59",
+      "timestampUtc": "2026-07-06T20:28:59.9524516+00:00",
+      "requestId": "ce50a4434baf41c9abf83d373ea01e5a",
       "chars": 10,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.7543,
+      "totalWallMs": 0.5566,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.08,
-      "realtimeFactor": 0.0006984259259259258,
+      "realtimeFactor": 0.0005153703703703704,
       "bytes": 51840,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -1554,25 +1181,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.6972,
+          "totalChunkMs": 0.5193,
           "bytes": 51840,
           "durationSeconds": 1.08,
-          "realtimeFactor": 0.0006455555555555556,
+          "realtimeFactor": 0.0004808333333333333,
           "textPreview": "Done, sir."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.752935+00:00",
-      "requestId": "75884602bf0f4f55b2fcbe4cc8f7b608",
+      "timestampUtc": "2026-07-06T20:28:59.9530073+00:00",
+      "requestId": "d3f6f64329604459801c5c60dc1bbc8f",
       "chars": 31,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.6985,
+      "totalWallMs": 0.4988,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 2.2,
-      "realtimeFactor": 0.00031749999999999997,
+      "realtimeFactor": 0.0002267272727272727,
       "bytes": 105600,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -1587,25 +1214,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.6514,
+          "totalChunkMs": 0.4698,
           "bytes": 105600,
           "durationSeconds": 2.2,
-          "realtimeFactor": 0.00029609090909090904,
+          "realtimeFactor": 0.00021354545454545451,
           "textPreview": "I need your confirmation first."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7536912+00:00",
-      "requestId": "d5316076e1874767a5ead7ae4d2d3487",
+      "timestampUtc": "2026-07-06T20:28:59.9535551+00:00",
+      "requestId": "594f230382e547238e80c25d3c1794f7",
       "chars": 31,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.6794,
+      "totalWallMs": 0.4908,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 2.04,
-      "realtimeFactor": 0.00033303921568627454,
+      "realtimeFactor": 0.00024058823529411765,
       "bytes": 97920,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -1620,25 +1247,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.6145,
+          "totalChunkMs": 0.4476,
           "bytes": 97920,
           "durationSeconds": 2.04,
-          "realtimeFactor": 0.00030122549019607846,
+          "realtimeFactor": 0.00021941176470588233,
           "textPreview": "Please confirm that first, sir."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7544617+00:00",
-      "requestId": "24ec6fac35e7432b86319ca334a383ac",
+      "timestampUtc": "2026-07-06T20:28:59.9540854+00:00",
+      "requestId": "3f9c1cde596b42c7a82ff380a0bfdd18",
       "chars": 35,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.6813,
+      "totalWallMs": 0.4778,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 2.12,
-      "realtimeFactor": 0.00032136792452830187,
+      "realtimeFactor": 0.00022537735849056603,
       "bytes": 101760,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -1653,25 +1280,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.6369,
+          "totalChunkMs": 0.4488,
           "bytes": 101760,
           "durationSeconds": 2.12,
-          "realtimeFactor": 0.0003004245283018868,
+          "realtimeFactor": 0.00021169811320754717,
           "textPreview": "I couldn\u0027t complete that from here."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7550882+00:00",
-      "requestId": "d694e3b988f546e3888652fc9d8f37d8",
+      "timestampUtc": "2026-07-06T20:28:59.9546555+00:00",
+      "requestId": "732890e164fa44eaaea82b211d64dcc9",
       "chars": 31,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.5511,
+      "totalWallMs": 0.5114,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 2,
-      "realtimeFactor": 0.00027555,
+      "realtimeFactor": 0.0002557,
       "bytes": 96000,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -1686,25 +1313,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.5168,
+          "totalChunkMs": 0.4858,
           "bytes": 96000,
           "durationSeconds": 2,
-          "realtimeFactor": 0.0002584,
+          "realtimeFactor": 0.0002429,
           "textPreview": "I couldn\u0027t open that from here."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7556605+00:00",
-      "requestId": "89e0df8c92e048c795b4231a2af70c61",
+      "timestampUtc": "2026-07-06T20:28:59.9551752+00:00",
+      "requestId": "1206a1a8e0fa4e2b84cb07fcb0c9b9d7",
       "chars": 24,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.5057,
+      "totalWallMs": 0.466,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 2,
-      "realtimeFactor": 0.00025285,
+      "realtimeFactor": 0.000233,
       "bytes": 96000,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -1719,25 +1346,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.4722,
+          "totalChunkMs": 0.4365,
           "bytes": 96000,
           "durationSeconds": 2,
-          "realtimeFactor": 0.0002361,
+          "realtimeFactor": 0.00021825,
           "textPreview": "I need one detail first."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.756702+00:00",
-      "requestId": "03faba485236448c8a26314be5c8734e",
+      "timestampUtc": "2026-07-06T20:28:59.955676+00:00",
+      "requestId": "f27074e52a7345bab622ce183670738b",
       "chars": 28,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.9708,
+      "totalWallMs": 0.4457,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.84,
-      "realtimeFactor": 0.0005276086956521738,
+      "realtimeFactor": 0.0002422282608695652,
       "bytes": 88320,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -1752,25 +1379,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.9256,
+          "totalChunkMs": 0.4167,
           "bytes": 88320,
           "durationSeconds": 1.84,
-          "realtimeFactor": 0.0005030434782608695,
+          "realtimeFactor": 0.0002264673913043478,
           "textPreview": "Which one should I use, sir?"
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7575448+00:00",
-      "requestId": "edb38665a4974edab5778c4424cd055a",
+      "timestampUtc": "2026-07-06T20:28:59.9563526+00:00",
+      "requestId": "287cf60b193749d3982d17ebd97a15a2",
       "chars": 64,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.7379,
+      "totalWallMs": 0.6212,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 3.76,
-      "realtimeFactor": 0.00019625,
+      "realtimeFactor": 0.00016521276595744683,
       "bytes": 180480,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -1785,25 +1412,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.6683,
+          "totalChunkMs": 0.5926,
           "bytes": 180480,
           "durationSeconds": 3.76,
-          "realtimeFactor": 0.00017773936170212767,
+          "realtimeFactor": 0.0001576063829787234,
           "textPreview": "I couldn\u0027t find that app. Should I open it as a website instead?"
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7584102+00:00",
-      "requestId": "ba9a92464e0a4a7c88a3f2d3cd03ce36",
+      "timestampUtc": "2026-07-06T20:28:59.9569436+00:00",
+      "requestId": "641e4766e97e42a4b0ac202984a60c34",
       "chars": 31,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.76,
+      "totalWallMs": 0.5171,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 2.16,
-      "realtimeFactor": 0.00035185185185185184,
+      "realtimeFactor": 0.00023939814814814814,
       "bytes": 103680,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -1818,25 +1445,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.7166,
+          "totalChunkMs": 0.482,
           "bytes": 103680,
           "durationSeconds": 2.16,
-          "realtimeFactor": 0.00033175925925925924,
+          "realtimeFactor": 0.00022314814814814813,
           "textPreview": "I removed that browser mapping."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7592941+00:00",
-      "requestId": "990a35cefdda411682b3a893077d2162",
+      "timestampUtc": "2026-07-06T20:28:59.957649+00:00",
+      "requestId": "e9026e03011048e685606a92b233da03",
       "chars": 31,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.7824,
+      "totalWallMs": 0.6487,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.92,
-      "realtimeFactor": 0.00040750000000000004,
+      "realtimeFactor": 0.00033786458333333335,
       "bytes": 92160,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -1851,25 +1478,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.723,
+          "totalChunkMs": 0.6161,
           "bytes": 92160,
           "durationSeconds": 1.92,
-          "realtimeFactor": 0.0003765625,
+          "realtimeFactor": 0.00032088541666666664,
           "textPreview": "I updated that browser mapping."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7599316+00:00",
-      "requestId": "4315bf167c72403f9a05e01961218596",
+      "timestampUtc": "2026-07-06T20:28:59.9583896+00:00",
+      "requestId": "9bd3c7889a2f40aca15cc421b9ff08e3",
       "chars": 43,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.5616,
+      "totalWallMs": 0.653,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 3.12,
-      "realtimeFactor": 0.00017999999999999998,
+      "realtimeFactor": 0.0002092948717948718,
       "bytes": 149760,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -1884,25 +1511,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.5205,
+          "totalChunkMs": 0.6044,
           "bytes": 149760,
           "durationSeconds": 3.12,
-          "realtimeFactor": 0.00016682692307692308,
+          "realtimeFactor": 0.0001937179487179487,
           "textPreview": "Of course, sir. What should I change it to?"
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7605746+00:00",
-      "requestId": "284eb5453ed14e4886786022034aaf00",
+      "timestampUtc": "2026-07-06T20:28:59.958943+00:00",
+      "requestId": "da9a08b8259844c895d2226738793ee8",
       "chars": 38,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.5619,
+      "totalWallMs": 0.4905,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 2.28,
-      "realtimeFactor": 0.0002464473684210527,
+      "realtimeFactor": 0.00021513157894736845,
       "bytes": 109440,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -1917,25 +1544,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.5266,
+          "totalChunkMs": 0.4611,
           "bytes": 109440,
           "durationSeconds": 2.28,
-          "realtimeFactor": 0.00023096491228070178,
+          "realtimeFactor": 0.00020223684210526316,
           "textPreview": "I cancelled that browser mapping edit."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7613526+00:00",
-      "requestId": "1e311d78e7f84c8d9705aa9e9b959df3",
+      "timestampUtc": "2026-07-06T20:28:59.959492+00:00",
+      "requestId": "bb2c1438ff764fea8aea06d961c3b70c",
       "chars": 46,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.7096,
+      "totalWallMs": 0.491,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 2.92,
-      "realtimeFactor": 0.000243013698630137,
+      "realtimeFactor": 0.00016815068493150685,
       "bytes": 140160,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -1950,25 +1577,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.6677,
+          "totalChunkMs": 0.4635,
           "bytes": 140160,
           "durationSeconds": 2.92,
-          "realtimeFactor": 0.00022866438356164385,
+          "realtimeFactor": 0.00015873287671232876,
           "textPreview": "Good question, sir. Let me gather my thoughts."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7621575+00:00",
-      "requestId": "6f07d30c3ef44e66b3e100e1b0b44034",
+      "timestampUtc": "2026-07-06T20:28:59.9600373+00:00",
+      "requestId": "5a226538274840f49dc5848bd9156f15",
       "chars": 47,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.7034,
+      "totalWallMs": 0.4906,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 2.96,
-      "realtimeFactor": 0.00023763513513513514,
+      "realtimeFactor": 0.00016574324324324324,
       "bytes": 142080,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -1983,25 +1610,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.6581,
+          "totalChunkMs": 0.4667,
           "bytes": 142080,
           "durationSeconds": 2.96,
-          "realtimeFactor": 0.0002223310810810811,
+          "realtimeFactor": 0.00015766891891891893,
           "textPreview": "Of course, sir. Let me look into that properly."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7629268+00:00",
-      "requestId": "fe31d9a91fed49f3863e2d85a8ed9879",
+      "timestampUtc": "2026-07-06T20:28:59.9605956+00:00",
+      "requestId": "7fdbe8a47c394e7db879eadbecad1ae4",
       "chars": 23,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.6888,
+      "totalWallMs": 0.4987,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.6,
-      "realtimeFactor": 0.0004305,
+      "realtimeFactor": 0.0003116875,
       "bytes": 76800,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2016,25 +1643,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.6444,
+          "totalChunkMs": 0.4712,
           "bytes": 76800,
           "durationSeconds": 1.6,
-          "realtimeFactor": 0.00040275,
+          "realtimeFactor": 0.0002945,
           "textPreview": "I am checking that now."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7637185+00:00",
-      "requestId": "5b27ab3845c04fc3a914314217f7d1d0",
+      "timestampUtc": "2026-07-06T20:28:59.9611207+00:00",
+      "requestId": "beceb66b2793497ba9302e39be4fc5f8",
       "chars": 31,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.7081,
+      "totalWallMs": 0.471,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 2.56,
-      "realtimeFactor": 0.0002766015625,
+      "realtimeFactor": 0.000183984375,
       "bytes": 122880,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2049,25 +1676,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.6617,
+          "totalChunkMs": 0.4424,
           "bytes": 122880,
           "durationSeconds": 2.56,
-          "realtimeFactor": 0.00025847656249999997,
+          "realtimeFactor": 0.0001728125,
           "textPreview": "Of course. Let me check memory."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7643425+00:00",
-      "requestId": "6dbd2635532f4fa6bcbcb5680513e57e",
+      "timestampUtc": "2026-07-06T20:28:59.9618395+00:00",
+      "requestId": "293244f481204057aa39a4400c9ce192",
       "chars": 17,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.5458,
+      "totalWallMs": 0.662,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.32,
-      "realtimeFactor": 0.0004134848484848485,
+      "realtimeFactor": 0.0005015151515151516,
       "bytes": 63360,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2082,25 +1709,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.5067,
+          "totalChunkMs": 0.6316,
           "bytes": 63360,
           "durationSeconds": 1.32,
-          "realtimeFactor": 0.00038386363636363634,
+          "realtimeFactor": 0.0004784848484848484,
           "textPreview": "I am still on it."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7649491+00:00",
-      "requestId": "1085ef1596264f10acd3d5e8cdafc030",
+      "timestampUtc": "2026-07-06T20:28:59.9627596+00:00",
+      "requestId": "5a57c508f7f7416497c448e73301658c",
       "chars": 42,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.5424,
+      "totalWallMs": 0.8069,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 2.4,
-      "realtimeFactor": 0.000226,
+      "realtimeFactor": 0.0003362083333333334,
       "bytes": 115200,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2115,25 +1742,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.5061,
+          "totalChunkMs": 0.7531,
           "bytes": 115200,
           "durationSeconds": 2.4,
-          "realtimeFactor": 0.00021087500000000002,
+          "realtimeFactor": 0.0003137916666666667,
           "textPreview": "This is taking a little longer than usual."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7655984+00:00",
-      "requestId": "c63c4e027307436891df96f6fd42eab7",
+      "timestampUtc": "2026-07-06T20:28:59.963729+00:00",
+      "requestId": "66f8ece19ced4d36afc6359a1d1b1ece",
       "chars": 6,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.5817,
+      "totalWallMs": 0.8825,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1,
-      "realtimeFactor": 0.0005817,
+      "realtimeFactor": 0.0008825,
       "bytes": 48000,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2148,25 +1775,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.544,
+          "totalChunkMs": 0.8347,
           "bytes": 48000,
           "durationSeconds": 1,
-          "realtimeFactor": 0.000544,
+          "realtimeFactor": 0.0008347,
           "textPreview": "Saved."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7661852+00:00",
-      "requestId": "9ec10bcf38c241e694b1d67cfdb6bc23",
+      "timestampUtc": "2026-07-06T20:28:59.9645547+00:00",
+      "requestId": "c5565bf9c8c148d0828d363026f26c18",
       "chars": 20,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.521,
+      "totalWallMs": 0.7252,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.56,
-      "realtimeFactor": 0.00033397435897435893,
+      "realtimeFactor": 0.00046487179487179485,
       "bytes": 74880,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2181,25 +1808,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.4874,
+          "totalChunkMs": 0.6663,
           "bytes": 74880,
           "durationSeconds": 1.56,
-          "realtimeFactor": 0.0003124358974358974,
+          "realtimeFactor": 0.0004271153846153846,
           "textPreview": "I\u0027m awake and ready."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7671035+00:00",
-      "requestId": "444912dc755441cb901bbb9308722f6b",
+      "timestampUtc": "2026-07-06T20:28:59.9653757+00:00",
+      "requestId": "943933e72a7148f39c0ee07139b997d1",
       "chars": 27,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.8486,
+      "totalWallMs": 0.7367,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 2.12,
-      "realtimeFactor": 0.0004002830188679245,
+      "realtimeFactor": 0.0003475,
       "bytes": 101760,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2214,25 +1841,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.7979,
+          "totalChunkMs": 0.7002,
           "bytes": 101760,
           "durationSeconds": 2.12,
-          "realtimeFactor": 0.0003763679245283019,
+          "realtimeFactor": 0.0003302830188679245,
           "textPreview": "I\u0027m here. What do you need?"
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7679826+00:00",
-      "requestId": "5469fa15a6464d34b402770eb6e031af",
+      "timestampUtc": "2026-07-06T20:28:59.9659495+00:00",
+      "requestId": "da7203c1391444ba9a9f5d99ea5ab421",
       "chars": 19,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.7894,
+      "totalWallMs": 0.5054,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.28,
-      "realtimeFactor": 0.00061671875,
+      "realtimeFactor": 0.00039484375,
       "bytes": 61440,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2247,25 +1874,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.7396,
+          "totalChunkMs": 0.4716,
           "bytes": 61440,
           "durationSeconds": 1.28,
-          "realtimeFactor": 0.0005778125,
+          "realtimeFactor": 0.0003684375,
           "textPreview": "Ready when you are."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7687174+00:00",
-      "requestId": "c09eeacd508c4726b556bf3c4c7acdf8",
+      "timestampUtc": "2026-07-06T20:28:59.966527+00:00",
+      "requestId": "edb2a04ecc2b4033adb7270cbf87cb21",
       "chars": 14,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.6637,
+      "totalWallMs": 0.5224,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.04,
-      "realtimeFactor": 0.000638173076923077,
+      "realtimeFactor": 0.0005023076923076923,
       "bytes": 49920,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2280,25 +1907,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.626,
+          "totalChunkMs": 0.4916,
           "bytes": 49920,
           "durationSeconds": 1.04,
-          "realtimeFactor": 0.0006019230769230769,
+          "realtimeFactor": 0.0004726923076923077,
           "textPreview": "I\u0027m listening."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.769547+00:00",
-      "requestId": "9a788eecc3384148859687c4b22a374d",
+      "timestampUtc": "2026-07-06T20:28:59.9672717+00:00",
+      "requestId": "6321c73eb41e4e8790983b6b58349847",
       "chars": 17,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.7252,
+      "totalWallMs": 0.6888,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.92,
-      "realtimeFactor": 0.0003777083333333333,
+      "realtimeFactor": 0.00035875,
       "bytes": 92160,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2313,25 +1940,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.6704,
+          "totalChunkMs": 0.6565,
           "bytes": 92160,
           "durationSeconds": 1.92,
-          "realtimeFactor": 0.0003491666666666667,
+          "realtimeFactor": 0.00034192708333333335,
           "textPreview": "Awake and online."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7705521+00:00",
-      "requestId": "0f3e368dae014e95adffad7de2edeb9a",
+      "timestampUtc": "2026-07-06T20:28:59.968337+00:00",
+      "requestId": "f052b53f35c441afa1b390621c22e7b5",
       "chars": 13,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.9285,
+      "totalWallMs": 0.9474,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 0.92,
-      "realtimeFactor": 0.0010092391304347824,
+      "realtimeFactor": 0.0010297826086956522,
       "bytes": 44160,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2346,25 +1973,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.8844,
+          "totalChunkMs": 0.8885,
           "bytes": 44160,
           "durationSeconds": 0.92,
-          "realtimeFactor": 0.0009613043478260869,
+          "realtimeFactor": 0.0009657608695652173,
           "textPreview": "I\u0027m with you."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7716084+00:00",
-      "requestId": "e60aca97cf004219a295facdacbede61",
+      "timestampUtc": "2026-07-06T20:28:59.9691834+00:00",
+      "requestId": "b24f00180673494db726121f7ec7ba21",
       "chars": 23,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.951,
+      "totalWallMs": 0.7465,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.76,
-      "realtimeFactor": 0.0005403409090909092,
+      "realtimeFactor": 0.0004241477272727273,
       "bytes": 84480,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2379,25 +2006,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.8822,
+          "totalChunkMs": 0.7,
           "bytes": 84480,
           "durationSeconds": 1.76,
-          "realtimeFactor": 0.00050125,
+          "realtimeFactor": 0.00039772727272727274,
           "textPreview": "Here and ready to help."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7727905+00:00",
-      "requestId": "eab59c29596540f1a88e39ca52a26ac8",
+      "timestampUtc": "2026-07-06T20:28:59.9699819+00:00",
+      "requestId": "07755899b94b4f808c5fa3ab2e57f8c9",
       "chars": 14,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.9131,
+      "totalWallMs": 0.7193,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.24,
-      "realtimeFactor": 0.0007363709677419355,
+      "realtimeFactor": 0.0005800806451612903,
       "bytes": 59520,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2412,25 +2039,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.8163,
+          "totalChunkMs": 0.675,
           "bytes": 59520,
           "durationSeconds": 1.24,
-          "realtimeFactor": 0.0006583064516129032,
+          "realtimeFactor": 0.0005443548387096775,
           "textPreview": "I\u0027m here, sir."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7737641+00:00",
-      "requestId": "d6979de80aba41d19f8ed6a26ff0bf59",
+      "timestampUtc": "2026-07-06T20:28:59.9706825+00:00",
+      "requestId": "1a9884d1d5d84cedaa2f7e92bf6ac75c",
       "chars": 12,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.8857,
+      "totalWallMs": 0.6167,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.28,
-      "realtimeFactor": 0.000691953125,
+      "realtimeFactor": 0.00048179687499999997,
       "bytes": 61440,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2445,25 +2072,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.8414,
+          "totalChunkMs": 0.575,
           "bytes": 61440,
           "durationSeconds": 1.28,
-          "realtimeFactor": 0.0006573437499999999,
+          "realtimeFactor": 0.00044921874999999997,
           "textPreview": "Standing by."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7746987+00:00",
-      "requestId": "1dd0939be8f043a3a44c8997044ca56e",
+      "timestampUtc": "2026-07-06T20:28:59.9712418+00:00",
+      "requestId": "d4101d00b89d4e7db5154499620bc987",
       "chars": 27,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.8368,
+      "totalWallMs": 0.4948,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 2.44,
-      "realtimeFactor": 0.00034295081967213113,
+      "realtimeFactor": 0.00020278688524590164,
       "bytes": 117120,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2478,25 +2105,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.7875,
+          "totalChunkMs": 0.4653,
           "bytes": 117120,
           "durationSeconds": 2.44,
-          "realtimeFactor": 0.0003227459016393443,
+          "realtimeFactor": 0.0001906967213114754,
           "textPreview": "Yes. What can I do for you?"
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7756688+00:00",
-      "requestId": "21857138298248ad9de7ccaf286859fa",
+      "timestampUtc": "2026-07-06T20:28:59.9718294+00:00",
+      "requestId": "2f69ad16da1f45738869bda0ff6760b3",
       "chars": 10,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.8359,
+      "totalWallMs": 0.5183,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 0.92,
-      "realtimeFactor": 0.0009085869565217391,
+      "realtimeFactor": 0.0005633695652173912,
       "bytes": 44160,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2511,25 +2138,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.7841,
+          "totalChunkMs": 0.4863,
           "bytes": 44160,
           "durationSeconds": 0.92,
-          "realtimeFactor": 0.0008522826086956521,
+          "realtimeFactor": 0.0005285869565217391,
           "textPreview": "I\u0027m awake."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7766637+00:00",
-      "requestId": "41c501a26ee24e95a1bfde9216e1adc2",
+      "timestampUtc": "2026-07-06T20:28:59.9724133+00:00",
+      "requestId": "befff49b99dc40e0b09b238441a6601e",
       "chars": 9,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.9161,
+      "totalWallMs": 0.5209,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.08,
-      "realtimeFactor": 0.0008482407407407407,
+      "realtimeFactor": 0.0004823148148148148,
       "bytes": 51840,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2544,25 +2171,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.8661,
+          "totalChunkMs": 0.489,
           "bytes": 51840,
           "durationSeconds": 1.08,
-          "realtimeFactor": 0.0008019444444444443,
+          "realtimeFactor": 0.0004527777777777777,
           "textPreview": "I\u0027m here."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7778049+00:00",
-      "requestId": "9421ef15cb734ae4bea93c7ffb7331f5",
+      "timestampUtc": "2026-07-06T20:28:59.9728834+00:00",
+      "requestId": "6ada8168a258461fb89d9ce15ec60517",
       "chars": 14,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 1.0447,
+      "totalWallMs": 0.411,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.04,
-      "realtimeFactor": 0.0010045192307692307,
+      "realtimeFactor": 0.0003951923076923077,
       "bytes": 49920,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2577,25 +2204,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.9929,
+          "totalChunkMs": 0.3833,
           "bytes": 49920,
           "durationSeconds": 1.04,
-          "realtimeFactor": 0.0009547115384615383,
+          "realtimeFactor": 0.0003685576923076923,
           "textPreview": "I\u0027m listening."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7785548+00:00",
-      "requestId": "c687ce8cc72f46df9e460ba168788767",
+      "timestampUtc": "2026-07-06T20:28:59.97355+00:00",
+      "requestId": "b1e71b68e6f745329d74e891eb34459b",
       "chars": 6,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.6721,
+      "totalWallMs": 0.6165,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 0.72,
-      "realtimeFactor": 0.0009334722222222223,
+      "realtimeFactor": 0.00085625,
       "bytes": 34560,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2610,25 +2237,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.6304,
+          "totalChunkMs": 0.5886,
           "bytes": 34560,
           "durationSeconds": 0.72,
-          "realtimeFactor": 0.0008755555555555556,
+          "realtimeFactor": 0.0008175,
           "textPreview": "Ready."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.779311+00:00",
-      "requestId": "393cd1bd0c6b4d23abfbb9694a794738",
+      "timestampUtc": "2026-07-06T20:28:59.9741785+00:00",
+      "requestId": "57163105108845e6b3160c63ddc085aa",
       "chars": 13,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.6777,
+      "totalWallMs": 0.5429,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 0.92,
-      "realtimeFactor": 0.0007366304347826087,
+      "realtimeFactor": 0.0005901086956521739,
       "bytes": 44160,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2643,25 +2270,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.6351,
+          "totalChunkMs": 0.5028,
           "bytes": 44160,
           "durationSeconds": 0.92,
-          "realtimeFactor": 0.0006903260869565217,
+          "realtimeFactor": 0.0005465217391304347,
           "textPreview": "I\u0027m with you."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7801021+00:00",
-      "requestId": "4f4cafec54b140e3a2de0335ed451657",
+      "timestampUtc": "2026-07-06T20:28:59.9748193+00:00",
+      "requestId": "ec1df46f6f834f20b3687d5f13009144",
       "chars": 5,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.6974,
+      "totalWallMs": 0.5777,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 0.8,
-      "realtimeFactor": 0.00087175,
+      "realtimeFactor": 0.000722125,
       "bytes": 38400,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2676,25 +2303,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.6488,
+          "totalChunkMs": 0.5464,
           "bytes": 38400,
           "durationSeconds": 0.8,
-          "realtimeFactor": 0.000811,
+          "realtimeFactor": 0.000683,
           "textPreview": "Here."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7808299+00:00",
-      "requestId": "f293e1557c334eb38ada8f88283e3e1c",
+      "timestampUtc": "2026-07-06T20:28:59.975358+00:00",
+      "requestId": "8a2943d025b74ccba8720fe4c8abfd05",
       "chars": 20,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.6508,
+      "totalWallMs": 0.4662,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.56,
-      "realtimeFactor": 0.0004171794871794872,
+      "realtimeFactor": 0.0002988461538461538,
       "bytes": 74880,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2709,25 +2336,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.6065,
+          "totalChunkMs": 0.4343,
           "bytes": 74880,
           "durationSeconds": 1.56,
-          "realtimeFactor": 0.0003887820512820513,
+          "realtimeFactor": 0.0002783974358974359,
           "textPreview": "Awake and listening."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7815305+00:00",
-      "requestId": "42ed119877c74bf38af8070c52b353dd",
+      "timestampUtc": "2026-07-06T20:28:59.9760423+00:00",
+      "requestId": "2bed332c954f42d29ba57fc72c20829c",
       "chars": 19,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.627,
+      "totalWallMs": 0.63,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.8,
-      "realtimeFactor": 0.0003483333333333333,
+      "realtimeFactor": 0.00035,
       "bytes": 86400,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2742,25 +2369,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.5918,
+          "totalChunkMs": 0.6008,
           "bytes": 86400,
           "durationSeconds": 1.8,
-          "realtimeFactor": 0.00032877777777777777,
+          "realtimeFactor": 0.00033377777777777773,
           "textPreview": "I\u0027m here. Go ahead."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7825078+00:00",
-      "requestId": "821b2fe25b6e4ce2961db72f4d31e9be",
+      "timestampUtc": "2026-07-06T20:28:59.9767077+00:00",
+      "requestId": "6335ab0c6eda40e99a0c5072c4d00ee9",
       "chars": 15,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.9037,
+      "totalWallMs": 0.5826,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.2,
-      "realtimeFactor": 0.0007530833333333334,
+      "realtimeFactor": 0.0004855,
       "bytes": 57600,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2775,25 +2402,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.8646,
+          "totalChunkMs": 0.539,
           "bytes": 57600,
           "durationSeconds": 1.2,
-          "realtimeFactor": 0.0007205,
+          "realtimeFactor": 0.00044916666666666667,
           "textPreview": "Going to sleep."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7835321+00:00",
-      "requestId": "edac3affdcf1432ea04a8d1f9fdc5ed5",
+      "timestampUtc": "2026-07-06T20:28:59.977321+00:00",
+      "requestId": "0d948fc32b6f432099e044ac095552f0",
       "chars": 13,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.9491,
+      "totalWallMs": 0.5467,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.28,
-      "realtimeFactor": 0.000741484375,
+      "realtimeFactor": 0.00042710937499999997,
       "bytes": 61440,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2808,25 +2435,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.9006,
+          "totalChunkMs": 0.5131,
           "bytes": 61440,
           "durationSeconds": 1.28,
-          "realtimeFactor": 0.00070359375,
+          "realtimeFactor": 0.00040085937499999996,
           "textPreview": "Sleeping now."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.784489+00:00",
-      "requestId": "de59f86af3c24f738036d7ed1ed8fe27",
+      "timestampUtc": "2026-07-06T20:28:59.977947+00:00",
+      "requestId": "b5fa68dfbff34c6f961578f7bc14c4af",
       "chars": 14,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.8408,
+      "totalWallMs": 0.5594,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 1.24,
-      "realtimeFactor": 0.0006780645161290322,
+      "realtimeFactor": 0.00045112903225806453,
       "bytes": 59520,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2841,25 +2468,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.7781,
+          "totalChunkMs": 0.5188,
           "bytes": 59520,
           "durationSeconds": 1.24,
-          "realtimeFactor": 0.0006275,
+          "realtimeFactor": 0.0004183870967741936,
           "textPreview": "I\u0027ll stand by."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:15:52.7855294+00:00",
-      "requestId": "688aef510c7f470f9578298ff0bc3545",
+      "timestampUtc": "2026-07-06T20:28:59.9785798+00:00",
+      "requestId": "f615ceff370c4002870a711f9a3fc418",
       "chars": 26,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 0.9474,
+      "totalWallMs": 0.5666,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 3.88,
-      "realtimeFactor": 0.0002441752577319588,
+      "realtimeFactor": 0.00014603092783505156,
       "bytes": 186240,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2874,25 +2501,25 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 0.8906,
+          "totalChunkMs": 0.5368,
           "bytes": 186240,
           "durationSeconds": 3.88,
-          "realtimeFactor": 0.0002295360824742268,
+          "realtimeFactor": 0.00013835051546391754,
           "textPreview": "Resting until you need me."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:16:20.1032153+00:00",
-      "requestId": "995e427400854d9ab407d1c6b064428c",
+      "timestampUtc": "2026-07-06T20:29:10.8074573+00:00",
+      "requestId": "609864524c6642a08bfe278ab9903f3f",
       "chars": 10,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 55.4143,
+      "totalWallMs": 63.054,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
       "audioDurationSeconds": 0.92,
-      "realtimeFactor": 0.060232934782608695,
+      "realtimeFactor": 0.06853695652173912,
       "bytes": 44160,
       "cacheHits": 1,
       "cacheMisses": 0,
@@ -2907,62 +2534,62 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 55.3011,
+          "totalChunkMs": 62.91,
           "bytes": 44160,
           "durationSeconds": 0.92,
-          "realtimeFactor": 0.06010989130434782,
+          "realtimeFactor": 0.06838043478260869,
           "textPreview": "I\u0027m awake."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:16:23.4624989+00:00",
-      "requestId": "024ab0d068a2432290de8f72d84d4965",
-      "chars": 13,
+      "timestampUtc": "2026-07-06T20:29:14.9960845+00:00",
+      "requestId": "42ab1cd72fa84b46af609fcc2f67f540",
+      "chars": 8,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 16.9644,
+      "totalWallMs": 17.4143,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
-      "audioDurationSeconds": 1.04,
-      "realtimeFactor": 0.016311923076923078,
-      "bytes": 49920,
+      "audioDurationSeconds": 0.88,
+      "realtimeFactor": 0.019788977272727274,
+      "bytes": 42240,
       "cacheHits": 1,
       "cacheMisses": 0,
-      "textPreview": "Opening chat.",
+      "textPreview": "Opening.",
       "ok": true,
       "error": null,
       "chunks": [
         {
           "index": 1,
           "count": 1,
-          "chars": 13,
+          "chars": 8,
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 16.8752,
-          "bytes": 49920,
-          "durationSeconds": 1.04,
-          "realtimeFactor": 0.016226153846153845,
-          "textPreview": "Opening chat."
+          "totalChunkMs": 17.3288,
+          "bytes": 42240,
+          "durationSeconds": 0.88,
+          "realtimeFactor": 0.01969181818181818,
+          "textPreview": "Opening."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:16:28.3726007+00:00",
-      "requestId": "05c3a375de004120adf6963fe0074441",
+      "timestampUtc": "2026-07-06T20:29:26.1805644+00:00",
+      "requestId": "22d2bd8714b24b02ba63ff019ebcc1c9",
       "chars": 24,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 18.2858,
+      "totalWallMs": 17.2047,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
-      "audioDurationSeconds": 2,
-      "realtimeFactor": 0.0091429,
-      "bytes": 96000,
+      "audioDurationSeconds": 1.72,
+      "realtimeFactor": 0.010002732558139535,
+      "bytes": 82560,
       "cacheHits": 1,
       "cacheMisses": 0,
-      "textPreview": "UI control mode started.",
+      "textPreview": "Browser pointer started.",
       "ok": true,
       "error": null,
       "chunks": [
@@ -2973,511 +2600,44 @@ No synthesize endpoint calls were recorded.
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 18.2102,
-          "bytes": 96000,
-          "durationSeconds": 2,
-          "realtimeFactor": 0.0091051,
-          "textPreview": "UI control mode started."
+          "totalChunkMs": 17.1395,
+          "bytes": 82560,
+          "durationSeconds": 1.72,
+          "realtimeFactor": 0.009964825581395349,
+          "textPreview": "Browser pointer started."
         }
       ]
     },
     {
-      "timestampUtc": "2026-07-04T15:16:42.243524+00:00",
-      "requestId": "af9ce4505b5643e0bb3bfd2daa61b674",
-      "chars": 13,
+      "timestampUtc": "2026-07-06T20:31:14.4913701+00:00",
+      "requestId": "6ed7c15850b246e7a7c4c65f84549d10",
+      "chars": 7,
       "chunkCount": 1,
       "requestedDevice": "cuda",
-      "totalWallMs": 21.9159,
+      "totalWallMs": 28.8436,
       "totalGenerationMs": 0,
       "totalConditioningMs": 0,
-      "audioDurationSeconds": 1.04,
-      "realtimeFactor": 0.021072980769230767,
-      "bytes": 49920,
+      "audioDurationSeconds": 0.8,
+      "realtimeFactor": 0.036054499999999996,
+      "bytes": 38400,
       "cacheHits": 1,
       "cacheMisses": 0,
-      "textPreview": "Opening chat.",
+      "textPreview": "Closed.",
       "ok": true,
       "error": null,
       "chunks": [
         {
           "index": 1,
           "count": 1,
-          "chars": 13,
+          "chars": 7,
           "cacheStatus": "hit",
           "generationMs": 0,
           "conditioningMs": 0,
-          "totalChunkMs": 21.7595,
-          "bytes": 49920,
-          "durationSeconds": 1.04,
-          "realtimeFactor": 0.020922596153846153,
-          "textPreview": "Opening chat."
-        }
-      ]
-    },
-    {
-      "timestampUtc": "2026-07-04T15:17:30.881262+00:00",
-      "requestId": "da619bf1a780443f95d1198bf0ff6621",
-      "chars": 26,
-      "chunkCount": 1,
-      "requestedDevice": "cuda",
-      "totalWallMs": 24.1792,
-      "totalGenerationMs": 0,
-      "totalConditioningMs": 0,
-      "audioDurationSeconds": 1.68,
-      "realtimeFactor": 0.014392380952380953,
-      "bytes": 80640,
-      "cacheHits": 1,
-      "cacheMisses": 0,
-      "textPreview": "Let me think that through.",
-      "ok": true,
-      "error": null,
-      "chunks": [
-        {
-          "index": 1,
-          "count": 1,
-          "chars": 26,
-          "cacheStatus": "hit",
-          "generationMs": 0,
-          "conditioningMs": 0,
-          "totalChunkMs": 24.0783,
-          "bytes": 80640,
-          "durationSeconds": 1.68,
-          "realtimeFactor": 0.014332321428571429,
-          "textPreview": "Let me think that through."
-        }
-      ]
-    },
-    {
-      "timestampUtc": "2026-07-04T15:17:37.1001275+00:00",
-      "requestId": "72bc43708b4749ae8beab9122c13e049",
-      "chars": 115,
-      "chunkCount": 1,
-      "requestedDevice": "cuda",
-      "totalWallMs": 4038.594,
-      "totalGenerationMs": 0,
-      "totalConditioningMs": 0,
-      "audioDurationSeconds": 0,
-      "realtimeFactor": 0,
-      "bytes": 0,
-      "cacheHits": 0,
-      "cacheMisses": 0,
-      "textPreview": "Thanks for stopping by! That sounds like a perfect place to wrap up. Until next time\u2014take care and see you soon! \uD83C\uDF1F",
-      "ok": true,
-      "error": null,
-      "chunks": []
-    },
-    {
-      "timestampUtc": "2026-07-04T15:17:37.1228876+00:00",
-      "requestId": "f723af1f772446cabf4a31322c4af5c6",
-      "chars": 18,
-      "chunkCount": 1,
-      "requestedDevice": "cuda",
-      "totalWallMs": 34.7888,
-      "totalGenerationMs": 0,
-      "totalConditioningMs": 0,
-      "audioDurationSeconds": 2.2,
-      "realtimeFactor": 0.01581309090909091,
-      "bytes": 105600,
-      "cacheHits": 1,
-      "cacheMisses": 0,
-      "textPreview": "Got it, I\u0027ll stop.",
-      "ok": true,
-      "error": null,
-      "chunks": [
-        {
-          "index": 1,
-          "count": 1,
-          "chars": 18,
-          "cacheStatus": "hit",
-          "generationMs": 0,
-          "conditioningMs": 0,
-          "totalChunkMs": 22.9214,
-          "bytes": 105600,
-          "durationSeconds": 2.2,
-          "realtimeFactor": 0.010418818181818182,
-          "textPreview": "Got it, I\u0027ll stop."
-        }
-      ]
-    },
-    {
-      "timestampUtc": "2026-07-04T15:18:02.2292832+00:00",
-      "requestId": "dc0a40b781ca4a978177cdfbfa015497",
-      "chars": 24,
-      "chunkCount": 1,
-      "requestedDevice": "cuda",
-      "totalWallMs": 19.4237,
-      "totalGenerationMs": 0,
-      "totalConditioningMs": 0,
-      "audioDurationSeconds": 2.04,
-      "realtimeFactor": 0.00952142156862745,
-      "bytes": 97920,
-      "cacheHits": 1,
-      "cacheMisses": 0,
-      "textPreview": "UI control mode stopped.",
-      "ok": true,
-      "error": null,
-      "chunks": [
-        {
-          "index": 1,
-          "count": 1,
-          "chars": 24,
-          "cacheStatus": "hit",
-          "generationMs": 0,
-          "conditioningMs": 0,
-          "totalChunkMs": 19.3322,
-          "bytes": 97920,
-          "durationSeconds": 2.04,
-          "realtimeFactor": 0.009476568627450981,
-          "textPreview": "UI control mode stopped."
-        }
-      ]
-    },
-    {
-      "timestampUtc": "2026-07-04T15:18:16.6883181+00:00",
-      "requestId": "37bce23f5e8049289f4cde3f7f9ebc18",
-      "chars": 23,
-      "chunkCount": 1,
-      "requestedDevice": "cuda",
-      "totalWallMs": 17.1985,
-      "totalGenerationMs": 0,
-      "totalConditioningMs": 0,
-      "audioDurationSeconds": 1.48,
-      "realtimeFactor": 0.011620608108108107,
-      "bytes": 71040,
-      "cacheHits": 1,
-      "cacheMisses": 0,
-      "textPreview": "I\u0027ll work through that.",
-      "ok": true,
-      "error": null,
-      "chunks": [
-        {
-          "index": 1,
-          "count": 1,
-          "chars": 23,
-          "cacheStatus": "hit",
-          "generationMs": 0,
-          "conditioningMs": 0,
-          "totalChunkMs": 17.1197,
-          "bytes": 71040,
-          "durationSeconds": 1.48,
-          "realtimeFactor": 0.011567364864864866,
-          "textPreview": "I\u0027ll work through that."
-        }
-      ]
-    },
-    {
-      "timestampUtc": "2026-07-04T15:18:21.0281993+00:00",
-      "requestId": "a12031291e5c43ac8d0baacc988e0376",
-      "chars": 147,
-      "chunkCount": 2,
-      "requestedDevice": "cuda",
-      "totalWallMs": 1907.7188,
-      "totalGenerationMs": 6064.6539999999995,
-      "totalConditioningMs": 0,
-      "audioDurationSeconds": 12.48,
-      "realtimeFactor": 0.15286208333333334,
-      "bytes": 599040,
-      "cacheHits": 0,
-      "cacheMisses": 2,
-      "textPreview": "It seems your message got cut off. Could you clarify what you meant? I\u0027m here to help with practical, grounded advice\u2014just need a bit more context.",
-      "ok": true,
-      "error": null,
-      "chunks": [
-        {
-          "index": 1,
-          "count": 2,
-          "chars": 68,
-          "cacheStatus": "miss",
-          "generationMs": 4225.221,
-          "conditioningMs": 0,
-          "totalChunkMs": 15.8898,
-          "bytes": 403200,
-          "durationSeconds": 8.4,
-          "realtimeFactor": 0.001891642857142857,
-          "textPreview": "It seems your message got cut off. Could you clarify what you meant?"
-        },
-        {
-          "index": 2,
-          "count": 2,
-          "chars": 78,
-          "cacheStatus": "miss",
-          "generationMs": 1839.433,
-          "conditioningMs": 0,
-          "totalChunkMs": 1891.6335,
-          "bytes": 195840,
-          "durationSeconds": 4.08,
-          "realtimeFactor": 0.4636356617647059,
-          "textPreview": "I\u0027m here to help with practical, grounded advice\u2014just need a bit more context."
-        }
-      ]
-    },
-    {
-      "timestampUtc": "2026-07-04T15:18:35.5348598+00:00",
-      "requestId": "2d5f4334316343ea82f721578fe2b075",
-      "chars": 13,
-      "chunkCount": 1,
-      "requestedDevice": "cuda",
-      "totalWallMs": 24.1555,
-      "totalGenerationMs": 0,
-      "totalConditioningMs": 0,
-      "audioDurationSeconds": 1.04,
-      "realtimeFactor": 0.023226442307692306,
-      "bytes": 49920,
-      "cacheHits": 1,
-      "cacheMisses": 0,
-      "textPreview": "Opening chat.",
-      "ok": true,
-      "error": null,
-      "chunks": [
-        {
-          "index": 1,
-          "count": 1,
-          "chars": 13,
-          "cacheStatus": "hit",
-          "generationMs": 0,
-          "conditioningMs": 0,
-          "totalChunkMs": 24.0873,
-          "bytes": 49920,
-          "durationSeconds": 1.04,
-          "realtimeFactor": 0.023160865384615384,
-          "textPreview": "Opening chat."
-        }
-      ]
-    },
-    {
-      "timestampUtc": "2026-07-04T15:20:16.4862743+00:00",
-      "requestId": "afeaa110b0d04691a4a987609ec521a6",
-      "chars": 26,
-      "chunkCount": 1,
-      "requestedDevice": "cuda",
-      "totalWallMs": 17.873,
-      "totalGenerationMs": 0,
-      "totalConditioningMs": 0,
-      "audioDurationSeconds": 1.68,
-      "realtimeFactor": 0.010638690476190477,
-      "bytes": 80640,
-      "cacheHits": 1,
-      "cacheMisses": 0,
-      "textPreview": "Let me think that through.",
-      "ok": true,
-      "error": null,
-      "chunks": [
-        {
-          "index": 1,
-          "count": 1,
-          "chars": 26,
-          "cacheStatus": "hit",
-          "generationMs": 0,
-          "conditioningMs": 0,
-          "totalChunkMs": 17.78,
-          "bytes": 80640,
-          "durationSeconds": 1.68,
-          "realtimeFactor": 0.010583333333333333,
-          "textPreview": "Let me think that through."
-        }
-      ]
-    },
-    {
-      "timestampUtc": "2026-07-04T15:20:22.3345825+00:00",
-      "requestId": "5d9334cded2f4b18bcc59868dc22c77b",
-      "chars": 49,
-      "chunkCount": 1,
-      "requestedDevice": "cuda",
-      "totalWallMs": 18.375,
-      "totalGenerationMs": 0,
-      "totalConditioningMs": 0,
-      "audioDurationSeconds": 3.28,
-      "realtimeFactor": 0.005602134146341463,
-      "bytes": 157440,
-      "cacheHits": 1,
-      "cacheMisses": 0,
-      "textPreview": "I have the context. I am putting it together now.",
-      "ok": true,
-      "error": null,
-      "chunks": [
-        {
-          "index": 1,
-          "count": 1,
-          "chars": 49,
-          "cacheStatus": "hit",
-          "generationMs": 0,
-          "conditioningMs": 0,
-          "totalChunkMs": 18.2875,
-          "bytes": 157440,
-          "durationSeconds": 3.28,
-          "realtimeFactor": 0.005575457317073171,
-          "textPreview": "I have the context. I am putting it together now."
-        }
-      ]
-    },
-    {
-      "timestampUtc": "2026-07-04T15:20:30.4102851+00:00",
-      "requestId": "fa4f940c03f249b0aa7dfd1ee4ba7794",
-      "chars": 45,
-      "chunkCount": 1,
-      "requestedDevice": "cuda",
-      "totalWallMs": 19.0776,
-      "totalGenerationMs": 0,
-      "totalConditioningMs": 0,
-      "audioDurationSeconds": 2.36,
-      "realtimeFactor": 0.008083728813559322,
-      "bytes": 113280,
-      "cacheHits": 1,
-      "cacheMisses": 0,
-      "textPreview": "I am taking a little more care with this one.",
-      "ok": true,
-      "error": null,
-      "chunks": [
-        {
-          "index": 1,
-          "count": 1,
-          "chars": 45,
-          "cacheStatus": "hit",
-          "generationMs": 0,
-          "conditioningMs": 0,
-          "totalChunkMs": 18.9332,
-          "bytes": 113280,
-          "durationSeconds": 2.36,
-          "realtimeFactor": 0.008022542372881357,
-          "textPreview": "I am taking a little more care with this one."
-        }
-      ]
-    },
-    {
-      "timestampUtc": "2026-07-04T15:20:41.4193386+00:00",
-      "requestId": "b900e3de4da94ab7b421b20fd2994389",
-      "chars": 30,
-      "chunkCount": 1,
-      "requestedDevice": "cuda",
-      "totalWallMs": 23.8402,
-      "totalGenerationMs": 0,
-      "totalConditioningMs": 0,
-      "audioDurationSeconds": 1.8,
-      "realtimeFactor": 0.013244555555555555,
-      "bytes": 86400,
-      "cacheHits": 1,
-      "cacheMisses": 0,
-      "textPreview": "Still working through it, sir.",
-      "ok": true,
-      "error": null,
-      "chunks": [
-        {
-          "index": 1,
-          "count": 1,
-          "chars": 30,
-          "cacheStatus": "hit",
-          "generationMs": 0,
-          "conditioningMs": 0,
-          "totalChunkMs": 23.7202,
-          "bytes": 86400,
-          "durationSeconds": 1.8,
-          "realtimeFactor": 0.013177888888888888,
-          "textPreview": "Still working through it, sir."
-        }
-      ]
-    },
-    {
-      "timestampUtc": "2026-07-04T15:21:32.9581473+00:00",
-      "requestId": "303ba2cc8b0c4af6aa9d5f436bfbaa17",
-      "chars": 855,
-      "chunkCount": 8,
-      "requestedDevice": "cuda",
-      "totalWallMs": 15258.1535,
-      "totalGenerationMs": 13539.997,
-      "totalConditioningMs": 0,
-      "audioDurationSeconds": 32.04,
-      "realtimeFactor": 0.47622201935081154,
-      "bytes": 1537920,
-      "cacheHits": 0,
-      "cacheMisses": 4,
-      "textPreview": "The web AI is currently unavailable, so I\u0027m starting localAI instead. A gentle nudge in the direction of domestic bliss! To encourage your partner to cook fo...",
-      "ok": true,
-      "error": null,
-      "chunks": [
-        {
-          "index": 1,
-          "count": 8,
-          "chars": 120,
-          "cacheStatus": "miss",
-          "generationMs": 1966.572,
-          "conditioningMs": 0,
-          "totalChunkMs": 29.2215,
-          "bytes": 220800,
-          "durationSeconds": 4.6,
-          "realtimeFactor": 0.0063525000000000005,
-          "textPreview": "The web AI is currently unavailable, so I\u0027m starting localAI instead. A gentle nudge in the direction of domestic bliss!"
-        },
-        {
-          "index": 2,
-          "count": 8,
-          "chars": 109,
-          "cacheStatus": "miss",
-          "generationMs": 5899.863,
-          "conditioningMs": 0,
-          "totalChunkMs": 5900.8413,
-          "bytes": 481920,
-          "durationSeconds": 10.04,
-          "realtimeFactor": 0.5877331972111554,
-          "textPreview": "To encourage your partner to cook for you, consider these suggestions. First, communicate your needs clearly."
-        },
-        {
-          "index": 3,
-          "count": 8,
-          "chars": 122,
-          "cacheStatus": "miss",
-          "generationMs": 2189.163,
-          "conditioningMs": 0,
-          "totalChunkMs": 2191.3211,
-          "bytes": 345600,
-          "durationSeconds": 7.2,
-          "realtimeFactor": 0.30435015277777777,
-          "textPreview": "Let him know how much you appreciate his cooking and what types of meals you\u0027d enjoy. Second, share recipes or meal ideas."
-        },
-        {
-          "index": 4,
-          "count": 8,
-          "chars": 101,
-          "cacheStatus": "miss",
-          "generationMs": 3484.399,
-          "conditioningMs": 0,
-          "totalChunkMs": 3493.9492,
-          "bytes": 489600,
-          "durationSeconds": 10.2,
-          "realtimeFactor": 0.34254403921568627,
-          "textPreview": "Suggest simple recipes or cuisines you\u0027ve been wanting to try together. Third, make it a team effort."
-        }
-      ]
-    },
-    {
-      "timestampUtc": "2026-07-04T15:21:32.9902754+00:00",
-      "requestId": "c5d720b5593743f89fde8fbb1d89675b",
-      "chars": 15,
-      "chunkCount": 1,
-      "requestedDevice": "cuda",
-      "totalWallMs": 29.4215,
-      "totalGenerationMs": 0,
-      "totalConditioningMs": 0,
-      "audioDurationSeconds": 1.92,
-      "realtimeFactor": 0.015323697916666667,
-      "bytes": 92160,
-      "cacheHits": 1,
-      "cacheMisses": 0,
-      "textPreview": "Okay, stopping.",
-      "ok": true,
-      "error": null,
-      "chunks": [
-        {
-          "index": 1,
-          "count": 1,
-          "chars": 15,
-          "cacheStatus": "hit",
-          "generationMs": 0,
-          "conditioningMs": 0,
-          "totalChunkMs": 29.3397,
-          "bytes": 92160,
-          "durationSeconds": 1.92,
-          "realtimeFactor": 0.01528109375,
-          "textPreview": "Okay, stopping."
+          "totalChunkMs": 28.6814,
+          "bytes": 38400,
+          "durationSeconds": 0.8,
+          "realtimeFactor": 0.035851749999999995,
+          "textPreview": "Closed."
         }
       ]
     }

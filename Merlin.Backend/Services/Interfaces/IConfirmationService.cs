@@ -1,4 +1,5 @@
 using Merlin.Backend.Models;
+using Merlin.Backend.Services.BrowserWorkspace.PageControl.Safety;
 
 namespace Merlin.Backend.Services;
 
@@ -17,7 +18,8 @@ public interface IConfirmationService
         string intent,
         string normalizedCommand,
         string toolName,
-        IReadOnlyList<ApplicationCandidate>? candidates = null);
+        IReadOnlyList<ApplicationCandidate>? candidates = null,
+        BrowserPagePendingConfirmation? browserPage = null);
 
     PendingConfirmation? GetLatestPending();
 

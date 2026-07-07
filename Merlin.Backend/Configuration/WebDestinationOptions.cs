@@ -1,0 +1,24 @@
+namespace Merlin.Backend.Configuration;
+
+public sealed class WebDestinationOptions
+{
+    public Dictionary<string, string> KnownDestinations { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["google"] = "https://www.google.com",
+            ["facebook"] = "https://www.facebook.com",
+            ["youtube"] = "https://www.youtube.com",
+            ["reddit"] = "https://www.reddit.com",
+            ["github"] = "https://github.com",
+            ["x"] = "https://x.com",
+            ["twitter"] = "https://x.com",
+            ["linkedin"] = "https://www.linkedin.com",
+            ["gmail"] = "https://mail.google.com",
+            ["maps"] = "https://www.google.com/maps",
+            ["google maps"] = "https://www.google.com/maps",
+            ["nu"] = "https://www.nu.nl",
+            ["nu.nl"] = "https://www.nu.nl",
+            ["bol"] = "https://www.bol.com",
+            ["bol.com"] = "https://www.bol.com"
+        };
+}

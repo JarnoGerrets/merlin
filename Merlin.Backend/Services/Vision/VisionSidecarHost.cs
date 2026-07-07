@@ -16,6 +16,8 @@ public sealed class VisionSidecarHost : IVisionSidecarHost, IAsyncDisposable
     private Process? _process;
     private StreamWriter? _input;
     private TaskCompletionSource<bool>? _readySignal;
+    private TaskCompletionSource<VisionPinchCalibrationResult>? _pinchCalibrationSignal;
+    private TaskCompletionSource<VisionMotionRegionCalibrationResult>? _motionRegionCalibrationSignal;
     private int _restartAttempts;
 
     public VisionSidecarHost(
@@ -72,6 +74,8 @@ public sealed class VisionSidecarHost : IVisionSidecarHost, IAsyncDisposable
             {
                 type = "vision.start_tracking",
                 cameraName = options.PreferredCameraName,
+                backend = options.Backend,
+                captureProfile = options.CaptureProfile,
                 cameraIndex = options.CameraIndex,
                 modelAssetPath = ResolvePath(options.ModelAssetPath),
                 width = options.Width,
@@ -87,8 +91,16 @@ public sealed class VisionSidecarHost : IVisionSidecarHost, IAsyncDisposable
                 pinchHoldRatio = options.PinchHoldRatio,
                 pinchReleaseRatio = options.PinchReleaseRatio,
                 pinchDebounceMs = options.PinchDebounceMs,
+                pinchCalibrationPath = ResolvePath(options.PinchCalibrationPath),
+                motionRegionCalibrationPath = ResolvePath(options.MotionRegionCalibrationPath),
                 smoothingAlpha = options.SmoothingAlpha,
-                pointerDeadzone = options.PointerDeadzone
+                pointerDeadzone = options.PointerDeadzone,
+                pointerGainX = options.PointerGainX,
+                pointerGainY = options.PointerGainY,
+                controlRegionLeft = options.ControlRegionLeft,
+                controlRegionTop = options.ControlRegionTop,
+                controlRegionRight = options.ControlRegionRight,
+                controlRegionBottom = options.ControlRegionBottom
             }, cancellationToken);
         }
         catch (Exception exception)
@@ -99,6 +111,171 @@ public sealed class VisionSidecarHost : IVisionSidecarHost, IAsyncDisposable
         finally
         {
             _gate.Release();
+        }
+    }
+
+    public async Task<VisionMotionRegionCalibrationResult> CalibrateMotionRegionAsync(CancellationToken cancellationToken = default)
+    {
+        if (!_options.CurrentValue.Enabled)
+        {
+            State = VisionHealthState.Disabled;
+            return new VisionMotionRegionCalibrationResult
+            {
+                Success = false,
+                Message = "Vision is disabled."
+            };
+        }
+
+        var options = _options.CurrentValue;
+        var signal = new TaskCompletionSource<VisionMotionRegionCalibrationResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            await EnsureProcessStartedLockedAsync(cancellationToken);
+            _motionRegionCalibrationSignal?.TrySetResult(new VisionMotionRegionCalibrationResult
+            {
+                Success = false,
+                Message = "Motion region calibration was replaced by a newer request."
+            });
+            _motionRegionCalibrationSignal = signal;
+
+            _logger.LogInformation("VisionMotionRegionCalibrationRequested");
+            await SendCommandLockedAsync(new
+            {
+                type = "vision.calibrate_motion_region",
+                leadInSeconds = options.MotionRegionCalibrationLeadInSeconds,
+                cornerSeconds = options.MotionRegionCalibrationCornerSeconds,
+                phasePauseSeconds = options.MotionRegionCalibrationPhasePauseSeconds,
+                padding = options.MotionRegionCalibrationPadding,
+                calibrationPath = ResolvePath(options.MotionRegionCalibrationPath)
+            }, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            _motionRegionCalibrationSignal = null;
+            State = VisionHealthState.Faulted;
+            _logger.LogWarning(exception, "VisionMotionRegionCalibrationFailed");
+            return new VisionMotionRegionCalibrationResult
+            {
+                Success = false,
+                Message = exception.Message
+            };
+        }
+        finally
+        {
+            _gate.Release();
+        }
+
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(
+                Math.Max(10.0,
+                    options.MotionRegionCalibrationLeadInSeconds
+                    + (options.MotionRegionCalibrationCornerSeconds * 4.0)
+                    + (options.MotionRegionCalibrationPhasePauseSeconds * 4.0)
+                    + 8.0)));
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+            using var registration = linked.Token.Register(() => signal.TrySetCanceled(linked.Token));
+            return await signal.Task;
+        }
+        catch (OperationCanceledException)
+        {
+            return new VisionMotionRegionCalibrationResult
+            {
+                Success = false,
+                Message = "Motion region calibration timed out."
+            };
+        }
+        finally
+        {
+            if (ReferenceEquals(_motionRegionCalibrationSignal, signal))
+            {
+                _motionRegionCalibrationSignal = null;
+            }
+        }
+    }
+
+    public async Task<VisionPinchCalibrationResult> CalibratePinchAsync(CancellationToken cancellationToken = default)
+    {
+        if (!_options.CurrentValue.Enabled)
+        {
+            State = VisionHealthState.Disabled;
+            return new VisionPinchCalibrationResult
+            {
+                Success = false,
+                Message = "Vision is disabled."
+            };
+        }
+
+        var options = _options.CurrentValue;
+        var signal = new TaskCompletionSource<VisionPinchCalibrationResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            await EnsureProcessStartedLockedAsync(cancellationToken);
+            _pinchCalibrationSignal?.TrySetResult(new VisionPinchCalibrationResult
+            {
+                Success = false,
+                Message = "Pinch calibration was replaced by a newer request."
+            });
+            _pinchCalibrationSignal = signal;
+
+            _logger.LogInformation("VisionPinchCalibrationRequested");
+            await SendCommandLockedAsync(new
+            {
+                type = "vision.calibrate_pinch",
+                leadInSeconds = options.PinchCalibrationLeadInSeconds,
+                openSeconds = options.PinchCalibrationOpenSeconds,
+                pinchedSeconds = options.PinchCalibrationPinchedSeconds,
+                releaseSeconds = options.PinchCalibrationReleaseSeconds,
+                phasePauseSeconds = options.PinchCalibrationPhasePauseSeconds,
+                calibrationPath = ResolvePath(options.PinchCalibrationPath)
+            }, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            _pinchCalibrationSignal = null;
+            State = VisionHealthState.Faulted;
+            _logger.LogWarning(exception, "VisionPinchCalibrationFailed");
+            return new VisionPinchCalibrationResult
+            {
+                Success = false,
+                Message = exception.Message
+            };
+        }
+        finally
+        {
+            _gate.Release();
+        }
+
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(
+                Math.Max(10.0,
+                    options.PinchCalibrationLeadInSeconds
+                    + options.PinchCalibrationOpenSeconds
+                    + options.PinchCalibrationPinchedSeconds
+                    + options.PinchCalibrationReleaseSeconds
+                    + (options.PinchCalibrationPhasePauseSeconds * 3.0)
+                    + 8.0)));
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+            using var registration = linked.Token.Register(() => signal.TrySetCanceled(linked.Token));
+            return await signal.Task;
+        }
+        catch (OperationCanceledException)
+        {
+            return new VisionPinchCalibrationResult
+            {
+                Success = false,
+                Message = "Pinch calibration timed out."
+            };
+        }
+        finally
+        {
+            if (ReferenceEquals(_pinchCalibrationSignal, signal))
+            {
+                _pinchCalibrationSignal = null;
+            }
         }
     }
 
@@ -305,7 +482,79 @@ public sealed class VisionSidecarHost : IVisionSidecarHost, IAsyncDisposable
                 break;
             case "vision.error":
                 State = VisionHealthState.Faulted;
+                _pinchCalibrationSignal?.TrySetResult(new VisionPinchCalibrationResult
+                {
+                    Success = false,
+                    Message = message.Message ?? message.Error
+                });
+                _motionRegionCalibrationSignal?.TrySetResult(new VisionMotionRegionCalibrationResult
+                {
+                    Success = false,
+                    Message = message.Message ?? message.Error
+                });
                 _logger.LogWarning("VisionFaulted Error: {Error}. Message: {Message}.", message.Error, message.Message);
+                break;
+            case "vision.pinch_calibration_started":
+                _logger.LogInformation("VisionPinchCalibrationStarted Message: {Message}.", message.Message);
+                break;
+            case "vision.pinch_calibration_completed":
+                var result = new VisionPinchCalibrationResult
+                {
+                    Success = string.Equals(message.Status, "success", StringComparison.OrdinalIgnoreCase),
+                    Message = message.Message,
+                    PinchStartRatio = message.PinchStartRatio,
+                    PinchHoldRatio = message.PinchHoldRatio,
+                    PinchReleaseRatio = message.PinchReleaseRatio,
+                    OpenSamples = message.OpenSamples,
+                    PinchSamples = message.PinchSamples,
+                    ReleaseSamples = message.ReleaseSamples,
+                    CalibrationPath = message.CalibrationPath
+                };
+                _logger.LogInformation(
+                    "VisionPinchCalibrationCompleted Success: {Success}. PinchStartRatio: {PinchStartRatio}. PinchHoldRatio: {PinchHoldRatio}. PinchReleaseRatio: {PinchReleaseRatio}. OpenSamples: {OpenSamples}. PinchSamples: {PinchSamples}. ReleaseSamples: {ReleaseSamples}. CalibrationPath: {CalibrationPath}. Message: {Message}.",
+                    result.Success,
+                    result.PinchStartRatio,
+                    result.PinchHoldRatio,
+                    result.PinchReleaseRatio,
+                    result.OpenSamples,
+                    result.PinchSamples,
+                    result.ReleaseSamples,
+                    result.CalibrationPath,
+                    result.Message);
+                _pinchCalibrationSignal?.TrySetResult(result);
+                break;
+            case "vision.motion_region_calibration_started":
+                _logger.LogInformation("VisionMotionRegionCalibrationStarted Message: {Message}.", message.Message);
+                break;
+            case "vision.motion_region_calibration_completed":
+                var motionResult = new VisionMotionRegionCalibrationResult
+                {
+                    Success = string.Equals(message.Status, "success", StringComparison.OrdinalIgnoreCase),
+                    Message = message.Message,
+                    ControlRegionLeft = message.ControlRegionLeft,
+                    ControlRegionTop = message.ControlRegionTop,
+                    ControlRegionRight = message.ControlRegionRight,
+                    ControlRegionBottom = message.ControlRegionBottom,
+                    TopLeftSamples = message.TopLeftSamples,
+                    TopRightSamples = message.TopRightSamples,
+                    BottomRightSamples = message.BottomRightSamples,
+                    BottomLeftSamples = message.BottomLeftSamples,
+                    CalibrationPath = message.CalibrationPath
+                };
+                _logger.LogInformation(
+                    "VisionMotionRegionCalibrationCompleted Success: {Success}. Left: {Left}. Top: {Top}. Right: {Right}. Bottom: {Bottom}. TopLeftSamples: {TopLeftSamples}. TopRightSamples: {TopRightSamples}. BottomRightSamples: {BottomRightSamples}. BottomLeftSamples: {BottomLeftSamples}. CalibrationPath: {CalibrationPath}. Message: {Message}.",
+                    motionResult.Success,
+                    motionResult.ControlRegionLeft,
+                    motionResult.ControlRegionTop,
+                    motionResult.ControlRegionRight,
+                    motionResult.ControlRegionBottom,
+                    motionResult.TopLeftSamples,
+                    motionResult.TopRightSamples,
+                    motionResult.BottomRightSamples,
+                    motionResult.BottomLeftSamples,
+                    motionResult.CalibrationPath,
+                    motionResult.Message);
+                _motionRegionCalibrationSignal?.TrySetResult(motionResult);
                 break;
             case "gesture.pointer.move":
             case "gesture.pinch.start":

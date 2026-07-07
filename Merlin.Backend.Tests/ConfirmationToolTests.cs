@@ -1,5 +1,10 @@
 using Merlin.Backend.Models;
 using Merlin.Backend.Services;
+using Merlin.Backend.Services.BrowserWorkspace;
+using Merlin.Backend.Services.BrowserWorkspace.PageControl;
+using Merlin.Backend.Services.BrowserWorkspace.PageControl.Robustness;
+using Merlin.Backend.Services.BrowserWorkspace.PageControl.Safety;
+using Merlin.Backend.Services.BrowserWorkspace.Snapshot;
 using Merlin.Backend.Tools;
 using Xunit;
 
@@ -108,6 +113,128 @@ public sealed class ConfirmationToolTests
         Assert.NotNull(trustedUrlStore.FindByAlias("facebook"));
         Assert.Null(trustedCommandStore.FindByCommand("can you open facebook for me"));
         Assert.Null(trustedCommandStore.FindByCommand("open facebook.com"));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenPendingUrlFallbackExistsAndWorkspaceAvailable_OpensWorkspaceInsteadOfDefaultBrowser()
+    {
+        var confirmationService = new ConfirmationService();
+        var launcher = new FakeProcessLauncher();
+        var trustedStore = new FakeTrustedApplicationStore();
+        var trustedUrlStore = new FakeTrustedUrlStore();
+        var workspace = new FakeBrowserWorkspaceService();
+        confirmationService.Create(
+            "open_url_fallback",
+            "https://facebook.com",
+            "facebook.com",
+            "facebook",
+            "can you open facebook for me",
+            "open_url",
+            "open facebook.com",
+            "Open URL");
+        var tool = new ConfirmationTool(
+            confirmationService,
+            launcher,
+            trustedStore,
+            trustedUrlStore,
+            workspace);
+
+        var result = await tool.ExecuteAsync("confirm");
+
+        Assert.True(result.Success);
+        Assert.True(workspace.WasOpened);
+        Assert.Equal("https://facebook.com", workspace.NavigatedUrl);
+        Assert.Null(launcher.LaunchedTarget);
+        Assert.NotNull(trustedUrlStore.FindByAlias("facebook"));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenBrowserPageClickConfirmed_RevalidatesAndClicks()
+    {
+        var confirmationService = new ConfirmationService();
+        var workspace = new FakeBrowserWorkspaceService
+        {
+            ConfirmClickResult = new BrowserPageActionResult
+            {
+                Success = true,
+                ElementId = "button_1"
+            }
+        };
+        var pending = new BrowserPagePendingConfirmation
+        {
+            Action = BrowserPageAction.ClickVisibleElement,
+            ElementId = "button_1",
+            ElementText = "Checkout",
+            CurrentUrl = "https://example.test/cart",
+            SnapshotCapturedAtUtc = DateTimeOffset.UtcNow,
+            Risks = [BrowserPageSafetyRisk.PurchaseOrPayment]
+        };
+        confirmationService.Create(
+            "browser_page_click",
+            "button_1",
+            "Checkout",
+            "checkout",
+            "click checkout",
+            "browser_workspace_page_click",
+            "click checkout",
+            "Merlin Browser Workspace",
+            browserPage: pending);
+        var tool = new ConfirmationTool(
+            confirmationService,
+            new FakeProcessLauncher(),
+            new FakeTrustedApplicationStore(),
+            browserWorkspaceService: workspace);
+
+        var result = await tool.ExecuteAsync("yes");
+
+        Assert.True(result.Success);
+        Assert.Equal("Clicked.", result.Message);
+        Assert.Same(pending, workspace.ConfirmedPending);
+        Assert.Equal(0, confirmationService.PendingCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenBrowserPageClickConfirmationIsStale_DoesNotClick()
+    {
+        var confirmationService = new ConfirmationService();
+        var workspace = new FakeBrowserWorkspaceService
+        {
+            ConfirmClickResult = new BrowserPageActionResult
+            {
+                Success = false,
+                ErrorCode = "confirmation_stale",
+                ElementId = "button_1"
+            }
+        };
+        confirmationService.Create(
+            "browser_page_click",
+            "button_1",
+            "Delete",
+            "delete",
+            "click delete",
+            "browser_workspace_page_click",
+            "click delete",
+            "Merlin Browser Workspace",
+            browserPage: new BrowserPagePendingConfirmation
+            {
+                Action = BrowserPageAction.ClickVisibleElement,
+                ElementId = "button_1",
+                ElementText = "Delete",
+                CurrentUrl = "https://example.test",
+                SnapshotCapturedAtUtc = DateTimeOffset.UtcNow,
+                Risks = [BrowserPageSafetyRisk.DestructiveAction]
+            });
+        var tool = new ConfirmationTool(
+            confirmationService,
+            new FakeProcessLauncher(),
+            new FakeTrustedApplicationStore(),
+            browserWorkspaceService: workspace);
+
+        var result = await tool.ExecuteAsync("confirm");
+
+        Assert.False(result.Success);
+        Assert.Equal("That page changed, so I won't click it.", result.Message);
+        Assert.Equal("CONFIRMATION_STALE", result.ErrorCode);
     }
 
     [Fact]
@@ -429,6 +556,122 @@ public sealed class ConfirmationToolTests
         public Task LaunchAsync(string target, CancellationToken cancellationToken = default)
         {
             LaunchedTarget = target;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakeBrowserWorkspaceService : IBrowserWorkspaceService
+    {
+        public event Func<BrowserWorkspaceStateChanged, CancellationToken, Task>? StateChanged;
+
+        public bool IsActive => false;
+
+        public BrowserWorkspaceBounds? CurrentBounds => null;
+
+        public BrowserPageSnapshot? LatestSnapshot => null;
+
+        public bool OpenUrlsInsideWorkspaceWhenActive => true;
+
+        public bool WasOpened { get; private set; }
+
+        public string? NavigatedUrl { get; private set; }
+
+        public BrowserPagePendingConfirmation? ConfirmedPending { get; private set; }
+
+        public BrowserPageActionResult ConfirmClickResult { get; init; } = new()
+        {
+            Success = false,
+            ErrorCode = "not_supported"
+        };
+
+        public Task OpenAsync(string? initialUrl = null, CancellationToken cancellationToken = default)
+        {
+            WasOpened = true;
+            StateChanged?.Invoke(new BrowserWorkspaceStateChanged(true, CurrentBounds, "test"), cancellationToken);
+            return Task.CompletedTask;
+        }
+
+        public Task NavigateAsync(string url, CancellationToken cancellationToken = default)
+        {
+            NavigatedUrl = url;
+            return Task.CompletedTask;
+        }
+
+        public Task BackAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task ForwardAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task RefreshAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task ScrollAsync(
+            BrowserScrollDirection direction,
+            BrowserScrollAmount amount,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task ScrollToTopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task ScrollToBottomAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task ZoomInAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task ZoomOutAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task ResetZoomAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task SearchAsync(string query, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task<BrowserPageSnapshot?> GetSnapshotAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<BrowserPageSnapshot?>(null);
+
+        public Task<BrowserPageSnapshot?> GetFreshSnapshotAsync(
+            BrowserSnapshotFreshnessPolicy policy,
+            CancellationToken cancellationToken = default) =>
+            GetSnapshotAsync(cancellationToken);
+
+        public Task<BrowserPageActionResult> SearchCurrentPageAsync(
+            string query,
+            string? preferredElementId = null,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new BrowserPageActionResult
+            {
+                Success = false,
+                ErrorCode = "not_supported"
+            });
+
+        public Task<BrowserPageActionResult> ClickVisibleElementAsync(
+            string? query,
+            string? targetKind = null,
+            int? ordinal = null,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new BrowserPageActionResult
+            {
+                Success = false,
+                ErrorCode = "not_supported"
+            });
+
+        public Task<BrowserPageActionResult> ConfirmBrowserPageClickAsync(
+            BrowserPagePendingConfirmation pending,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(ConfirmBrowserPageClick(pending));
+
+        public Task<BrowserPageActionResult> PerformCommonActionAsync(
+            string action,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new BrowserPageActionResult
+            {
+                Success = false,
+                ErrorCode = "not_supported"
+            });
+
+        private BrowserPageActionResult ConfirmBrowserPageClick(BrowserPagePendingConfirmation pending)
+        {
+            ConfirmedPending = pending;
+            return ConfirmClickResult;
+        }
+
+        public Task CloseAsync(CancellationToken cancellationToken = default)
+        {
+            StateChanged?.Invoke(new BrowserWorkspaceStateChanged(false, null, "test"), cancellationToken);
             return Task.CompletedTask;
         }
     }

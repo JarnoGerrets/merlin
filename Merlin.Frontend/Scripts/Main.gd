@@ -6,6 +6,7 @@ const MerlinWindowDefinitionScript := preload("res://Scripts/UI/Windows/MerlinWi
 const MerlinWindowConstantsScript := preload("res://Scripts/UI/Windows/MerlinWindowConstants.gd")
 const CrumpleSheetProxyScript := preload("res://Scripts/UI/Windows/CrumpleSheetProxy.gd")
 const ChatLogContentScript := preload("res://Scripts/UI/ChatLog/ChatLogContent.gd")
+const MiniOrbScene := preload("res://Scenes/CoreOrb3D.tscn")
 
 enum MerlinState {
 	SLEEPING,
@@ -46,6 +47,7 @@ const GESTURE_DIAGONAL_RESIZE_RATIO := 0.45
 const GESTURE_RESIZE_AXIS_WIDTH := "width"
 const GESTURE_RESIZE_AXIS_HEIGHT := "height"
 const GESTURE_RESIZE_AXIS_BOTH := "both"
+const GESTURE_RESIZE_SENSITIVITY := 0.5
 const GESTURE_RESIZE_SMOOTHING := 0.25
 const BALL_FORM_TARGET_PADDING_PX := 180.0
 const BALL_FORM_MIN_DURATION_MS := 450
@@ -99,6 +101,8 @@ const WAKE_CLAP_PEAK_TO_RMS_RATIO := 2.2
 const WAKE_CLAP_MIN_GAP_SECONDS := 0.12
 const WAKE_CLAP_MAX_GAP_SECONDS := 1.35
 const MERLIN_AWAKE_TIMEOUT_SECONDS := 600.0
+const BROWSER_WORKSPACE_MINI_ORB_SIZE := Vector2i(216, 216)
+const BROWSER_WORKSPACE_MINI_ORB_MARGIN := 24
 
 const COLOR_BACKGROUND := Color(0.000, 0.008, 0.026, 1.0)
 const COLOR_PANEL := Color(0.002, 0.024, 0.070, 0.40)
@@ -171,6 +175,11 @@ var _application_choice_panel: PanelContainer
 var _window_manager
 var _chatlog_panel
 var _chatlog_content
+var _browser_workspace_active := false
+var _browser_workspace_bounds := {}
+var _browser_workspace_hidden_nodes := {}
+var _browser_workspace_mini_window: Window
+var _browser_workspace_mini_orb
 var _ui_control_mode_active := false
 var _gesture_cursor_layer: CanvasLayer
 var _gesture_cursor: PanelContainer
@@ -1704,9 +1713,11 @@ func _on_visual_state_received(state: Dictionary) -> void:
 	if not _pending_requests.is_empty():
 		if mode.is_empty() or mode == "idle":
 			core_orb.set_thinking()
+			_update_mini_orb_visual_state({ "mode": "thinking", "energy": 0.55, "thinking_intensity": 1.0 })
 			return
 	if core_orb != null and core_orb.has_method("update_visual_state"):
 		core_orb.update_visual_state(state)
+	_update_mini_orb_visual_state(state)
 
 
 func _on_assistant_ui_state_received(state: Dictionary) -> void:
@@ -1882,6 +1893,8 @@ func _handle_chatlog_visual_event(event_name: String, event: Dictionary) -> bool
 func _on_visual_event_received(event: Dictionary) -> void:
 	var event_name := str(event.get("event", "")).to_upper()
 	var event_started_usec := Time.get_ticks_usec()
+	if _handle_browser_workspace_visual_event(event_name, event):
+		return
 	if _handle_ui_control_visual_event(event_name):
 		return
 	if _handle_gesture_visual_event(event_name, event):
@@ -1895,6 +1908,8 @@ func _on_visual_event_received(event: Dictionary) -> void:
 			_speaking_startup_profile_first_energy_logged = false
 			if core_orb != null and core_orb.has_method("start_speaking_startup_profile"):
 				core_orb.start_speaking_startup_profile()
+			if is_instance_valid(_browser_workspace_mini_orb) and _browser_workspace_mini_orb.has_method("start_speaking_startup_profile"):
+				_browser_workspace_mini_orb.start_speaking_startup_profile()
 			_speech_turn_active = true
 			_set_voice_phase("backend_playback_started")
 			var state_started_usec := Time.get_ticks_usec()
@@ -1928,7 +1943,7 @@ func _on_visual_event_received(event: Dictionary) -> void:
 					float(Time.get_ticks_usec() - late_state_started_usec) / 1000.0,
 					_speaking_startup_profile_energy_count
 				])
-			core_orb.notify_speech_tick("", 0.0, energy)
+			_notify_speech_tick_on_orbs("", 0.0, energy)
 		"SPEAKING_END":
 			var speaking_total_ms := 0.0
 			if _speaking_startup_profile_started_usec > 0:
@@ -2371,7 +2386,7 @@ func _stream_speech_text(spoken_text: String, stream_path: String = VOICE_SYNTHE
 							pcm_bytes = pcm_bytes.slice(consumed)
 							frames_pushed += int(consumed / (channels * 2))
 							while frames_pushed >= next_speech_tick_frame:
-								core_orb.notify_speech_tick("", 0.0, fmod(float(next_speech_tick_frame) / float(maxi(stream_sample_rate, 1)), 1.0))
+								_notify_speech_tick_on_orbs("", 0.0, fmod(float(next_speech_tick_frame) / float(maxi(stream_sample_rate, 1)), 1.0))
 								next_speech_tick_frame += VOICE_SPEECH_TICK_FRAMES
 							if not first_audio_submitted_logged:
 								first_audio_submitted_logged = true
@@ -2398,7 +2413,7 @@ func _stream_speech_text(spoken_text: String, stream_path: String = VOICE_SYNTHE
 				pcm_bytes = pcm_bytes.slice(consumed_after_poll)
 				frames_pushed += int(consumed_after_poll / (channels * 2))
 				while frames_pushed >= next_speech_tick_frame:
-					core_orb.notify_speech_tick("", 0.0, fmod(float(next_speech_tick_frame) / float(maxi(stream_sample_rate, 1)), 1.0))
+					_notify_speech_tick_on_orbs("", 0.0, fmod(float(next_speech_tick_frame) / float(maxi(stream_sample_rate, 1)), 1.0))
 					next_speech_tick_frame += VOICE_SPEECH_TICK_FRAMES
 				if not first_audio_submitted_logged:
 					first_audio_submitted_logged = true
@@ -2425,7 +2440,7 @@ func _stream_speech_text(spoken_text: String, stream_path: String = VOICE_SYNTHE
 				pcm_bytes = pcm_bytes.slice(consumed_tail)
 				frames_pushed += int(consumed_tail / (channels * 2))
 				while frames_pushed >= next_speech_tick_frame:
-					core_orb.notify_speech_tick("", 0.0, fmod(float(next_speech_tick_frame) / float(maxi(stream_sample_rate, 1)), 1.0))
+					_notify_speech_tick_on_orbs("", 0.0, fmod(float(next_speech_tick_frame) / float(maxi(stream_sample_rate, 1)), 1.0))
 					next_speech_tick_frame += VOICE_SPEECH_TICK_FRAMES
 		await get_tree().process_frame
 
@@ -2963,6 +2978,151 @@ func _handle_ui_control_visual_event(event_name: String) -> bool:
 	return false
 
 
+func _handle_browser_workspace_visual_event(event_name: String, event: Dictionary) -> bool:
+	match event_name:
+		"BROWSER_WORKSPACE_STATE":
+			var active := bool(event.get("active", false))
+			var bounds = event.get("bounds", {})
+			_set_browser_workspace_active(active, bounds if typeof(bounds) == TYPE_DICTIONARY else {})
+			return true
+	return false
+
+
+func _set_browser_workspace_active(active: bool, bounds: Dictionary = {}) -> void:
+	if active:
+		_browser_workspace_bounds = bounds
+		if not _browser_workspace_active:
+			_browser_workspace_active = true
+			_hide_normal_ui_for_browser_workspace()
+			_show_browser_workspace_mini_orb()
+		_update_browser_workspace_mini_orb_position()
+		return
+
+	if not _browser_workspace_active:
+		return
+	_browser_workspace_active = false
+	_browser_workspace_bounds = {}
+	_hide_browser_workspace_mini_orb()
+	_restore_normal_ui_after_browser_workspace()
+
+
+func _hide_normal_ui_for_browser_workspace() -> void:
+	_browser_workspace_hidden_nodes.clear()
+	for node in _browser_workspace_visual_nodes():
+		if not is_instance_valid(node):
+			continue
+		_browser_workspace_hidden_nodes[node] = node.visible
+		node.visible = false
+
+
+func _restore_normal_ui_after_browser_workspace() -> void:
+	for node in _browser_workspace_hidden_nodes.keys():
+		if is_instance_valid(node):
+			node.visible = bool(_browser_workspace_hidden_nodes[node])
+	_browser_workspace_hidden_nodes.clear()
+
+
+func _browser_workspace_visual_nodes() -> Array:
+	var nodes := [
+		background,
+		core_orb,
+		status_panel,
+		activity_panel,
+		notification_panel,
+		overlay_container,
+		chat_panel,
+		command_input_panel,
+		voice_control,
+		_gesture_cursor_layer
+	]
+	if is_instance_valid(_chatlog_panel):
+		nodes.append(_chatlog_panel)
+	if is_instance_valid(_application_choice_panel):
+		nodes.append(_application_choice_panel)
+	if is_instance_valid(_barge_in_debug_overlay):
+		nodes.append(_barge_in_debug_overlay)
+	return nodes
+
+
+func _show_browser_workspace_mini_orb() -> void:
+	if not is_instance_valid(_browser_workspace_mini_window):
+		_browser_workspace_mini_window = Window.new()
+		_browser_workspace_mini_window.name = "MiniOrbOverlayWindow"
+		_browser_workspace_mini_window.title = "Merlin"
+		_browser_workspace_mini_window.force_native = true
+		_browser_workspace_mini_window.visible = false
+		_browser_workspace_mini_window.size = BROWSER_WORKSPACE_MINI_ORB_SIZE
+		_browser_workspace_mini_window.borderless = true
+		_browser_workspace_mini_window.unresizable = true
+		_browser_workspace_mini_window.always_on_top = true
+		_browser_workspace_mini_window.transparent = true
+		_browser_workspace_mini_window.transparent_bg = true
+		_browser_workspace_mini_window.unfocusable = true
+		_browser_workspace_mini_window.mouse_passthrough = true
+		add_child(_browser_workspace_mini_window)
+
+		_browser_workspace_mini_orb = MiniOrbScene.instantiate()
+		_browser_workspace_mini_orb.name = "MiniCoreOrb"
+		if _browser_workspace_mini_orb.has_method("set_mini_visual_profile"):
+			_browser_workspace_mini_orb.set_mini_visual_profile(true)
+		_browser_workspace_mini_orb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_browser_workspace_mini_orb.custom_minimum_size = Vector2.ZERO
+		_browser_workspace_mini_orb.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_browser_workspace_mini_orb.offset_left = 0.0
+		_browser_workspace_mini_orb.offset_top = 0.0
+		_browser_workspace_mini_orb.offset_right = 0.0
+		_browser_workspace_mini_orb.offset_bottom = 0.0
+		_browser_workspace_mini_window.add_child(_browser_workspace_mini_orb)
+
+	_browser_workspace_mini_window.size = BROWSER_WORKSPACE_MINI_ORB_SIZE
+	_apply_merlin_state_to_orb(_browser_workspace_mini_orb, _merlin_state)
+	if core_orb != null and _browser_workspace_mini_orb.has_method("update_visual_state"):
+		var current_visual_state = core_orb.get("visual_state")
+		if typeof(current_visual_state) == TYPE_DICTIONARY:
+			_browser_workspace_mini_orb.update_visual_state(current_visual_state)
+	_apply_visual_overlay()
+	_browser_workspace_mini_window.visible = true
+
+
+func _hide_browser_workspace_mini_orb() -> void:
+	if is_instance_valid(_browser_workspace_mini_window):
+		_browser_workspace_mini_window.visible = false
+		_browser_workspace_mini_window.queue_free()
+	_browser_workspace_mini_window = null
+	_browser_workspace_mini_orb = null
+
+
+func _update_browser_workspace_mini_orb_position() -> void:
+	if not is_instance_valid(_browser_workspace_mini_window):
+		return
+	if bool(_browser_workspace_bounds.get("isMinimized", false)):
+		_browser_workspace_mini_window.visible = false
+		return
+	_browser_workspace_mini_window.visible = _browser_workspace_active
+
+	var x := 0
+	var y := 0
+	var width := 0
+	var height := 0
+	if not _browser_workspace_bounds.is_empty():
+		x = int(_browser_workspace_bounds.get("x", 0))
+		y = int(_browser_workspace_bounds.get("y", 0))
+		width = int(_browser_workspace_bounds.get("width", 0))
+		height = int(_browser_workspace_bounds.get("height", 0))
+
+	if width <= 0 or height <= 0:
+		var screen_index := DisplayServer.window_get_current_screen()
+		var usable_rect := DisplayServer.screen_get_usable_rect(screen_index)
+		x = usable_rect.position.x
+		y = usable_rect.position.y
+		width = usable_rect.size.x
+		height = usable_rect.size.y
+
+	_browser_workspace_mini_window.position = Vector2i(
+		x + width - BROWSER_WORKSPACE_MINI_ORB_SIZE.x - BROWSER_WORKSPACE_MINI_ORB_MARGIN,
+		y + height - BROWSER_WORKSPACE_MINI_ORB_SIZE.y - BROWSER_WORKSPACE_MINI_ORB_MARGIN)
+
+
 func _handle_gesture_visual_event(event_name: String, event: Dictionary) -> bool:
 	var pointer_id := str(event.get("pointerId", GESTURE_POINTER_PRIMARY))
 	if pointer_id.is_empty():
@@ -3274,6 +3434,8 @@ func _update_gesture_resize() -> void:
 	if resize_axes == GESTURE_RESIZE_AXIS_HEIGHT or resize_axes == GESTURE_RESIZE_AXIS_BOTH:
 		var start_dy := maxf(absf(start_delta.y), GESTURE_MIN_RESIZE_AXIS_DISTANCE_PX)
 		height_scale = absf(current_delta.y) / start_dy
+	width_scale = 1.0 + ((width_scale - 1.0) * GESTURE_RESIZE_SENSITIVITY)
+	height_scale = 1.0 + ((height_scale - 1.0) * GESTURE_RESIZE_SENSITIVITY)
 	_set_gesture_cursor_size_multiplier(clampf(maxf(width_scale, height_scale), 0.75, 1.8))
 	var target_size := Vector2(
 		clampf(start_rect.size.x * width_scale, CHATLOG_MIN_WIDTH, CHATLOG_MAX_WIDTH),
@@ -4140,10 +4302,27 @@ func _update_visual_overlay(delta: float) -> void:
 
 
 func _apply_visual_overlay() -> void:
-	if core_orb == null or not core_orb.has_method("set_overlay_intensity"):
+	_apply_visual_overlay_to_orb(core_orb)
+	_apply_visual_overlay_to_orb(_browser_workspace_mini_orb)
+
+
+func _apply_visual_overlay_to_orb(orb) -> void:
+	if not is_instance_valid(orb) or not orb.has_method("set_overlay_intensity"):
 		return
-	core_orb.set_overlay_intensity("error", _visual_overlay_strength if _visual_overlay_kind == "error" else 0.0)
-	core_orb.set_overlay_intensity("confirmation", _visual_overlay_strength if _visual_overlay_kind == "confirmation" else 0.0)
+	orb.set_overlay_intensity("error", _visual_overlay_strength if _visual_overlay_kind == "error" else 0.0)
+	orb.set_overlay_intensity("confirmation", _visual_overlay_strength if _visual_overlay_kind == "confirmation" else 0.0)
+
+
+func _notify_speech_tick_on_orbs(character: String = "", delay: float = 0.0, progress: float = 0.0) -> void:
+	if is_instance_valid(core_orb) and core_orb.has_method("notify_speech_tick"):
+		core_orb.notify_speech_tick(character, delay, progress)
+	if is_instance_valid(_browser_workspace_mini_orb) and _browser_workspace_mini_orb.has_method("notify_speech_tick"):
+		_browser_workspace_mini_orb.notify_speech_tick(character, delay, progress)
+
+
+func _update_mini_orb_visual_state(state: Dictionary) -> void:
+	if is_instance_valid(_browser_workspace_mini_orb) and _browser_workspace_mini_orb.has_method("update_visual_state"):
+		_browser_workspace_mini_orb.update_visual_state(state)
 
 
 func _is_tool_execution_response(response: Dictionary) -> bool:
@@ -4159,27 +4338,40 @@ func _set_merlin_state(state: int) -> void:
 	var started_usec := Time.get_ticks_usec()
 	_merlin_state = state
 	activity_label.text = _activity_text_for_state(state)
-	match state:
-		MerlinState.SLEEPING:
-			if core_orb.has_method("set_sleeping"):
-				core_orb.set_sleeping()
-			else:
-				core_orb.set_idle()
-		MerlinState.THINKING:
-			core_orb.set_thinking()
-		MerlinState.LISTENING:
-			core_orb.set_listening()
-		MerlinState.SPEAKING:
-			core_orb.set_speaking()
-		MerlinState.EXECUTING_TOOL:
-			core_orb.play_tool_execution()
-		MerlinState.ERROR:
-			core_orb.play_error()
-		_:
-			core_orb.set_idle()
+	_apply_merlin_state_to_orb(core_orb, state)
+	_apply_merlin_state_to_orb(_browser_workspace_mini_orb, state)
 	var elapsed_ms := _elapsed_ms_since(started_usec)
 	if elapsed_ms >= 2.0:
 		print("SignalHandlerPerf slow handler=_set_merlin_state state=%s ms=%.2f" % [_merlin_state_name(state), elapsed_ms])
+
+
+func _apply_merlin_state_to_orb(orb, state: int) -> void:
+	if not is_instance_valid(orb):
+		return
+	match state:
+		MerlinState.SLEEPING:
+			if orb.has_method("set_sleeping"):
+				orb.set_sleeping()
+			else:
+				orb.set_idle()
+		MerlinState.THINKING:
+			if orb.has_method("set_thinking"):
+				orb.set_thinking()
+		MerlinState.LISTENING:
+			if orb.has_method("set_listening"):
+				orb.set_listening()
+		MerlinState.SPEAKING:
+			if orb.has_method("set_speaking"):
+				orb.set_speaking()
+		MerlinState.EXECUTING_TOOL:
+			if orb.has_method("play_tool_execution"):
+				orb.play_tool_execution()
+		MerlinState.ERROR:
+			if orb.has_method("play_error"):
+				orb.play_error()
+		_:
+			if orb.has_method("set_idle"):
+				orb.set_idle()
 
 
 func _activity_text_for_state(state: int) -> String:

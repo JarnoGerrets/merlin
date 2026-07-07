@@ -222,6 +222,6 @@ public sealed partial class SpeechCommandNormalizer
     [GeneratedRegex(@"[a-z0-9-]+|[^\s]", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex TokenRegex();
 
-    [GeneratedRegex(@"\s+([?!,;:])", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\s+([.?!,;:])", RegexOptions.CultureInvariant)]
     private static partial Regex PunctuationSpacingRegex();
 }

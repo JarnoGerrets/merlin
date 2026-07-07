@@ -1,5 +1,6 @@
 using Merlin.Backend.Models;
 using Merlin.Backend.Services.BargeIn;
+using Merlin.Backend.Services.Context.ActiveSurface;
 
 namespace Merlin.Backend.Services.LiveUtterance;
 
@@ -26,6 +27,8 @@ public sealed class LiveUtteranceGateInput
     public double? SttConfidence { get; init; }
 
     public double? AudioSpeechConfidence { get; init; }
+
+    public ActiveSurfaceSnapshot? ActiveSurface { get; init; }
 }
 
 public enum LiveUtteranceGateDecisionKind

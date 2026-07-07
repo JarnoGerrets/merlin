@@ -1,6 +1,7 @@
 using Merlin.Backend.Configuration;
 using Merlin.Backend.Models;
 using Merlin.Backend.Services;
+using Merlin.Backend.Services.BrowserWorkspace;
 using Microsoft.Extensions.Options;
 
 namespace Merlin.Backend.Tools;
@@ -15,19 +16,25 @@ public sealed class OpenApplicationTool : ITool
     private readonly ApplicationLaunchOptions _options;
     private readonly IProcessLauncher _processLauncher;
     private readonly ITrustedUrlStore _trustedUrlStore;
+    private readonly IBrowserWorkspaceService? _browserWorkspaceService;
+    private readonly ILogger<OpenApplicationTool>? _logger;
 
     public OpenApplicationTool(
         IOptions<ApplicationLaunchOptions> options,
         IApplicationResolver applicationResolver,
         IConfirmationService confirmationService,
         IProcessLauncher processLauncher,
-        ITrustedUrlStore? trustedUrlStore = null)
+        ITrustedUrlStore? trustedUrlStore = null,
+        IBrowserWorkspaceService? browserWorkspaceService = null,
+        ILogger<OpenApplicationTool>? logger = null)
     {
         _options = options.Value;
         _applicationResolver = applicationResolver;
         _confirmationService = confirmationService;
         _processLauncher = processLauncher;
         _trustedUrlStore = trustedUrlStore ?? NullTrustedUrlStore.Instance;
+        _browserWorkspaceService = browserWorkspaceService;
+        _logger = logger;
     }
 
     public string Name => "Open Application";
@@ -103,7 +110,20 @@ public sealed class OpenApplicationTool : ITool
         {
             try
             {
-                await _processLauncher.LaunchAsync(trustedUrl.Url, cancellationToken);
+                if (_browserWorkspaceService is not null)
+                {
+                    _logger?.LogInformation(
+                        "WebDestinationSkippedNativeAppRoute Alias: {Alias}. Url: {Url}. Source: OpenApplicationToolTrustedUrlFallback.",
+                        applicationName,
+                        trustedUrl.Url);
+                    await _browserWorkspaceService.OpenAsync(null, cancellationToken);
+                    await _browserWorkspaceService.NavigateAsync(trustedUrl.Url, cancellationToken);
+                }
+                else
+                {
+                    await _processLauncher.LaunchAsync(trustedUrl.Url, cancellationToken);
+                }
+
                 return new ToolResult
                 {
                     Success = true,

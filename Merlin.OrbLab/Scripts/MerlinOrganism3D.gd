@@ -212,6 +212,15 @@ const DEFAULT_ROUTE_CONNECTION_HOT_MIX := 0.0
 const DEFAULT_CLUSTER_LIFECYCLE_DURATION := 3.2
 const DEFAULT_CLUSTER_LIFECYCLE_BIRTH_STRENGTH := 1.30
 const DEFAULT_CLUSTER_LIFECYCLE_DEATH_STRENGTH := 0.72
+const MINI_VISUAL_CORE_GLOW_ALPHA_SCALE := 0.58
+const MINI_VISUAL_CLUSTER_HALO_ALPHA_SCALE := 0.48
+const MINI_VISUAL_NODE_ALPHA_SCALE := 0.72
+const MINI_VISUAL_DUST_ALPHA_SCALE := 0.54
+const MINI_VISUAL_CONNECTION_ALPHA_SCALE := 0.62
+const MINI_VISUAL_CONNECTION_GLOW_ALPHA_SCALE := 0.45
+const MINI_VISUAL_MATERIAL_ALPHA_SCALE := 0.70
+const MINI_VISUAL_SPEECH_ENERGY_SCALE := 0.72
+const MINI_VISUAL_CLUSTER_ACTIVATION_SCALE := 0.62
 const MAX_SPEECH_REGION_BURSTS := 7
 const SPEECH_MORPH_REGION_COUNT := 48
 const TARGET_FRAME_MS := 8.33
@@ -306,6 +315,7 @@ var current_state := OrganismState.IDLE
 
 var _rng := RandomNumberGenerator.new()
 var _time := 0.0
+var _mini_visual_profile_enabled := false
 var visual_state := {
 	"mode": "idle",
 	"energy": 0.0,
@@ -1082,9 +1092,21 @@ func play_confirmation() -> void:
 func set_speech_energy_override(value: float) -> void:
 	_speech_energy_override = clampf(value, -1.0, 1.0)
 	if current_state == OrganismState.SPEAKING and _speech_energy_override >= 0.0:
-		_speech_energy = clampf(_speech_energy_override, 0.0, 0.96)
-		_target_activity = maxf(_target_activity, lerpf(0.58, 0.92, _speech_energy_override))
-		_speech_global_morph = maxf(_speech_global_morph, lerpf(0.10, 0.58, _speech_energy_override))
+		var effective_speech_energy := _speech_energy_override * (MINI_VISUAL_SPEECH_ENERGY_SCALE if _mini_visual_profile_enabled else 1.0)
+		_speech_energy = clampf(effective_speech_energy, 0.0, 0.96)
+		_target_activity = maxf(_target_activity, lerpf(0.58, 0.92, effective_speech_energy))
+		_speech_global_morph = maxf(_speech_global_morph, lerpf(0.10, 0.58, effective_speech_energy))
+
+
+func set_mini_visual_profile(enabled: bool) -> void:
+	_mini_visual_profile_enabled = enabled
+	_update_materials()
+	if _graph_root == null or _camera == null:
+		return
+	if not _debug_freeze_connection_updates:
+		_rebuild_static_connection_meshes()
+		if _thinking_connection_mesh_active:
+			_rebuild_thinking_connection_mesh()
 
 
 func set_visual_state(state: Dictionary) -> void:
@@ -5035,7 +5057,7 @@ func _update_nodes(_delta: float, start_index: int = 0, stride: int = 1) -> void
 				var color_started_usec := Time.get_ticks_usec() if profile_active else 0
 				var alpha := clampf((0.38 + center_t * 0.34 + shell_light + pulse * 0.18 + speech_light * 0.62) * depth_t * _brightness * _sharp_geometry_alpha_scale * (1.0 - lifecycle_dim), 0.04, 0.88)
 				var color := Color(_palette["node"]).lerp(Color(_palette["hot"]), clampf((center_t * 0.48 + shell_light * 0.9 + pulse + speech_light * 0.72) * _sharp_hot_mix_scale, 0.0, 0.86))
-				color.a = alpha
+				color.a = alpha * _mini_visual_alpha_scale("node")
 				if profile_active:
 					_speaking_profile_frame_node_color_calc_ms += _elapsed_ms_since_usec(color_started_usec)
 					var previous_color_index := _node_multimesh.multimesh.instance_count + target_multimesh_index
@@ -5064,7 +5086,7 @@ func _update_nodes(_delta: float, start_index: int = 0, stride: int = 1) -> void
 				var color_started_usec := Time.get_ticks_usec() if profile_active else 0
 				var alpha := clampf((0.38 + center_t * 0.34 + shell_light + pulse * 0.18 + speech_light * 0.62) * depth_t * _brightness * _sharp_geometry_alpha_scale * (1.0 - lifecycle_dim), 0.04, 0.88)
 				var color := Color(_palette["node"]).lerp(Color(_palette["hot"]), clampf((center_t * 0.48 + shell_light * 0.9 + pulse + speech_light * 0.72) * _sharp_hot_mix_scale, 0.0, 0.86))
-				color.a = alpha
+				color.a = alpha * _mini_visual_alpha_scale("node")
 				if profile_active:
 					_speaking_profile_frame_node_color_calc_ms += _elapsed_ms_since_usec(color_started_usec)
 					if node_index < _speaking_profile_previous_node_colors.size():
@@ -5149,7 +5171,7 @@ func _update_dust(_delta: float, start_index: int = 0, stride: int = 1) -> void:
 			var color_started_usec := Time.get_ticks_usec() if profile_active else 0
 			var color := Color(_palette["dust"]).lerp(Color(_palette["hot"]), 0.78 if dust.hub else 0.0)
 			color = color.lerp(Color(_palette["hot"]), clampf(speech_light * 0.85, 0.0, 0.75))
-			color.a = dust.brightness * depth_t * (0.66 + cluster_pulse * 0.22 + speech_light * 0.62 if dust.hub else 0.21 + speech_light * 0.16) * (1.0 - lifecycle_dim)
+			color.a = dust.brightness * depth_t * (0.66 + cluster_pulse * 0.22 + speech_light * 0.62 if dust.hub else 0.21 + speech_light * 0.16) * (1.0 - lifecycle_dim) * _mini_visual_alpha_scale("dust")
 			if profile_active:
 				_speaking_profile_frame_dust_color_calc_ms += _elapsed_ms_since_usec(color_started_usec)
 				if index < _speaking_profile_previous_dust_colors.size():
@@ -5207,12 +5229,12 @@ func _rebuild_static_connection_meshes() -> void:
 		var color := Color.WHITE.lerp(Color(_palette["hot"]), hot_mix)
 		if selection_flash > 0.0:
 			color = color.lerp(Color(1.0, 0.05, 0.04, 1.0), selection_flash)
-		color.a = alpha
+		color.a = alpha * _mini_visual_alpha_scale("connection")
 		var glow_color := Color.WHITE.lerp(Color(_palette["hot"]), hot_mix)
 		if selection_flash > 0.0:
 			glow_color = glow_color.lerp(Color(1.0, 0.05, 0.04, 1.0), selection_flash)
 		var glow_alpha_scale := 1.0 + route_t * (_route_connection_glow_alpha_scale - 1.0)
-		glow_color.a = alpha * (0.040 + center_t * 0.018 + shell_band * 0.028 + route_t * 0.030 + selection_flash * 0.18) * glow_alpha_scale * glow_scale
+		glow_color.a = alpha * (0.040 + center_t * 0.018 + shell_band * 0.028 + route_t * 0.030 + selection_flash * 0.18) * glow_alpha_scale * glow_scale * _mini_visual_alpha_scale("connection_glow")
 		var glow_width := connection.width * width_scale * (1.75 + route_t * 0.40 + selection_flash * 1.30) * (1.0 + route_t * (_route_connection_glow_width_scale - 1.0))
 		var core_width := connection.width * width_scale * (1.08 + route_t * 0.12 + selection_flash * 0.65) * (1.0 + route_t * (_route_connection_core_width_scale - 1.0))
 		_add_line_quad_3d(glow_vertices, glow_colors, glow_indices, a_position, b_position, glow_width, glow_color, local_camera_forward, local_camera_up, glow_deformation_basis)
@@ -6149,6 +6171,8 @@ func _add_cluster_activation(node_index: int, brightness: float) -> bool:
 	if cluster_node_index < _node_dust_indices.size():
 		dust_count = _node_dust_indices[cluster_node_index].size()
 	var strength := brightness * (1.16 if current_state == OrganismState.THINKING else 0.82) * _cluster_activation_strength_scale
+	if _mini_visual_profile_enabled:
+		strength *= MINI_VISUAL_CLUSTER_ACTIVATION_SCALE
 	strength *= (1.08 if node.hub else 1.0) + minf(float(dust_count) / 96.0, 1.0) * 0.20
 	for activation in _cluster_activations:
 		if activation.node_index == cluster_node_index:
@@ -6204,7 +6228,7 @@ func _update_core_glow() -> void:
 	var radius := (0.26 + pulse * 0.055 + glow_activity * 0.070) * _core_glow_radius_scale * _center_visual_size
 	var color := Color(_palette["hot"])
 	var thinking_brightness := 1.0 + maxf(0.0, _brightness - 1.0) * thinking_bloom_scale
-	color.a = clampf((0.36 + pulse * 0.14) * thinking_brightness * _core_glow_alpha_scale, 0.0, 0.62)
+	color.a = clampf((0.36 + pulse * 0.14) * thinking_brightness * _core_glow_alpha_scale, 0.0, 0.62) * _mini_visual_alpha_scale("core_glow")
 	_core_multimesh.multimesh.set_instance_transform(0, Transform3D(Basis().scaled(Vector3.ONE * radius), Vector3.ZERO))
 	_core_multimesh.multimesh.set_instance_color(0, color)
 
@@ -6280,7 +6304,7 @@ func _update_cluster_halos() -> void:
 		if source_node == -1:
 			var core_pulse := 0.5 + sin(_time * 0.95) * 0.5
 			radius = (1.34 + core_pulse * 0.24 + glow_activity * 0.24) * _cluster_halo_radius_scale * _center_visual_size
-			alpha = clampf((0.20 + core_pulse * 0.075 + glow_activity * 0.110) * thinking_brightness * _cluster_halo_intensity, 0.0, 0.96)
+			alpha = clampf((0.20 + core_pulse * 0.075 + glow_activity * 0.110) * thinking_brightness * _cluster_halo_intensity, 0.0, 0.96) * _mini_visual_alpha_scale("cluster_halo")
 		elif source_node >= 0 and source_node < _nodes.size():
 			var node := _nodes[source_node]
 			position = node.current_position
@@ -6298,7 +6322,7 @@ func _update_cluster_halos() -> void:
 			var selection_flash := _cluster_selection_flash_amount(source_node)
 			var luminosity_t := clampf(_cluster_luminosity_score(source_node), 0.0, 1.65)
 			radius = (0.42 + luminosity_t * 0.86 + density_t * 0.34 + center_t * 0.20 + halo_speech_light * 0.42 + selection_flash * 0.36) * _cluster_halo_radius_scale * override_halo_scale * (1.0 - lifecycle_dim * 0.26)
-			alpha = clampf((0.040 + luminosity_t * 0.145 + living_pulse * 0.026 + halo_speech_light * 0.190 + selection_flash * 0.42) * thinking_brightness * _cluster_halo_intensity * override_brightness_scale * (1.0 - lifecycle_dim), 0.0, 1.0)
+			alpha = clampf((0.040 + luminosity_t * 0.145 + living_pulse * 0.026 + halo_speech_light * 0.190 + selection_flash * 0.42) * thinking_brightness * _cluster_halo_intensity * override_brightness_scale * (1.0 - lifecycle_dim), 0.0, 1.0) * _mini_visual_alpha_scale("cluster_halo")
 		else:
 			_cluster_halo_multimesh.multimesh.set_instance_transform(index, Transform3D(Basis().scaled(Vector3.ZERO), Vector3.ZERO))
 			_cluster_halo_multimesh.multimesh.set_instance_color(index, Color(0, 0, 0, 0))
@@ -6336,13 +6360,48 @@ func _update_materials() -> void:
 func _update_material_color(material: Material, color: Color, alpha: float) -> void:
 	if material == null:
 		return
+	var effective_alpha := alpha * _mini_visual_material_alpha_scale(material)
 	if material is ShaderMaterial:
 		var shader_material := material as ShaderMaterial
 		shader_material.set_shader_parameter("line_tint", color)
-		shader_material.set_shader_parameter("base_alpha", alpha)
+		shader_material.set_shader_parameter("base_alpha", effective_alpha)
 		return
 	var standard_material := material as StandardMaterial3D
 	if standard_material == null:
 		return
-	standard_material.albedo_color = Color(color.r, color.g, color.b, alpha)
+	standard_material.albedo_color = Color(color.r, color.g, color.b, effective_alpha)
 	standard_material.emission = color
+
+
+func _mini_visual_alpha_scale(kind: String) -> float:
+	if not _mini_visual_profile_enabled:
+		return 1.0
+	match kind:
+		"core_glow":
+			return MINI_VISUAL_CORE_GLOW_ALPHA_SCALE
+		"cluster_halo":
+			return MINI_VISUAL_CLUSTER_HALO_ALPHA_SCALE
+		"node":
+			return MINI_VISUAL_NODE_ALPHA_SCALE
+		"dust":
+			return MINI_VISUAL_DUST_ALPHA_SCALE
+		"connection":
+			return MINI_VISUAL_CONNECTION_ALPHA_SCALE
+		"connection_glow":
+			return MINI_VISUAL_CONNECTION_GLOW_ALPHA_SCALE
+		_:
+			return MINI_VISUAL_MATERIAL_ALPHA_SCALE
+
+
+func _mini_visual_material_alpha_scale(material: Material) -> float:
+	if not _mini_visual_profile_enabled:
+		return 1.0
+	if material == _glow_line_material or material == _glow_line_deformation_material or material == _thinking_glow_line_material or material == _pulse_glow_line_material:
+		return MINI_VISUAL_CONNECTION_GLOW_ALPHA_SCALE
+	if material == _dust_material:
+		return MINI_VISUAL_DUST_ALPHA_SCALE
+	if material == _node_material or material == _hub_material:
+		return MINI_VISUAL_NODE_ALPHA_SCALE
+	if material == _core_material:
+		return MINI_VISUAL_CORE_GLOW_ALPHA_SCALE
+	return MINI_VISUAL_MATERIAL_ALPHA_SCALE
